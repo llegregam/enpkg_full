@@ -1,0 +1,7 @@
+sample_id	sample_type	source_id	organism_kingdom	organism_phylum	organism_class	organism_order	organism_family	organism_genus	source_taxon	organism_organe	organism_broad_organe	organism_tissue	organism_subsystem	sample_plate_id	sample_filename_pos	pos_injection_date	bio_leish_donovani_10ugml_inhibition	bio_leish_donovani_2ugml_inhibition	bio_tryp_brucei_rhodesiense_10ugml_inhibition	bio_tryp_brucei_rhodesiense_2ugml_inhibition	bio_tryp_cruzi_10ugml_inhibition	bio_l6_cytotoxicity_10ugml_inhibition	sample_filename_neg	neg_injection_date	massive_id
+actea_racemosa_EtOAc_1	sample	actea_racemosa							Actaea racemosa	rhizome					actea_EtOAc-1_pos.mzML										
+actea_racemosa_MeOH_1	sample	actea_racemosa							Actaea racemosa	rhizome					actea_MeOH-1_pos.mzML										
+actea_racemosa_EtOAc_2	sample	actea_racemosa							Actaea racemosa	rhizome					actea_EtOAc-2_pos.mzML										
+actea_racemosa_MeOH_2	sample	actea_racemosa							Actaea racemosa	rhizome					actea_MeOH-2_pos.mzML										
+actea_racemosa_H20_1	sample	actea_racemosa							Actaea racemosa	rhizome					actea_H2O-1_pos.mzML										
+actea_racemosa_H20_2	sample	actea_racemosa							Actaea racemosa	rhizome					actea_H2O-2_pos.mzML										
