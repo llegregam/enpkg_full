@@ -9,6 +9,7 @@ import networkx as nx
 from enpkg.monolith.exceptions import EnrichmentError
 from enpkg.monolith.data.otl_class import Match
 from enpkg.monolith.data.sample_metadata import SampleMetadata
+from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
 
 
 class Analysis(BaseModel):
@@ -22,7 +23,7 @@ class Analysis(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
     run_name: str
-    spectra: Tuple[Spectrum, ...]
+    spectra: Tuple[AnnotatedSpectrum, ...]
     metadata: SampleMetadata
     ionization_mode: str
     ott_matches: list[Match] = Field(default_factory=list)
