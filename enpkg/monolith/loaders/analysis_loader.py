@@ -8,6 +8,7 @@ from matchms.importing import load_from_mgf, load_from_mzml, load_from_mzxml
 
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.sample_metadata import SampleMetadata
+from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
 
 
 class AnalysisLoader:
@@ -26,6 +27,7 @@ class AnalysisLoader:
         cls,
         path_to_spectra: str,
         path_to_metadata: str,
+        path_to_quant_table: str,
         ionization_mode: str,
         run_name: Optional[str] = None,
     ) -> Analysis:
@@ -35,6 +37,7 @@ class AnalysisLoader:
         Args:
             path_to_spectra: Path to the spectra file (.mgf, .mzML, .mzXML).
             path_to_metadata: Path to the metadata file (CSV/TSV).
+            path_to_quant_table: Path to the quantification table file (CSV/TSV).
             ionization_mode: Ionization mode, either 'pos' or 'neg'.
             run_name: Name of the run. If None, inferred from spectra filename.
             
@@ -46,6 +49,7 @@ class AnalysisLoader:
         """
         path_to_spectra = Path(path_to_spectra)
         path_to_metadata = Path(path_to_metadata)
+        path_to_quantification_table = Path(path_to_quant_table)
         
         # Load spectra
         spectra = cls._load_spectra(path_to_spectra)
@@ -55,13 +59,38 @@ class AnalysisLoader:
         
         # Load and filter metadata
         metadata = cls._load_metadata(path_to_metadata, ionization_mode, run_name)
+
+        # Load quantification table
+        quant_table = cls._load_quantification_table(path_to_quantification_table)
+        
+        # Find the intensity column (contains "Peak height" or "Peak area")
+        intensity_col = next(
+            (col for col in quant_table.columns if "Peak height" in col or "Peak area" in col),
+            None
+        )
+        if intensity_col is None:
+            raise ValueError("No column containing 'Peak height' or 'Peak area' found in quantification table")
+        
+        for spectrum in spectra[:100]:
+            print(spectrum.metadata)
         
         return Analysis(
             run_name=run_name,
-            spectra=spectra,
+            spectra=tuple(AnnotatedSpectrum(
+                spectrum=spectrum,
+                mass_over_charge=row["row m/z"],
+                retention_time=row["row retention time"],
+                intensity=row[intensity_col],)
+                for spectrum, (_, row) in zip(spectra, quant_table.iterrows())
+            ),  
             metadata=metadata,
             ionization_mode=ionization_mode,
         )
+
+    @classmethod
+    def _load_quantification_table(cls, path: Path) -> pd.DataFrame:
+        """Load quantification table from file."""
+        return pd.read_csv(path, sep=None, engine="python")
     
     @classmethod
     def _load_spectra(cls, path: Path) -> tuple:
@@ -87,6 +116,7 @@ class AnalysisLoader:
         """Load and filter metadata for the given run."""
         metadata_df = pd.read_csv(path, sep=None, engine="python")
         column_name = f"sample_filename_{ionization_mode}"
+        print(f"Metadata df: {metadata_df}")
         
         for raw_ext in cls.RAW_EXTENSIONS:
             mask = metadata_df[column_name] == run_name + raw_ext
