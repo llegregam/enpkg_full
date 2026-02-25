@@ -7,7 +7,7 @@ from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.chemical_annotation import ChemicalAnnotation
 
 
-@dataclass
+
 class SiriusChemicalAnnotation(ChemicalAnnotation):
     """Dataclass for representing chemical annotations from Sirius."""
 

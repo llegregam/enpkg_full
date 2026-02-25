@@ -2,6 +2,7 @@
 
 from typing import Any, Dict
 from dataclasses import dataclass
+import numpy as np
 import pandas as pd
 from enpkg.monolith.data.otl_class import Match
 
@@ -24,9 +25,9 @@ class Lotus:
     structure_name_traditional: str
     structure_stereocenters_total: int
     structure_stereocenters_unspecified: int
-    structure_taxonomy_hammer_pathways: pd.Series
-    structure_taxonomy_hammer_superclasses: pd.Series
-    structure_taxonomy_hammer_classes: pd.Series
+    structure_taxonomy_hammer_pathways: np.ndarray
+    structure_taxonomy_hammer_superclasses: np.ndarray
+    structure_taxonomy_hammer_classes: np.ndarray
     structure_taxonomy_classyfire_chemontid: str
     structure_taxonomy_classyfire_01kingdom: str
     structure_taxonomy_classyfire_02superclass: str
@@ -85,9 +86,9 @@ class Lotus:
             structure_name_traditional=series[
                 Lotus._columns["structure_nameTraditional"]
             ],
-            structure_taxonomy_hammer_pathways=pathways,
-            structure_taxonomy_hammer_superclasses=superclasses,
-            structure_taxonomy_hammer_classes=classes,
+            structure_taxonomy_hammer_pathways=pathways.values if isinstance(pathways, pd.Series) else pathways,
+            structure_taxonomy_hammer_superclasses=superclasses.values if isinstance(superclasses, pd.Series) else superclasses,
+            structure_taxonomy_hammer_classes=classes.values if isinstance(classes, pd.Series) else classes,
             structure_stereocenters_total=series[
                 Lotus._columns["structure_stereocenters_total"]
             ],

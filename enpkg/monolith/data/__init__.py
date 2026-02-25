@@ -4,15 +4,15 @@
 # from monolith.data.batch_class import Batch
 # from monolith.data.wikidata_ott_query_class import WikidataOTTQuery
 # from monolith.data.otl_class import Match, Taxon, LineageItem
-# from monolith.data.isdb_data_classes import ISDBEnricherConfig
+# from monolith.data.isdb_data_classes import ISDBEnhancerConfig
 # from monolith.data.lotus_class import Lotus
-# from monolith.data.spectral_network_classes import NetworkEnricherConfig
+# from monolith.data.spectral_network_classes import NetworkEnhancerConfig
 # from monolith.data.ms1_data_classes import (
 #     ChemicalAdduct,
 #     AdductRecipe,
-#     MS1EnricherConfig,
+#     MS1EnhancerConfig,
 # )
-# from monolith.data.sirius_data_classes import SiriusEnricherConfig
+# from monolith.data.sirius_data_classes import SiriusEnhancerConfig
 
 # __all__ = [
 #     "Analysis",
@@ -21,11 +21,11 @@
 #     "Taxon",
 #     "LineageItem",
 #     "WikidataOTTQuery",
-#     "ISDBEnricherConfig",
+#     "ISDBEnhancerConfig",
 #     "Lotus",
-#     "NetworkEnricherConfig",
+#     "NetworkEnhancerConfig",
 #     "ChemicalAdduct",
 #     "AdductRecipe",
-#     "MS1EnricherConfig",
-#     "SiriusEnricherConfig",
+#     "MS1EnhancerConfig",
+#     "SiriusEnhancerConfig",
 # ]

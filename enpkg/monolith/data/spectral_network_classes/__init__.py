@@ -1,5 +1,5 @@
 from monolith.data.spectral_network_classes.spectral_network_configuration_class import (
-    NetworkEnricherConfig,
+    NetworkEnhancerConfig,
 )
 
-__all__ = ["NetworkEnricherConfig"]
+__all__ = ["NetworkEnhancerConfig"]

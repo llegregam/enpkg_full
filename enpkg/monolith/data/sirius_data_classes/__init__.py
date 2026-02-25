@@ -4,7 +4,7 @@ from enpkg.monolith.data.sirius_data_classes.sirius_chemical_annotation import (
     SiriusChemicalAnnotation,
 )
 from enpkg.monolith.data.sirius_data_classes.sirius_configuration_class import (
-    SiriusEnricherConfig,
+    SiriusEnhancerConfig,
 )
 
-__all__ = ["SiriusChemicalAnnotation", "SiriusEnricherConfig"]
+__all__ = ["SiriusChemicalAnnotation", "SiriusEnhancerConfig"]

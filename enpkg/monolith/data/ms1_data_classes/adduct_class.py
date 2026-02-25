@@ -2,7 +2,10 @@
 
 from typing import Dict
 from dataclasses import dataclass
+
 import numpy as np
+from pydantic import BaseModel, ConfigDict, field_validator, ValidationError, model_validator
+
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.otl_class import Match
 
@@ -52,7 +55,7 @@ class AdductRecipe:
         ) / self.charge
 
 
-class ChemicalAdduct:
+class ChemicalAdduct(BaseModel):
     """Data class representing a chemical adduct.
 
     Attributes:
@@ -66,27 +69,39 @@ class ChemicalAdduct:
         The mass of the adduct determined using the recipe and the exact mass of the Lotus entries.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True) # For handling np.ndarrays. Will be removed once Lotus class is refactored
     lotus: list[Lotus]
     recipe: AdductRecipe
-    adduct_mass: float
+    adduct_mass: float | None = None
 
-    def __init__(self, lotus: list[Lotus], recipe: AdductRecipe):
-        assert len(lotus) > 0, "The lotus must not be empty"
-
+    @field_validator("lotus", mode="after")
+    @classmethod
+    def validate_lotus(cls, lotus:list[Lotus]) -> list[Lotus]:
+        """"Validate that the list of lotus entries"""
+        if len(lotus) == 0:
+            raise ValueError("The lotus must not be empty")
+        
         # All lotus entries must have the same exact mass and chemical formula
-        structure_exact_mass = lotus[0].structure_exact_mass
         structure_molecular_formula = lotus[0].structure_molecular_formula
-        for lotus_entry in lotus[1:]:
-            assert (
-                lotus_entry.structure_molecular_formula == structure_molecular_formula
-            ), (
-                f"All lotus entries must have the same molecular formula, "
-                f"but got {lotus_entry.structure_molecular_formula} and {structure_molecular_formula}"
-            )
 
-        self.lotus = lotus
-        self.recipe = recipe
-        self.adduct_mass = recipe.compute_adduct_mass(structure_exact_mass)
+        wrong_mass_entries = [
+            lotus_entry for lotus_entry in lotus[1:]
+            if lotus_entry.structure_molecular_formula != structure_molecular_formula
+        ]
+        if wrong_mass_entries:
+            raise ValueError(
+                f"All lotus entries must have the same molecular formula, "
+                f"but got {structure_molecular_formula} and {[entry.structure_molecular_formula for entry in wrong_mass_entries]}"
+            )
+        return lotus
+    
+    @model_validator(mode="after")
+    def compute_adduct_mass(self) -> "ChemicalAdduct":
+        """Compute the adduct mass using the recipe and the exact mass of the Lotus entries."""
+        
+        if self.adduct_mass is None:
+            self.adduct_mass = self.recipe.compute_adduct_mass(self.lotus[0].structure_exact_mass)
+        return self
 
     @property
     def short_inchikey(self) -> str:
@@ -112,12 +127,12 @@ class ChemicalAdduct:
 
     def get_hammer_pathway_scores(self) -> np.ndarray:
         """Return the pathway scores for the adduct."""
-        return self.lotus[0].structure_taxonomy_hammer_pathways.values
+        return self.lotus[0].structure_taxonomy_hammer_pathways
 
     def get_hammer_superclass_scores(self) -> np.ndarray:
         """Return the superclass scores for the adduct."""
-        return self.lotus[0].structure_taxonomy_hammer_superclasses.values
+        return self.lotus[0].structure_taxonomy_hammer_superclasses
 
     def get_hammer_class_scores(self) -> np.ndarray:
         """Return the class scores for the adduct."""
-        return self.lotus[0].structure_taxonomy_hammer_classes.values
+        return self.lotus[0].structure_taxonomy_hammer_classes

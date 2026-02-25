@@ -71,9 +71,6 @@ class AnalysisLoader:
         if intensity_col is None:
             raise ValueError("No column containing 'Peak height' or 'Peak area' found in quantification table")
         
-        for spectrum in spectra[:100]:
-            print(spectrum.metadata)
-        
         return Analysis(
             run_name=run_name,
             spectra=tuple(AnnotatedSpectrum(

@@ -1,11 +1,11 @@
-"""Submodule providing the configuration classes for the ISDB enricher."""
+"""Submodule providing the configuration classes for the ISDB enhancer."""
 
-from enpkg.monolith.data.isdb_data_classes.isdb_configuration_class import ISDBEnricherConfig
+from enpkg.monolith.configuration.isdb_configuration_class import ISDBEnhancerConfig
 from enpkg.monolith.data.isdb_data_classes.isdb_chemical_annotation import (
     ISDBChemicalAnnotation,
 )
 
 __all__ = [
-    "ISDBEnricherConfig",
+    "ISDBEnhancerConfig",
     "ISDBChemicalAnnotation",
 ]

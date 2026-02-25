@@ -2,6 +2,8 @@
 
 from typing import Optional, Set
 import numpy as np
+from pydantic import BaseModel
+
 from enpkg.monolith.data.lotus_class import (
     Lotus,
 )
@@ -48,7 +50,7 @@ class ISDBChemicalAnnotation(ChemicalAnnotation):
         # All of the pathway scores are associated to the same InChIKey, so we can
         # just return the pathway scores of the first Lotus entry as they must all
         # be the same.
-        return self.lotus[0].structure_taxonomy_hammer_pathways.values
+        return self.lotus[0].structure_taxonomy_hammer_pathways
 
     def get_hammer_superclass_scores(self) -> Optional[np.ndarray]:
         """Return the superclass scores for the ISDB chemical annotation."""
@@ -58,7 +60,7 @@ class ISDBChemicalAnnotation(ChemicalAnnotation):
         # All of the superclass scores are associated to the same InChIKey, so we can
         # just return the superclass scores of the first Lotus entry as they must all
         # be the same.
-        return self.lotus[0].structure_taxonomy_hammer_superclasses.values
+        return self.lotus[0].structure_taxonomy_hammer_superclasses
 
     def get_hammer_class_scores(self) -> Optional[np.ndarray]:
         """Return the class scores for the ISDB chemical annotation."""
@@ -68,7 +70,7 @@ class ISDBChemicalAnnotation(ChemicalAnnotation):
         # All of the class scores are associated to the same InChIKey, so we can
         # just return the class scores of the first Lotus entry as they must all
         # be the same.
-        return self.lotus[0].structure_taxonomy_hammer_classes.values
+        return self.lotus[0].structure_taxonomy_hammer_classes
 
     def lotus_annotations(self) -> Optional[list[Lotus]]:
         """Return the list of Lotus annotations."""

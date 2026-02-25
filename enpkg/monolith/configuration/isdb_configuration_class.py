@@ -4,7 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, model_validator
 from typing import Self
 
-from enpkg.monolith.configuration.config import EnricherConfig
+from enpkg.monolith.configuration.config import EnhancerConfig
 
 
 class GeneralParams(BaseModel):
@@ -17,6 +17,15 @@ class GeneralParams(BaseModel):
     redownload_if_exists: list | bool = Field(
         default=False,
         description="Whether to redownload database files if they already exist locally"
+    )
+    download_dir: Optional[str] = Field(
+        default=None,
+        description="Directory for downloaded files. When set, paths are auto-derived from URLs."
+    )
+    polarity: str = Field(
+        default="pos",
+        pattern="^(pos|neg)$",
+        description="Ionization mode polarity ('pos' or 'neg')"
     )
     
 
@@ -210,8 +219,8 @@ class ReweightingParams(BaseModel):
         return self
 
 
-class ISDBEnricherConfig(EnricherConfig, BaseModel):
-    """Configuration for ISDB Enrichers.
+class MSEnhancerConfig(EnhancerConfig, BaseModel):
+    """Configuration for ISDB Enhancers.
     
     Combines all sub-configurations for spectral matching against
     the In-Silico DataBase with taxonomic and chemical reweighting.

@@ -3,8 +3,8 @@ from abc import ABC, abstractmethod
 from matchms.importing import load_from_mgf
 from pydantic import BaseModel
 
-from monolith.data.analysis_loader import AnalysisLoader
-from monolith.configuration.network_enricher_config import NetworkEnricherConfig
+from monolith.loaders.analysis_loader import AnalysisLoader
+from monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
 from monolith.pipeline.taxonomical_enrichment_step import TaxonomicalEnrichmentStep
 from monolith.pipeline.molecular_networking_step import MolecularNetworkingStep
         
@@ -21,7 +21,7 @@ if __name__ == "__main__":
 
     taxonomical_enrichment_step = TaxonomicalEnrichmentStep()
     molecular_networking_step = MolecularNetworkingStep(
-        NetworkEnricherConfig(
+        NetworkEnhancerConfig(
             mn_msms_mz_tol=0.01,
             mn_score_cutoff=0.7,
             mn_top_n=15,
