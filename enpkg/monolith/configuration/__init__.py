@@ -1,1 +1,1 @@
-"""Configuration classes for the monolith enrichers."""
+"""Configuration classes for the monolith enhancers."""

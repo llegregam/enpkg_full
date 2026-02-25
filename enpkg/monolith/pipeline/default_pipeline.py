@@ -4,83 +4,83 @@ from time import time
 from typing import Type, Optional
 import yaml
 from monolith.data import (
-    ISDBEnricherConfig,
-    NetworkEnricherConfig,
-    MS1EnricherConfig,
-    SiriusEnricherConfig,
+    ISDBEnhancerConfig,
+    NetworkEnhancerConfig,
+    MS1EnhancerConfig,
+    SiriusEnhancerConfig,
 )
 from monolith.pipeline.pipeline import Pipeline
-from monolith.enrichers.enricher import Enricher
-from monolith.enrichers.taxa_enricher import TaxaEnricher
-from monolith.enrichers.isdb_enricher import ISDBEnricher
-from monolith.enrichers.ms1_enricher import MS1Enricher
-from monolith.enrichers.network_enricher import NetworkEnricher
-from monolith.enrichers.sirius_enricher import SiriusEnricher
+from monolith.enhancers.enhancer import Enhancer
+from monolith.enhancers.taxa_enhancer import TaxaEnhancer
+from monolith.enhancers.isdb_enhancer import ISDBEnhancer
+from monolith.enhancers.ms1_enhancer import MS1Enhancer
+from monolith.enhancers.network_enhancer import NetworkEnhancer
+from monolith.enhancers.sirius_enhancer import SiriusEnhancer
 from monolith.exceptions import ConfigurationError
 
 
 class DefaultPipeline(Pipeline):
     """Default pipeline for ENPKG analysis."""
 
-    enrichers: list[Type[Enricher]]
+    enhancers: list[Type[Enhancer]]
 
     def __init__(
         self,
-        isdb_configuration: ISDBEnricherConfig,
-        ms1_configuration: MS1EnricherConfig,
-        network_configuration: NetworkEnricherConfig,
-        sirius_configuration: SiriusEnricherConfig,
+        isdb_configuration: ISDBEnhancerConfig,
+        ms1_configuration: MS1EnhancerConfig,
+        network_configuration: NetworkEnhancerConfig,
+        sirius_configuration: SiriusEnhancerConfig,
     ):
-        """Initializes the pipeline with a list of enrichers."""
+        """Initializes the pipeline with a list of enhancers."""
         super().__init__()
 
-        self.enrichers: list[Type[Enricher]] = []
+        self.enhancers: list[Type[Enhancer]] = []
 
-        # self.logger.info("Initializing taxa enricher")
+        # self.logger.info("Initializing taxa enhancer")
         # start = time()
-        # taxa_enricher = TaxaEnricher()
-        # self.enrichers.append(taxa_enricher)
-        # self.logger.info("%s took %.2f seconds", taxa_enricher.name(), time() - start)
+        # taxa_enhancer = TaxaEnhancer()
+        # self.enhancers.append(taxa_enhancer)
+        # self.logger.info("%s took %.2f seconds", taxa_enhancer.name(), time() - start)
 
-        # self.logger.info("Initializing network enricher")
+        # self.logger.info("Initializing network enhancer")
         # start = time()
-        # network_enricher = NetworkEnricher(network_configuration)
-        # self.enrichers.append(network_enricher)
+        # network_enhancer = NetworkEnhancer(network_configuration)
+        # self.enhancers.append(network_enhancer)
         # self.logger.info(
-        #     "%s took %.2f seconds", network_enricher.name(), time() - start
+        #     "%s took %.2f seconds", network_enhancer.name(), time() - start
         # )
 
-        # self.logger.info("Initializing MS1 enricher")
+        # self.logger.info("Initializing MS1 enhancer")
         # start = time()
-        # ms1_enricher = MS1Enricher(
+        # ms1_enhancer = MS1Enhancer(
         #     ms1_configuration,
         #     logger=self.logger,
         # )
-        # self.enrichers.append(ms1_enricher)
+        # self.enhancers.append(ms1_enhancer)
         # self.logger.info(
-        #     "%s took %.2f seconds", ms1_enricher.name(), time() - start
+        #     "%s took %.2f seconds", ms1_enhancer.name(), time() - start
         # )
 
-        # self.logger.info("Initializing ISDB enricher")
+        # self.logger.info("Initializing ISDB enhancer")
         # start = time()
-        # isdb_enricher = ISDBEnricher(
+        # isdb_enhancer = ISDBEnhancer(
         #     isdb_configuration,
         #     logger=self.logger,
         # )
-        # self.enrichers.append(isdb_enricher)
+        # self.enhancers.append(isdb_enhancer)
         # self.logger.info(
-        #     "%s took %.2f seconds", taxa_enricher.name(), time() - start
+        #     "%s took %.2f seconds", taxa_enhancer.name(), time() - start
         # )
 
-        self.logger.info("Initializing Sirius enricher")
+        self.logger.info("Initializing Sirius enhancer")
         start = time()
-        sirius_enricher = SiriusEnricher(
+        sirius_enhancer = SiriusEnhancer(
             sirius_configuration,
             logger=self.logger,
         )
-        self.enrichers.append(sirius_enricher)
+        self.enhancers.append(sirius_enhancer)
         self.logger.info(
-            "%s took %.2f seconds", sirius_enricher.name(), time() - start
+            "%s took %.2f seconds", sirius_enhancer.name(), time() - start
         )
 
     @classmethod
@@ -90,14 +90,14 @@ class DefaultPipeline(Pipeline):
         with open(config, "r", encoding="utf-8") as file:
             global_configuration = yaml.safe_load(file)
 
-        isdb_configuration = ISDBEnricherConfig.from_dict(global_configuration["isdb"])
-        ms1_configuration = MS1EnricherConfig.from_dict(
-            global_configuration["ms1_enricher"]
+        isdb_configuration = ISDBEnhancerConfig.from_dict(global_configuration["isdb"])
+        ms1_configuration = MS1EnhancerConfig.from_dict(
+            global_configuration["ms1_enhancer"]
         )
-        network_configuration = NetworkEnricherConfig.from_dict(
+        network_configuration = NetworkEnhancerConfig.from_dict(
             global_configuration["network"]
         )
-        sirius_configuration = SiriusEnricherConfig.from_dict(
+        sirius_configuration = SiriusEnhancerConfig.from_dict(
             global_configuration["sirius"]
         )
 
@@ -112,6 +112,6 @@ class DefaultPipeline(Pipeline):
         """Returns the name of the pipeline."""
         return "Default pipeline"
 
-    def enrichers(self) -> list[Type[Enricher]]:
-        """Returns the list of enrichers."""
-        return self.enrichers
+    def enhancers(self) -> list[Type[Enhancer]]:
+        """Returns the list of enhancers."""
+        return self.enhancers

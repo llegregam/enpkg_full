@@ -6,7 +6,7 @@ from time import time
 from logging import Logger, getLogger
 from tqdm.auto import tqdm
 from monolith.data.batch_class import Batch
-from monolith.enrichers.enricher import Enricher
+from monolith.enhancers.enhancer import Enhancer
 
 
 class Pipeline(ABC):
@@ -24,32 +24,32 @@ class Pipeline(ABC):
         """Returns the name of the pipeline."""
 
     @abstractmethod
-    def enrichers(self) -> list[Type[Enricher]]:
-        """Returns the list of enrichers."""
+    def enhancers(self) -> list[Type[Enhancer]]:
+        """Returns the list of enhancers."""
 
     def process(self, batch: Batch) -> Batch:
         """Processes the batch of analyses."""
         assert isinstance(batch, Batch)
 
-        for enricher in tqdm(
-            self.enrichers,
+        for enhancer in tqdm(
+            self.enhancers,
             desc="Processing",
-            unit="enricher",
+            unit="enhancer",
             leave=False,
             dynamic_ncols=True,
         ):
             start = time()
             for analysis in tqdm(
                 batch.analyses,
-                desc=enricher.name(),
+                desc=enhancer.name(),
                 unit="analysis",
                 leave=False,
                 dynamic_ncols=True,
             ):
-                enricher.enrich(analysis)
+                enhancer.enrich(analysis)
             total_time = time() - start
             average_time_per_analysis = total_time / len(batch.analyses)
-            self.logger.info("%s took %.2f seconds", enricher.name(), total_time)
+            self.logger.info("%s took %.2f seconds", enhancer.name(), total_time)
             self.logger.info(
                 "Average time per analysis: %.2f seconds", average_time_per_analysis
             )

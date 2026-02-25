@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 
 @dataclass
-class SiriusEnricherConfig:
-    """Dataclass for the Sirius Enricher configuration."""
+class SiriusEnhancerConfig:
+    """Dataclass for the Sirius Enhancer configuration."""
 
     path_to_sirius: str
     output_directory: str
@@ -18,8 +18,8 @@ class SiriusEnricherConfig:
     sirius_password_env: str
 
     @classmethod
-    def from_dict(cls, config: dict) -> "SiriusEnricherConfig":
-        """Create a SiriusEnricherConfig from a dictionary."""
+    def from_dict(cls, config: dict) -> "SiriusEnhancerConfig":
+        """Create a SiriusEnhancerConfig from a dictionary."""
         return cls(
             path_to_sirius=config["paths"]["path_to_sirius"],
             output_directory=config["paths"]["output_directory"],

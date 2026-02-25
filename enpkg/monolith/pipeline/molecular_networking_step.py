@@ -7,15 +7,15 @@ import networkx as nx
 
 from monolith.data.analysis import Analysis
 from monolith.pipeline.base_pipeline_step import PipelineStep
-from monolith.enrichers.network_enricher import NetworkEnricher
-from monolith.configuration.network_enricher_config import NetworkEnricherConfig
+from monolith.enhancers.network_enhancer import NetworkEnhancer
+from monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
 
 class MolecularNetworkingStep(PipelineStep):
     """
     A pipeline step that performs molecular networking.
     """
 
-    def __init__(self, config: NetworkEnricherConfig):
+    def __init__(self, config: NetworkEnhancerConfig):
 
         super().__init__(config)
 
@@ -61,6 +61,6 @@ class MolecularNetworkingStep(PipelineStep):
 
     def process(self, analysis: Analysis) -> Analysis:
         
-        enricher = NetworkEnricher(configuration=self.config)
-        molecular_network = enricher.enrich(analysis)
+        enhancer = NetworkEnhancer(configuration=self.config)
+        molecular_network = enhancer.enrich(analysis)
         return analysis.model_copy(update={"molecular_network": molecular_network})

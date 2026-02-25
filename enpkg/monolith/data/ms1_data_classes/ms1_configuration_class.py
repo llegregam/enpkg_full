@@ -1,12 +1,12 @@
-"""MS1 Enricher configuration class."""
+"""MS1 Enhancer configuration class."""
 
 from dataclasses import dataclass
 from typing import Dict, Any
 
 
 @dataclass
-class MS1EnricherConfig:
-    """Configuration for MS1 Enricher."""
+class MS1EnhancerConfig:
+    """Configuration for MS1 Enhancer."""
 
     taxo_db_metadata_path: str
     taxo_db_metadata_url: str
@@ -20,7 +20,7 @@ class MS1EnricherConfig:
     polarity: str
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MS1EnricherConfig":
+    def from_dict(cls, data: Dict[str, Any]) -> "MS1EnhancerConfig":
         """Creates an instance from a dictionary."""
         return cls(
             taxo_db_metadata_path=data["taxo_db_metadata_path"],

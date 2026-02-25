@@ -1,13 +1,13 @@
 """
-Abstract configuration class for the enrichers.
+Abstract configuration class for the enhancers.
 """
 from abc import ABC
 
 from pydantic import BaseModel, ConfigDict
 import yaml
 
-class EnricherConfig(BaseModel, ABC):
-    """Interface for building enricher configurations."""
+class EnhancerConfig(BaseModel, ABC):
+    """Interface for building enhancer configurations."""
 
     # Allows using extra fields or forbidden them for strictness
     model_config = ConfigDict(extra='forbid')

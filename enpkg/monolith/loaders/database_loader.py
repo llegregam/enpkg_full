@@ -1,5 +1,5 @@
 """
-Database downloader & loader for the different enrichers. 
+Database downloader & loader for the different enhancers. 
 """
 
 from typing import NamedTuple
@@ -13,7 +13,7 @@ import pandas as pd
 from matchms import Spectrum
 from downloaders import BaseDownloader
 
-from enpkg.monolith.configuration.isdb_configuration_class import ISDBEnricherConfig
+from enpkg.monolith.configuration.isdb_configuration_class import MSEnhancerConfig
 from enpkg.monolith.exceptions import DBLoaderError
 
 # Valid URL field names that can be used in redownload_if_exists
@@ -39,7 +39,7 @@ class DBLoader:
     Loader for the different databases (ISDB, Taxonomical, etc).
     """
 
-    def __init__(self, configuration: ISDBEnricherConfig, logger: Logger):
+    def __init__(self, configuration: MSEnhancerConfig, logger: Logger):
 
         self.configuration = configuration
         self.logger = logger

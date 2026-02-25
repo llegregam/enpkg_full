@@ -3,7 +3,7 @@ from typing import Dict, Any
 
 
 @dataclass
-class NetworkEnricherConfig:
+class NetworkEnhancerConfig:
     """Parameters for molecular networking."""
 
     mn_msms_mz_tol: float
@@ -12,9 +12,9 @@ class NetworkEnricherConfig:
     mn_top_n: int
 
     @staticmethod
-    def from_dict(data: Dict[str, Any]) -> "NetworkEnricherConfig":
+    def from_dict(data: Dict[str, Any]) -> "NetworkEnhancerConfig":
         """Creates an instance from a dictionary."""
-        return NetworkEnricherConfig(
+        return NetworkEnhancerConfig(
             mn_msms_mz_tol=data["mn_msms_mz_tol"],
             mn_score_cutoff=data["mn_score_cutoff"],
             mn_max_links=data["mn_max_links"],
