@@ -15,7 +15,7 @@ from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.otl_class import Match
 from enpkg.monolith.data.ms1_data_classes import ChemicalAdduct, MS1EnhancerConfig
 from enpkg.monolith.utils import binary_search_by_key, label_propagation_algorithm
-from enpkg.monolith.configuration.isdb_configuration_class import MSEnhancerConfig, GeneralParams, Urls, Paths
+from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig, GeneralParams, Urls, Paths
 from enpkg.monolith.loaders.database_loader import DBLoader
 
 

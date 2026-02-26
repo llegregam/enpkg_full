@@ -17,7 +17,7 @@ from matchms import Spectrum
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
-from enpkg.monolith.configuration.isdb_configuration_class import ISDBEnhancerConfig, GeneralParams, Urls, Paths
+from enpkg.monolith.configuration.MSEnhancer_config import ISDBEnhancerConfig, GeneralParams, Urls, Paths
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.otl_class import Match

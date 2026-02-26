@@ -13,7 +13,7 @@ import pandas as pd
 from matchms import Spectrum
 from downloaders import BaseDownloader
 
-from enpkg.monolith.configuration.isdb_configuration_class import MSEnhancerConfig
+from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.exceptions import DBLoaderError
 
 # Valid URL field names that can be used in redownload_if_exists

@@ -3,7 +3,7 @@ Docstring for enpkg.monolith.pipeline.ms2_enrichment
 """
 import logging
 
-from enpkg.monolith.configuration.isdb_configuration_class import ISDBEnhancerConfig, Urls, GeneralParams, Paths
+from enpkg.monolith.configuration.MSEnhancer_config import ISDBEnhancerConfig, Urls, GeneralParams, Paths
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.pipeline.base_pipeline_step import PipelineStep
