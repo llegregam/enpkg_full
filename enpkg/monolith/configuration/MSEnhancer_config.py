@@ -153,7 +153,15 @@ class DownloaderParams(BaseModel):
         default=None,
         description="Directory for downloaded files. When set, paths are auto-derived from URLs."
     )
-
+    paths: Paths = Field(
+        ...,
+        description="Local file paths for databases"
+    )
+    urls: Optional[Urls] = Field(
+        default=None,
+        description="Remote URLs for database downloads (optional)"
+    )
+    
 class MSEnhancerConfig(EnhancerConfig, BaseModel):
     """Configuration for ISDB Enhancers.
     
@@ -169,14 +177,7 @@ class MSEnhancerConfig(EnhancerConfig, BaseModel):
         default_factory=DownloaderParams,
         description="Parameters for controlling database downloading behavior"
     )
-    paths: Paths = Field(
-        ...,
-        description="Local file paths for databases"
-    )
-    urls: Optional[Urls] = Field(
-        default=None,
-        description="Remote URLs for database downloads (optional)"
-    )
+    
     spectral_match_params: SpectralMatchParams = Field(
         default_factory=SpectralMatchParams,
         description="Parameters for spectral matching"

@@ -45,7 +45,7 @@ class DBLoader:
         self.logger = logger
         self.downloads: list[DownloadInfo] = []
 
-        if self.configuration.urls is not None:
+        if self.configuration.downloader_params.urls is not None:
             self._validate_redownload_fields()
             self._collect_downloads()
             if self.downloads:
@@ -57,7 +57,7 @@ class DBLoader:
     def _validate_redownload_fields(self) -> None:
         """Validate that redownload_if_exists contains only valid URL field names."""
         
-        redownload = self.configuration.general_params.redownload_if_exists
+        redownload = self.configuration.downloader_params.redownload_if_exists
         
         # If it's a boolean, no validation needed
         if isinstance(redownload, bool):
@@ -78,19 +78,19 @@ class DBLoader:
         If download_dir is specified, paths are auto-derived from URLs.
         Otherwise, uses explicitly defined paths from configuration.
         """
-        download_dir = self.configuration.general_params.download_dir
+        download_dir = self.configuration.downloader_params.download_dir
         
-        for field_name, url in self.configuration.urls.items():
+        for field_name, url in self.configuration.downloader_params.urls.items():
             if download_dir is not None:
                 # Derive path from URL filename + download_dir
                 local_path = self._derive_path_from_url(url, download_dir)
                 # Update configuration paths so they're available later
-                if hasattr(self.configuration.paths, field_name):
-                    setattr(self.configuration.paths, field_name, local_path)
+                if hasattr(self.configuration.downloader_params.paths, field_name):
+                    setattr(self.configuration.downloader_params.paths, field_name, local_path)
                 self.downloads.append(DownloadInfo(field_name, url, local_path))
             else:
                 # Use explicit path from configuration
-                local_path = getattr(self.configuration.paths, field_name, None)
+                local_path = getattr(self.configuration.downloader_params.paths, field_name, None)
                 if local_path is not None:
                     self.downloads.append(DownloadInfo(field_name, url, local_path))
                 else:
@@ -125,7 +125,7 @@ class DBLoader:
         for download in self.downloads:
             try:
                 p = Path(download.local_path)
-                redownload = self.configuration.general_params.redownload_if_exists
+                redownload = self.configuration.downloader_params.redownload_if_exists
                 should_redownload = (
                     redownload is True or 
                     (isinstance(redownload, list) and download.field_name in redownload)
@@ -182,9 +182,9 @@ class DBLoader:
         
         if self.downloads:
             paths_to_reconcile = [(d.field_name, d.local_path) for d in self.downloads]
-        elif self.configuration.paths is not None:
+        elif self.configuration.downloader_params.paths is not None:
             for field_name in VALID_URL_FIELDS:
-                local_path = getattr(self.configuration.paths, field_name, None)
+                local_path = getattr(self.configuration.downloader_params.paths, field_name, None)
                 if local_path is not None:
                     paths_to_reconcile.append((field_name, local_path))
         
@@ -210,8 +210,8 @@ class DBLoader:
             
             # Update configuration paths to point to actual file
             if actual_path != file_path:
-                if hasattr(self.configuration.paths, field_name):
-                    setattr(self.configuration.paths, field_name, str(actual_path))
+                if hasattr(self.configuration.downloader_params.paths, field_name):
+                    setattr(self.configuration.downloader_params.paths, field_name, str(actual_path))
                     self.logger.info(
                         f"Updated path for '{field_name}': {file_path} -> {actual_path}"
                     )
@@ -244,14 +244,14 @@ class DBLoader:
         
         start = time()
         self.lotus_metadata: pd.DataFrame = pd.read_csv(
-            self.configuration.paths.taxo_db_metadata, low_memory=False
+            self.configuration.downloader_params.paths.taxo_db_metadata, low_memory=False
         )
         self.logger.info(f"Loaded Taxonomical Database metadata in {time() - start:.2f} seconds")
         self.logger.debug(f"Loaded Taxonomical Database metadata with columns: {self.lotus_metadata.columns.tolist()}")
         
         start = time()
         self.lotus_metadata_pathways: pd.DataFrame = pd.read_csv(
-            self.configuration.paths.taxo_db_pathways,
+            self.configuration.downloader_params.paths.taxo_db_pathways,
             index_col=0,
         )
         self.logger.info(f"Loaded Taxonomical Database pathways in {time() - start:.2f} seconds")
@@ -260,7 +260,7 @@ class DBLoader:
         
         start = time()
         self.lotus_metadata_superclasses: pd.DataFrame = pd.read_csv(
-            self.configuration.paths.taxo_db_superclasses,
+            self.configuration.downloader_params.paths.taxo_db_superclasses,
             index_col=0,
         )
         self.logger.info(f"Loaded Taxonomical Database superclasses in {time() - start:.2f} seconds")
@@ -269,7 +269,7 @@ class DBLoader:
         
         start = time()
         self.lotus_metadata_classes: pd.DataFrame = pd.read_csv(
-            self.configuration.paths.taxo_db_classes,
+            self.configuration.downloader_params.paths.taxo_db_classes,
             index_col=0,
         )
         self.logger.info(f"Loaded Taxonomical Database classes in {time() - start:.2f} seconds")
@@ -285,10 +285,10 @@ class DBLoader:
         """Load spectral databases into memory."""
         start = time()
         if mode == "pos":
-            with open(self.configuration.paths.spectral_db_pos, "rb") as f:
+            with open(self.configuration.downloader_params.paths.spectral_db_pos, "rb") as f:
                 self.spectral_db: list[Spectrum] = pickle.load(f)
         elif mode == "neg":
-            with open(self.configuration.paths.spectral_db_neg, "rb") as f:
+            with open(self.configuration.downloader_params.paths.spectral_db_neg, "rb") as f:
                 self.spectral_db: list[Spectrum] = pickle.load(f)
         else:
             raise ValueError(f"Invalid mode '{mode}' for loading spectral database")

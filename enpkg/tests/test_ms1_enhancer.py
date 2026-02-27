@@ -8,6 +8,7 @@ import pytest
 from enpkg.monolith.enhancers.ms1_enhancer import MS1Enhancer
 from enpkg.monolith.data.ms1_data_classes.adduct_class import ChemicalAdduct
 from enpkg.monolith.configuration.MSEnhancer_config import (
+    DownloaderParams,
     MSEnhancerConfig,
     GeneralParams,
     Urls,
@@ -32,12 +33,15 @@ def ms1_config():
     )
     return MSEnhancerConfig(
         general_params=GeneralParams(
-            redownload_if_exists=False,
-            download_dir=str(DATABASE_DIR),
+            recompute=False,
             polarity="pos",
         ),
-        urls=urls,
-        paths=paths,
+        downloader_params=DownloaderParams(
+            redownload_if_exists=False,
+            download_dir=str(DATABASE_DIR),
+            urls=urls,
+            paths=paths,
+        )
     )
 
 
