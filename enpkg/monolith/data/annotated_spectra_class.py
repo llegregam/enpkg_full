@@ -43,37 +43,11 @@ class AnnotatedSpectrum(Spectrum):
         # self._sirius_annotations: list[SiriusChemicalAnnotation] = []
         self._ms2_annotations: list[MS2ChemicalAnnotation] = []
         self._ms1_annotations: list[ChemicalAdduct] = []
-    #     # self._ms1_hammer_pathway_scores: Optional[np.ndarray] = None
-    #     # self._ms1_hammer_class_scores: Optional[np.ndarray] = None
-    #     # self._ms1_hammer_superclass_scores: Optional[np.ndarray] = None
-    #     # self._isdb_hammer_pathway_scores: Optional[np.ndarray] = None
-    #     # self._isdb_hammer_superclass_scores: Optional[np.ndarray] = None
-    #     # self._isdb_hammer_class_scores: Optional[np.ndarray] = None
+        self._ms1_pathway_scores: Optional[np.ndarray] = None
+        self._ms1_superclass_scores: Optional[np.ndarray] = None
+        self._ms1_class_scores: Optional[np.ndarray] = None
 
-    # def set_ms1_hammer_pathway_scores(self, npc_pathway_scores: np.ndarray):
-    #     """Set the ms1 propagated NPC pathway annotations"""
-    #     self._ms1_hammer_pathway_scores = npc_pathway_scores
-
-    # def set_ms1_hammer_superclass_scores(self, npc_superclass_scores: np.ndarray):
-    #     """Set the ms1 propagated NPC superclass annotations"""
-    #     self._ms1_hammer_superclass_scores = npc_superclass_scores
-
-    # def set_ms1_hammer_class_scores(self, npc_class_scores: np.ndarray):
-    #     """Set the ms1 propagated NPC class annotations"""
-    #     self._ms1_hammer_class_scores = npc_class_scores
-
-    # def set_isdb_hammer_pathway_scores(self, npc_pathway_scores: np.ndarray):
-    #     """Set the ISDB propagated NPC pathway annotations"""
-    #     self._isdb_hammer_pathway_scores = npc_pathway_scores
-
-    # def set_isdb_hammer_superclass_scores(self, npc_superclass_scores: np.ndarray):
-    #     """Set the ISDB propagated NPC superclass annotations"""
-    #     self._isdb_hammer_superclass_scores = npc_superclass_scores
-
-    # def set_isdb_hammer_class_scores(self, npc_class_scores: np.ndarray):
-    #     """Set the ISDB propagated NPC class annotations"""
-    #     self._isdb_hammer_class_scores = npc_class_scores
-
+    # SPECTRUM PROPERTIES
     @property
     def precursor_mz(self):
         """Return the precursor mass over charge"""
@@ -88,7 +62,39 @@ class AnnotatedSpectrum(Spectrum):
     def feature_id(self) -> int:
         """Return the feature ID of the spectrum"""
         return self.get("feature_id")
+    
+    # NPC/HAMMER SCORES
+    @property
+    def ms1_pathway_scores(self) -> Optional[np.ndarray]:
+        """Return the MS1 propagated NPC pathway annotations"""
+        return self._ms1_hammer_pathway_scores
 
+    @property
+    def ms1_superclass_scores(self) -> Optional[np.ndarray]:
+        """Return the MS1 propagated NPC superclass annotations"""
+        return self._ms1_hammer_superclass_scores
+
+    @property
+    def ms1_class_scores(self) -> Optional[np.ndarray]:
+        """Return the MS1 propagated NPC class annotations"""
+        return self._ms1_hammer_class_scores
+
+    @ms1_pathway_scores.setter
+    def ms1_pathway_scores(self, pathway_scores: np.ndarray):
+        """Set the MS1 propagated NPC pathway annotations"""
+        self._ms1_hammer_pathway_scores = pathway_scores
+
+    @ms1_superclass_scores.setter
+    def ms1_superclass_scores(self, superclass_scores: np.ndarray):
+        """Set the MS1 propagated NPC superclass annotations"""
+        self._ms1_hammer_superclass_scores = superclass_scores
+
+    @ms1_class_scores.setter
+    def ms1_class_scores(self, class_scores: np.ndarray):
+        """Set the MS1 propagated NPC class annotations"""
+        self._ms1_hammer_class_scores = class_scores
+
+    # ANNOTATIONS
     @property
     def ms1_annotations(self) -> list[ChemicalAdduct]:
         """Return the MS1 annotations"""
@@ -109,9 +115,9 @@ class AnnotatedSpectrum(Spectrum):
         """Set the MS2 annotations"""
         self._ms2_annotations = annotation_list
 
-    def has_ms2_annotations(self) -> bool:
-        """Returns whether the spectrum has MS2 annotations"""
-        return len(self._ms2_annotations) > 0
+    def has_ms1_annotations(self) -> bool:
+        """Returns whether the spectrum has MS1 annotations"""
+        return len(self._ms1_annotations) > 0
 
     def has_ms2_annotations(self) -> bool:
         """Returns whether the spectrum has MS2 annotations"""
