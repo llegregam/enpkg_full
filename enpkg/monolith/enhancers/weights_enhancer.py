@@ -1,26 +1,161 @@
 
+import logging
+from typing import Optional
+
+from tqdm import tqdm
+import numpy as np
+
+from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
 from enpkg.monolith.enhancers.enhancer import Enhancer
-from enpkg.monolith.models.analysis import Analysis
+from enpkg.monolith.data.analysis import Analysis
+from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.data.otl_class import Match
+from enpkg.monolith.utils.label_propagation_algorithm import label_propagation_algorithm
 
 
 class WeightsEnhancer(Enhancer):
     """Enhancer that adds taxonomical and chemical weights to the annotations and reranks them."""
 
-    def __init__(self, configuration: ReweightingConfig, logger):
+    def __init__(self, configuration:ReweightingConfig, logger: logging.Logger):
 
         self.configuration = configuration
         self.logger = logger
+
+        self.logger.info("Loading Databases")
+        self.databases = DBLoader(configuration=configuration, logger=logger) # use the db_loader to get db paths to ensure they are downloaded
+        self.databases.load_taxonomical_databases()
+
 
     def name(self) -> str:
         """Returns the name of the enhancer."""
         return "Weights Enhancer"
     
-    def enrich(self, analysis: Analysis) -> Analysis:
+    def compute_NPC(self, analysis: Analysis) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+        pathway_features = np.zeros(
+            (analysis.number_of_spectra, self._number_of_pathways), dtype=np.float32
+        )
+        superclass_features = np.zeros(
+            (analysis.number_of_spectra, self._number_of_superclasses),
+            dtype=np.float32,
+        )
+        class_features = np.zeros(
+            (analysis.number_of_spectra, self._number_of_classes), dtype=np.float32
+        )
+        best_ott_match: Optional[Match] = analysis.best_ott_matches
+
+        for i, spectrum in tqdm(
+            enumerate(analysis.spectra),
+            leave=False,
+            total=analysis.number_of_spectra,
+            desc="Computing MS1 NPC scores",
+            dynamic_ncols=True,
+        ):
+            # If the spectrum has no adducts, we cannot make assumptions regarding its scores,
+            # and therefore we give uniform scores to all pathways, superclasses, and classes.
+            if not spectrum.has_ms1_annotations():
+                pathway_features[i] = np.zeros(
+                    shape=(self._number_of_pathways,),
+                )
+                superclass_features[i] = np.zeros(
+                    shape=(self._number_of_superclasses,),
+                )
+                class_features[i] = np.zeros(
+                    shape=(self._number_of_classes,),
+                )
+                continue
+
+            # Now that we have determined the adducts potentially associated with this
+            # spectrum, we can populate the associated features with the adducts' pathway,
+            # superclass, and class annotations, weighted by the adduct's normalized
+            # taxonomical similarity score.
+
+            # First, we compute the maximal normalized taxonomical similarity score for
+            # each adducts, if we do have a known sample taxonomy match.
+
+            if best_ott_match is not None:
+                taxonomical_similarities: np.ndarray = np.fromiter(
+                    (
+                        adduct.maximal_normalized_taxonomical_similarity(best_ott_match)
+                        for adduct in spectrum.ms1_annotations
+                    ),
+                    dtype=np.float32,
+                )
+            else:
+                taxonomical_similarities: np.ndarray = np.ones(
+                    shape=(len(spectrum.ms1_annotations),), dtype=np.float32
+                )
+
+            total_taxonomical_similarities = np.sum(taxonomical_similarities)
+            self.logger.debug(
+                f"Spectrum {i}: taxonomical similarities = {taxonomical_similarities},\nTotal = {total_taxonomical_similarities}"
+            )
+            if total_taxonomical_similarities > 0:
+                taxonomical_similarities /= total_taxonomical_similarities
+
+            for taxonomical_similarity, adduct in zip(
+                taxonomical_similarities, spectrum.ms1_annotations
+            ):
+                pathway_features[i] += (
+                    taxonomical_similarity * adduct.get_hammer_pathway_scores()
+                )
+
+                superclass_features[i] += (
+                    taxonomical_similarity * adduct.get_hammer_superclass_scores()
+                )
+
+                class_features[i] += (
+                    taxonomical_similarity * adduct.get_hammer_class_scores()
+                )
+        return pathway_features, superclass_features, class_features
+    
+    def enhance(self, analysis: Analysis) -> Analysis:
         """Adds taxonomical and chemical weights to the annotations and reranks them."""
 
-        best_ott_matches = analysis.ott_matches[0]
-        self.logger.debug(
-            f"OTT matches for the analysis: {analysis.ott_matches}"
-        )
-        
+        self._number_of_pathways = self.databases.lotus_metadata_pathways.shape[1]
+        self._number_of_superclasses = self.databases.lotus_metadata_superclasses.shape[1]
+        self._number_of_classes = self.databases.lotus_metadata_classes.shape[1]
 
+        pathway_features, superclass_features, class_features = self.compute_NPC(analysis)
+
+        loading_bar = tqdm(
+            desc="Computing LPA scores",
+            dynamic_ncols=True,
+            leave=False,
+            total=3,
+        )
+
+        propagated_pathway = label_propagation_algorithm(
+            graph=analysis.molecular_network,
+            node_names=analysis.feature_ids,
+            features=pathway_features,
+            normalize=False,
+        )
+
+        loading_bar.update(1)
+
+        propagated_superclass = label_propagation_algorithm(
+            graph=analysis.molecular_network,
+            node_names=analysis.feature_ids,
+            features=superclass_features,
+            normalize=False,
+        )
+
+        loading_bar.update(1)
+
+        propagated_class = label_propagation_algorithm(
+            graph=analysis.molecular_network,
+            node_names=analysis.feature_ids,
+            features=class_features,
+            normalize=False,
+        )
+
+        loading_bar.update(1)
+        loading_bar.close()
+
+        for i, spectrum in enumerate(analysis.spectra):
+            spectrum.ms1_pathway_scores = propagated_pathway[i]
+            spectrum.ms1_superclass_scores = propagated_superclass[i]
+            spectrum.ms1_class_scores = propagated_class[i]
+
+        return analysis
