@@ -28,6 +28,7 @@ class Analysis(BaseModel):
     ionization_mode: str
     ott_matches: list[Match] = Field(default_factory=list)
     molecular_network: Optional[nx.Graph] = None
+    ott_matches: Optional[list[Match]] = Field(default_factory=list)
 
     # --- Convenience properties ---
     
@@ -61,6 +62,11 @@ class Analysis(BaseModel):
                 f"Source taxon '{self.source_taxon}' does not contain genus and species."
             )
         return tuple(self.source_taxon.split(" ", 2)[:2])
+    
+    @property
+    def best_ott_matches(self) -> Optional[Match]:
+        """Returns the best OTT match (first in the list) or None if no matches."""
+        return self.ott_matches[0] if self.ott_matches else None
 
     @property
     def number_of_spectra(self) -> int:
