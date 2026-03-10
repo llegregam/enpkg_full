@@ -28,7 +28,10 @@ class EnhancerConfig(BaseModel, ABC):
     # Allows using extra fields or forbidden them for strictness
     model_config = ConfigDict(extra='forbid')
 
-
+    general_params: GeneralParams = Field(
+        default_factory=GeneralParams,
+        description="General processing parameters"
+    )
 
     @classmethod
     def from_yaml(cls, path: str):
