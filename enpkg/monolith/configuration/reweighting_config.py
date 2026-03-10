@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import Self
 
+from enpkg.monolith.configuration.MSEnhancer_config import DownloaderParams
 from enpkg.monolith.configuration.config import EnhancerConfig
 
 
@@ -56,10 +57,15 @@ class ReweightingParams(BaseModel):
         return self
 
 
-class ReweightingConfig(EnhancerConfig, BaseModel):
+class ReweightingConfig(EnhancerConfig):
     """Configuration for the Weights Enhancer."""
-
+        
     reweighting_params: ReweightingParams = Field(
         default_factory=ReweightingParams,
         description="Parameters for score reweighting"
+    )
+    
+    downloader_params: DownloaderParams = Field(
+        default_factory=DownloaderParams,
+        description="Parameters for controlling database downloading behavior"
     )
