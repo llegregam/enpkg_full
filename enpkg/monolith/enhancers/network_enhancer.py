@@ -4,9 +4,9 @@ import networkx as nx
 from matchms import calculate_scores
 from matchms.similarity import ModifiedCosine
 from matchms.networking import SimilarityNetwork
-from monolith.enhancers.enhancer import Enhancer
-from monolith.data.analysis import Analysis
-from monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
+from enpkg.monolith.enhancers.enhancer import Enhancer
+from enpkg.monolith.data.analysis import Analysis
+from enpkg.monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
 
 
 class NetworkEnhancer(Enhancer):
@@ -22,7 +22,7 @@ class NetworkEnhancer(Enhancer):
         """Returns the name of the enhancer."""
         return "Network Enhancer"
 
-    def enrich(self, analysis: Analysis) -> nx.Graph:
+    def enhance(self, analysis: Analysis) -> nx.Graph:
         """Adds molecular graph to the analysis."""
 
         similarities = calculate_scores(
