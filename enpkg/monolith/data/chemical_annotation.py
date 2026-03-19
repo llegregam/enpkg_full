@@ -29,19 +29,6 @@ class ChemicalAnnotation(BaseModel):
     #     """Return whether the annotation has Lotus entries."""
     #     return self.lotus_annotations() is not None
 
-    # def maximal_normalized_taxonomical_similarity(
-    #     self, match: Match
-    # ) -> Optional[float]:
-    #     """Return the maximal normalized taxonomical similarity of the adduct."""
-    #     if not self.has_lotus_entries():
-    #         return None
-
-    #     return max(
-    #         lotus.normalized_taxonomical_similarity_with_otl_match(match)
-    #         for lotus in self.lotus_annotations()
-    #     )
-
-
 
 class MS2ChemicalAnnotation(ChemicalAnnotation, BaseModel):
     """Class to store a chemical annotation for MS2 data."""
@@ -59,4 +46,18 @@ class MS2ChemicalAnnotation(ChemicalAnnotation, BaseModel):
         description="A list of LOTUS entries associated with the annotation, if any."
     )
 
+    def has_lotus_entries(self) -> bool:
+        """Return whether the annotation has Lotus entries."""
+        return self.lotus_entries is not None and len(self.lotus_entries) > 0
 
+    def maximal_normalized_taxonomical_similarity(
+        self, match: Match
+    ) -> Optional[float]:
+        """Return the maximal normalized taxonomical similarity of the adduct."""
+        if not self.has_lotus_entries():
+            return None
+
+        return max(
+            lotus.normalized_taxonomical_similarity_with_otl_match(match)
+            for lotus in self.lotus_entries
+        )
