@@ -25,8 +25,8 @@ class SampleMetadata(BaseModel):
     organism_genus: Optional[str] = None
 
     # TODO: Externalize these fields
-    analysis_filename_pos: Optional[str] = None
-    analysis_filename_neg: Optional[str] = None
+    sample_filename_pos: Optional[str] = None
+    sample_filename_neg: Optional[str] = None
     massive_id: Optional[str] = None
     
     # Store any additional fields not explicitly defined
@@ -55,7 +55,7 @@ class SampleMetadata(BaseModel):
             "sample_id", "source_taxon", "sample_type", "source_id",
             "organism_kingdom", "organism_phylum", "organism_class",
             "organism_order", "organism_family", "organism_genus",
-            "analysis_filename_pos", "analysis_filename_neg", "massive_id"
+            "sample_filename_pos", "sample_filename_neg", "massive_id"
         }
         
         data = series.to_dict()
