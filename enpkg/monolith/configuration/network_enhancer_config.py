@@ -1,7 +1,7 @@
 from pydantic import Field, model_validator
 from typing import Self
 
-from monolith.configuration.config import EnhancerConfig
+from enpkg.monolith.configuration.config import EnhancerConfig
 
 class NetworkEnhancerConfig(EnhancerConfig):
     """
