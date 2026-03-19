@@ -37,7 +37,7 @@ class AnnotatedSpectrum(Spectrum):
                 f"Provided mass over charge {mass_over_charge} does "
                 f"not match the precursor mass over charge {spectrum.get('precursor_mz')}"
             )
-
+        self.mass_over_charge: float = mass_over_charge
         self.retention_time: float = retention_time
         self.intensity: float = intensity
         # self._sirius_annotations: list[SiriusChemicalAnnotation] = []
@@ -51,17 +51,17 @@ class AnnotatedSpectrum(Spectrum):
     @property
     def precursor_mz(self):
         """Return the precursor mass over charge"""
-        return self.get("precursor_mz")
+        return float(self.get("precursor_mz"))
 
     @property
     def polarity(self) -> bool:
         """Return the polarity of the spectrum"""
-        return self.get("charge") > 0
+        return int(self.get("charge")) > 0
 
     @property
     def feature_id(self) -> int:
         """Return the feature ID of the spectrum"""
-        return self.get("feature_id")
+        return int(self.get("feature_id"))
     
     # NPC/HAMMER SCORES
     @property
@@ -146,7 +146,7 @@ class AnnotatedSpectrum(Spectrum):
             The top k best LOTUS annotations.
             If the spectrum has no annotations, returns None.
         """
-        if not self.has_isdb_annotations() and not self.has_ms1_annotations():
+        if not self.has_ms2_annotations() and not self.has_ms1_annotations():
             return None
 
         annotations: Dict[Lotus, float] = {}
