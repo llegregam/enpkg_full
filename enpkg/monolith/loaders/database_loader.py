@@ -44,6 +44,8 @@ class DBLoader:
         self.configuration = configuration
         self.logger = logger
         self.downloads: list[DownloadInfo] = []
+        self.taxo_is_loaded = False
+        self.spectral_db_is_loaded = False
 
         if self.configuration.downloader_params.urls is not None:
             self._validate_redownload_fields()
@@ -241,6 +243,9 @@ class DBLoader:
         """Load databases into memory."""
 
         self.logger.info("Loading databases into memory")
+        if self.taxo_is_loaded:
+            self.logger.info("Taxonomical databases already loaded; skipping")
+            return
         
         start = time()
         self.lotus_metadata: pd.DataFrame = pd.read_csv(
@@ -281,8 +286,14 @@ class DBLoader:
             len(self.lotus_metadata),
         )
 
+        self.taxo_is_loaded = True
+
     def load_spectral_databases(self, mode) -> None:
         """Load spectral databases into memory."""
+
+        if self.spectral_db_is_loaded:
+            self.logger.info("Spectral database already loaded; skipping")
+            return
         start = time()
         if mode == "pos":
             with open(self.configuration.downloader_params.paths.spectral_db_pos, "rb") as f:
@@ -293,3 +304,4 @@ class DBLoader:
         else:
             raise ValueError(f"Invalid mode '{mode}' for loading spectral database")
         self.logger.debug(f"Loaded {mode} mode spectral database in {time() - start:.2f} seconds")
+        self.spectral_db_is_loaded = True
