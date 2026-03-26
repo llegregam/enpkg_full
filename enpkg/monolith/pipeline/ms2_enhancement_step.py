@@ -3,11 +3,12 @@ Docstring for enpkg.monolith.pipeline.ms2_enrichment
 """
 import logging
 
-from enpkg.monolith.configuration.MSEnhancer_config import ISDBEnhancerConfig, Urls, GeneralParams, Paths
+from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig, Urls, GeneralParams, Paths
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.pipeline.base_pipeline_step import PipelineStep
 from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
+from enpkg.monolith.loaders.database_loader import DBLoader
 
 
 class MS2EnrichmentStep(PipelineStep):
@@ -15,18 +16,18 @@ class MS2EnrichmentStep(PipelineStep):
     A pipeline step that performs MS2 enrichment.
     """
 
-    def __init__(self, config: ISDBEnhancerConfig, logger: logging.Logger):
+    def __init__(self, config: MSEnhancerConfig, logger: logging.Logger, db_loader: DBLoader):
 
         super().__init__(config)
         self.logger = logger
-
+        self.db_loader = db_loader
     def can_run(self, analysis: Analysis) -> bool:
         # check if analysis has spectra
         return len(analysis.spectra) > 0
     
     def process(self, analysis: Analysis) -> Analysis:
         
-        enhancer = Ms2Enhancer(self.config, self.logger)
+        enhancer = Ms2Enhancer(self.config, self.logger, self.db_loader)
         try:
             enriched_spectra = enhancer.enhance(analysis.spectra)
         except Exception as e:
@@ -62,7 +63,7 @@ if __name__ == "__main__":
         spectral_db_pos="https://zenodo.org/records/8287341/files/isdb_pos_cleaned.pkl"
     )
 
-    config = ISDBEnhancerConfig(
+    config = MSEnhancerConfig(
         general_params=GeneralParams(
             redownload_if_exists=False
         ),
