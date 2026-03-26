@@ -136,6 +136,14 @@ class Lotus:
             self.structure_inchikey,
             self.organism_taxonomy_ottid
         ))
+    
+    def __repr__(self) -> str:
+        """Return a string representation of the LOTUS entry."""
+        return (
+            f"Lotus(Traditional name: {self.structure_name_traditional}, "
+            f"InChIKey: {self.structure_inchikey},"
+            f"Organism: {self.organism_name})"
+        )
 
     def __eq__(self, other: object) -> bool:
         """Return whether two LOTUS entries are equal."""
@@ -198,6 +206,7 @@ class Lotus:
     def short_inchikey(self) -> str:
         """Return the first 14 characters of the InChIKey."""
         return self.structure_inchikey[:14]
+
 
     def taxonomical_similarity_with_otl_match(self, match: Match) -> float:
         """Calculate the taxonomical similarity with an OTL match.
