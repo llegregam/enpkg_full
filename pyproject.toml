@@ -32,6 +32,7 @@ memo-ms = "^0.1.4"
 opentree = "^1.0.1"
 pydantic = "^2.12.5"
 downloaders = "^1.0.22"
+python-dotenv = "^1.2.2"
 
 
 [tool.poetry.group.dev.dependencies]
