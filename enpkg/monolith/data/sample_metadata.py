@@ -2,14 +2,14 @@
 
 from typing import Optional
 from pydantic import BaseModel, field_validator
-import pandas as pd
+import math
 
 
 class SampleMetadata(BaseModel):
     """
     Structured metadata for an analysis sample.
     
-    This replaces the unstructured pd.Series approach with explicit,
+    This replaces the unstructured series approach with explicit,
     validated fields.
     """
     
@@ -38,16 +38,16 @@ class SampleMetadata(BaseModel):
         """Normalize empty/invalid source taxon values to None."""
         if value is None:
             return None
-        if isinstance(value, float) and pd.isna(value):
+        if isinstance(value, float) and math.isnan(value):
             return None
         if isinstance(value, str) and value.lower() in ("nd", "nan", ""):
             return None
         return value
 
     @classmethod
-    def from_series(cls, series: pd.Series) -> "SampleMetadata":
+    def from_dict(cls, data: dict) -> "SampleMetadata":
         """
-        Create SampleMetadata from a pandas Series (e.g., a row from a DataFrame).
+        Create SampleMetadata from a dictionary (e.g., a row from a Polars DataFrame).
         
         Known fields are extracted explicitly; unknown fields go to extra_fields.
         """
@@ -58,13 +58,12 @@ class SampleMetadata(BaseModel):
             "sample_filename_pos", "sample_filename_neg", "massive_id"
         }
         
-        data = series.to_dict()
         known_data = {k: v for k, v in data.items() if k in known_fields}
         extra_data = {k: v for k, v in data.items() if k not in known_fields}
         
         # Convert NaN values to None for known fields
         for key, value in known_data.items():
-            if isinstance(value, float) and pd.isna(value):
+            if isinstance(value, float) and math.isnan(value):
                 known_data[key] = None
         
         return cls(**known_data, extra_fields=extra_data)

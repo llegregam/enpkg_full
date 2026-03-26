@@ -39,12 +39,13 @@ class Ms2Enhancer(Enhancer):
             )
         if not isinstance(logger, Logger):
             raise TypeError(f"Expected logger of type logging.Logger, got {type(logger)}")
+        if not isinstance(db_loader, DBLoader):
+            raise TypeError(f"Expected db_loader of type DBLoader, got {type(db_loader)}")
         self.configuration = configuration
         self.logger = logger
-
-        self.logger.info("Loading Databases")
         self.db_loader = db_loader
         
+        self.logger.info("Loading Databases")
         start = time()
         self.db_loader.load_taxonomical_databases()
         self.logger.debug("Taxonomical databases loaded in %.2f seconds", time() - start)
@@ -134,7 +135,7 @@ class Ms2Enhancer(Enhancer):
         """Initializes the Lotus objects from the metadata dataframe."""
 
         start = time()
-        structure_smiles_column_number: int = self.db_loader.lotus_metadata.columns.get_loc(
+        structure_smiles_column_number: int = self.db_loader.lotus_metadata.columns.index(
             "structure_smiles"
         )
         Lotus.setup_lotus_columns(list(self.db_loader.lotus_metadata.columns))
@@ -144,9 +145,10 @@ class Ms2Enhancer(Enhancer):
         
         # Create lookup dictionaries for pathways, superclasses, and classes
         start = time()
-        pathways_lookup = self.db_loader.lotus_metadata_pathways.T.to_dict('series')
-        superclasses_lookup = self.db_loader.lotus_metadata_superclasses.T.to_dict('series')
-        classes_lookup = self.db_loader.lotus_metadata_classes.T.to_dict('series')
+        import numpy as np
+        pathways_lookup = {row[0]: np.array(row[1:]) for row in self.db_loader.lotus_metadata_pathways.iter_rows()}
+        superclasses_lookup = {row[0]: np.array(row[1:]) for row in self.db_loader.lotus_metadata_superclasses.iter_rows()}
+        classes_lookup = {row[0]: np.array(row[1:]) for row in self.db_loader.lotus_metadata_classes.iter_rows()}
         self.logger.debug(f"Built lookup dictionaries in {time() - start:.2f} seconds")
 
         start = time()
@@ -154,14 +156,14 @@ class Ms2Enhancer(Enhancer):
         # TODO: Will be done in initialization step of the workflow in the future.
         # TODO: Could be further optimized by parallelizing the creation of Lotus objects
         self.lotus_objects: list[Lotus] = [
-            Lotus.from_pandas_series(
+            Lotus.from_polars_row(
                 list(row),
                 pathways=pathways_lookup[row[structure_smiles_column_number]],
                 superclasses=superclasses_lookup[row[structure_smiles_column_number]],
                 classes=classes_lookup[row[structure_smiles_column_number]],
             )
             for row in tqdm(
-                self.db_loader.lotus_metadata.values,
+                self.db_loader.lotus_metadata.iter_rows(),
                 desc="Creating Lotus objects",
                 leave=False,
                 dynamic_ncols=True,

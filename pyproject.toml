@@ -33,6 +33,7 @@ opentree = "^1.0.1"
 pydantic = "^2.12.5"
 downloaders = "^1.0.22"
 python-dotenv = "^1.2.2"
+polars = "^1.39.3"
 
 
 [tool.poetry.group.dev.dependencies]

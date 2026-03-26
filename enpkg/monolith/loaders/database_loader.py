@@ -9,7 +9,7 @@ import pickle
 from logging import Logger
 from time import time
 
-import pandas as pd
+import polars as pl
 from matchms import Spectrum
 from downloaders import BaseDownloader
 
@@ -248,38 +248,38 @@ class DBLoader:
             return
         
         start = time()
-        self.lotus_metadata: pd.DataFrame = pd.read_csv(
-            self.configuration.downloader_params.paths.taxo_db_metadata, low_memory=False
+        # Switched from pd.read_csv to pl.read_csv. infer_schema_length=10000 ensures stable typing for Polars.
+        self.lotus_metadata: pl.DataFrame = pl.read_csv(
+            self.configuration.downloader_params.paths.taxo_db_metadata, 
+            infer_schema_length=10000,
+            null_values=["", "NA", "NaN"]
         )
         self.logger.info(f"Loaded Taxonomical Database metadata in {time() - start:.2f} seconds")
-        self.logger.debug(f"Loaded Taxonomical Database metadata with columns: {self.lotus_metadata.columns.tolist()}")
+        self.logger.debug(f"Loaded Taxonomical Database metadata with columns: {self.lotus_metadata.columns}")
         
         start = time()
-        self.lotus_metadata_pathways: pd.DataFrame = pd.read_csv(
-            self.configuration.downloader_params.paths.taxo_db_pathways,
-            index_col=0,
+        self.lotus_metadata_pathways: pl.DataFrame = pl.read_csv(
+            self.configuration.downloader_params.paths.taxo_db_pathways
         )
         self.logger.info(f"Loaded Taxonomical Database pathways in {time() - start:.2f} seconds")
-        self._number_of_pathways = self.lotus_metadata_pathways.shape[1]
-        self._pathways = self.lotus_metadata_pathways.columns
+        self._number_of_pathways = self.lotus_metadata_pathways.shape[1] - 1
+        self._pathways = self.lotus_metadata_pathways.columns[1:]
         
         start = time()
-        self.lotus_metadata_superclasses: pd.DataFrame = pd.read_csv(
-            self.configuration.downloader_params.paths.taxo_db_superclasses,
-            index_col=0,
+        self.lotus_metadata_superclasses: pl.DataFrame = pl.read_csv(
+            self.configuration.downloader_params.paths.taxo_db_superclasses
         )
         self.logger.info(f"Loaded Taxonomical Database superclasses in {time() - start:.2f} seconds")
-        self._number_of_superclasses = self.lotus_metadata_superclasses.shape[1]
-        self._superclasses = self.lotus_metadata_superclasses.columns
+        self._number_of_superclasses = self.lotus_metadata_superclasses.shape[1] - 1
+        self._superclasses = self.lotus_metadata_superclasses.columns[1:]
         
         start = time()
-        self.lotus_metadata_classes: pd.DataFrame = pd.read_csv(
-            self.configuration.downloader_params.paths.taxo_db_classes,
-            index_col=0,
+        self.lotus_metadata_classes: pl.DataFrame = pl.read_csv(
+            self.configuration.downloader_params.paths.taxo_db_classes
         )
         self.logger.info(f"Loaded Taxonomical Database classes in {time() - start:.2f} seconds")
-        self._number_of_classes = self.lotus_metadata_classes.shape[1]
-        self._classes = self.lotus_metadata_classes.columns
+        self._number_of_classes = self.lotus_metadata_classes.shape[1] - 1
+        self._classes = self.lotus_metadata_classes.columns[1:]
         
         self.logger.info(
             "Loaded %d Taxonomical Database metadata entries",

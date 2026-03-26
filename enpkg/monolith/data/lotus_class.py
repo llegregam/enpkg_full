@@ -3,7 +3,6 @@
 from typing import Any, Dict
 from dataclasses import dataclass
 import numpy as np
-import pandas as pd
 from enpkg.monolith.data.otl_class import Match
 
 MAXIMAL_TAXONOMICAL_SCORE: float = 8.0
@@ -58,17 +57,18 @@ class Lotus:
         cls._columns = {column: i for i, column in enumerate(columns)}
 
     @classmethod
-    def from_pandas_series(
+    def from_polars_row(
         cls,
         series: list[Any],
-        pathways: pd.Series,
-        superclasses: pd.Series,
-        classes: pd.Series,
+        pathways: np.ndarray,
+        superclasses: np.ndarray,
+        classes: np.ndarray,
     ) -> "Lotus":
-        """Create a Lotus object from a pandas Series."""
+        """Create a Lotus object from a parsed Polars row."""
 
         # We normalize the NaN values to None
-        series = [None if pd.isna(value) else value for value in series]
+        # Using native None checks since Polars converts missing to None in lists usually, but we fallback to np.isnan for floats
+        series = [None if (value is None or (isinstance(value, float) and np.isnan(value))) else value for value in series]
 
         return cls(
             structure_wikidata=series[Lotus._columns["structure_wikidata"]],
@@ -86,9 +86,9 @@ class Lotus:
             structure_name_traditional=series[
                 Lotus._columns["structure_nameTraditional"]
             ],
-            structure_taxonomy_hammer_pathways=pathways.values if isinstance(pathways, pd.Series) else pathways,
-            structure_taxonomy_hammer_superclasses=superclasses.values if isinstance(superclasses, pd.Series) else superclasses,
-            structure_taxonomy_hammer_classes=classes.values if isinstance(classes, pd.Series) else classes,
+            structure_taxonomy_hammer_pathways=pathways,
+            structure_taxonomy_hammer_superclasses=superclasses,
+            structure_taxonomy_hammer_classes=classes,
             structure_stereocenters_total=series[
                 Lotus._columns["structure_stereocenters_total"]
             ],

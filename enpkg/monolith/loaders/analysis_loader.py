@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
+import polars as pl
 from matchms.importing import load_from_mgf, load_from_mzml, load_from_mzxml
 
 from enpkg.monolith.data.analysis import Analysis
@@ -76,9 +76,9 @@ class AnalysisLoader:
             run_name=run_name,
             spectra=tuple(AnnotatedSpectrum(
                 spectrum=spectrum,
-                mass_over_charge=quant_table.loc[int(spectrum.get("feature_id")), "row m/z"],
-                retention_time=quant_table.loc[int(spectrum.get("feature_id")), "row retention time"],
-                intensity=quant_table.loc[int(spectrum.get("feature_id")), intensity_col],)
+                mass_over_charge=quant_table.filter(pl.col("row ID") == int(spectrum.get("feature_id")))["row m/z"][0],
+                retention_time=quant_table.filter(pl.col("row ID") == int(spectrum.get("feature_id")))["row retention time"][0],
+                intensity=quant_table.filter(pl.col("row ID") == int(spectrum.get("feature_id")))[intensity_col][0],)
                 for spectrum in spectra
             ),  
             metadata=metadata,
@@ -86,11 +86,10 @@ class AnalysisLoader:
         )
 
     @classmethod
-    def _load_quantification_table(cls, path: Path) -> pd.DataFrame:
+    def _load_quantification_table(cls, path: Path) -> pl.DataFrame:
         """Load quantification table from file."""
 
-        quant_table = pd.read_csv(path, sep=None, engine="python")
-        quant_table.set_index("row ID", inplace=True)
+        quant_table = pl.read_csv(path, try_parse_dates=True)
         return quant_table
     
     @classmethod
@@ -115,15 +114,14 @@ class AnalysisLoader:
         run_name: str
     ) -> SampleMetadata:
         """Load and filter metadata for the given run."""
-        metadata_df = pd.read_csv(path, sep=None, engine="python")
+        metadata_df = pl.read_csv(path, try_parse_dates=True, separator="\t" if path.suffix == ".txt" or path.suffix == ".tsv" else ",")
         column_name = f"sample_filename_{ionization_mode}"
         print(f"Metadata df: {metadata_df}")
         
         for raw_ext in cls.RAW_EXTENSIONS:
-            mask = metadata_df[column_name] == run_name + raw_ext
-            filtered = metadata_df[mask]
-            if not filtered.empty:
-                return SampleMetadata.from_series(filtered.iloc[0])
+            filtered = metadata_df.filter(pl.col(column_name) == (run_name + raw_ext))
+            if not filtered.is_empty():
+                return SampleMetadata.from_dict(filtered.to_dicts()[0])
         
         raise ValueError(
             f"Run name '{run_name}' not found in metadata for ionization mode '{ionization_mode}'"
