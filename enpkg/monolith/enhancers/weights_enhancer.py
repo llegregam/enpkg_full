@@ -30,7 +30,7 @@ class WeightsEnhancer(Enhancer):
         """Returns the name of the enhancer."""
         return "Weights Enhancer"
     
-    def compute_NPC(self, analysis: Analysis) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def compute_ms1_classifications(self, analysis: Analysis) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
         pathway_features = np.zeros(
             (analysis.number_of_spectra, self._number_of_pathways), dtype=np.float32
@@ -109,6 +109,86 @@ class WeightsEnhancer(Enhancer):
                 )
         return pathway_features, superclass_features, class_features
     
+    def compute_ms2_classifications(self, analysis: Analysis) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+        pathway_features = np.zeros(
+            (analysis.number_of_spectra, self._number_of_pathways), dtype=np.float32
+        )
+        superclass_features = np.zeros(
+            (analysis.number_of_spectra, self._number_of_superclasses),
+            dtype=np.float32,
+        )
+        class_features = np.zeros(
+            (analysis.number_of_spectra, self._number_of_classes), dtype=np.float32
+        )
+        best_ott_match: Optional[Match] = analysis.best_ott_matches
+
+        for i, spectrum in tqdm(
+            enumerate(analysis.spectra),
+            leave=False,
+            total=analysis.number_of_spectra,
+            desc="Computing MS2 NPC scores",
+            dynamic_ncols=True,
+        ):
+            
+            if not spectrum.has_ms2_annotations():
+                continue
+
+            chemical_similarities: np.ndarray = np.fromiter(
+                (
+                    annotation.scores["cosine_similarity"].get("value")
+                    for annotation in spectrum.ms2_annotations
+                    if annotation.has_lotus_entries()
+                ),
+                dtype=np.float32,
+            )
+
+            if best_ott_match is not None:
+                taxonomical_similarities: np.ndarray = np.fromiter(
+                    (
+                        annotation.maximal_normalized_taxonomical_similarity(best_ott_match)
+                        for annotation in spectrum.ms2_annotations
+                        if annotation.has_lotus_entries()
+                    ),
+                    dtype=np.float32,
+                )
+            else:
+                taxonomical_similarities: np.ndarray = np.ones(
+                    chemical_similarities.size, dtype=np.float32
+                )
+            
+            combined_similarities: np.ndarray = (chemical_similarities * taxonomical_similarities)
+            total_combined_similarities = np.sum(combined_similarities)
+            self.logger.debug(
+                f"Spectrum {i}: chemical similarities = {chemical_similarities},\n" /
+                f"Taxonomical similarities = {taxonomical_similarities},\n" /
+                f"Combined similarities = {combined_similarities},\n" /
+                f"Total combined similarities = {total_combined_similarities}"
+            )
+
+            if total_combined_similarities > 0:
+                # We normalize the combined similarity scores
+                combined_similarities /= total_combined_similarities
+
+            for ms2_annotation, combined_similarity in zip(
+                (
+                    annotation for annotation in spectrum.ms2_annotations
+                    if annotation.has_lotus_entries()
+                ),
+                combined_similarities,
+            ):
+                pathway_features[i] += (
+                    combined_similarity * ms2_annotation.get_hammer_pathway_scores()
+                )
+
+                superclass_features[i] += (
+                    combined_similarity * ms2_annotation.get_hammer_superclass_scores()
+                )
+
+                class_features[i] += (
+                    combined_similarity * ms2_annotation.get_hammer_class_scores()
+                )
+    
     def enhance(self, analysis: Analysis) -> Analysis:
         """Adds taxonomical and chemical weights to the annotations and reranks them."""
 
@@ -116,7 +196,7 @@ class WeightsEnhancer(Enhancer):
         self._number_of_superclasses = self.databases.lotus_metadata_superclasses.shape[1]
         self._number_of_classes = self.databases.lotus_metadata_classes.shape[1]
 
-        pathway_features, superclass_features, class_features = self.compute_NPC(analysis)
+        pathway_features, superclass_features, class_features = self.compute_ms1_classifications(analysis)
 
         loading_bar = tqdm(
             desc="Computing LPA scores",
@@ -158,4 +238,5 @@ class WeightsEnhancer(Enhancer):
             spectrum.ms1_superclass_scores = propagated_superclass[i]
             spectrum.ms1_class_scores = propagated_class[i]
 
+        # TODO: Think about modifying analysis in place vs returning a new one. 
         return analysis
