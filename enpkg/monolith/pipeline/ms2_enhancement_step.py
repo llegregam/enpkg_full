@@ -21,6 +21,7 @@ class MS2EnrichmentStep(PipelineStep):
         super().__init__(config)
         self.logger = logger
         self.db_loader = db_loader
+        
     def can_run(self, analysis: Analysis) -> bool:
         # check if analysis has spectra
         return len(analysis.spectra) > 0

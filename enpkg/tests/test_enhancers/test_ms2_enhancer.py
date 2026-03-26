@@ -1,0 +1,81 @@
+"""Test suite for the MS2 Enhancer."""
+
+import logging
+import os
+from pathlib import Path
+from time import time
+from typing import Any, List
+
+import pytest
+
+from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
+from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
+from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
+from enpkg.monolith.loaders.database_loader import DBLoader
+
+if "PROJECT_ROOT" in os.environ:
+    PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+TEST_DATA_DIR = PROJECT_ROOT / "data" / "input"
+
+
+@pytest.fixture(scope="class")
+def analysis():
+    """Load a test analysis."""
+    return AnalysisLoader.from_files(
+        path_to_spectra=TEST_DATA_DIR / "enpkg_toy_dataset/msdata/processed/VGF151_E05_pos.mgf",
+        path_to_metadata=TEST_DATA_DIR / "enpkg_toy_dataset/metadata/metadata.tsv",
+        path_to_quant_table=TEST_DATA_DIR / "enpkg_toy_dataset/msdata/processed/VGF151_E05_pos_quant.csv",
+        ionization_mode="pos",
+    )
+
+
+@pytest.fixture(scope="class")
+def db_loader(ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger) -> DBLoader:
+    return DBLoader(configuration=ms_enhancer_config, logger=logger)
+
+
+@pytest.fixture(scope="class")
+def ms2_enhancer(
+    ms_enhancer_config: MSEnhancerConfig,
+    logger: logging.Logger,
+    db_loader: DBLoader,
+) -> Ms2Enhancer:
+    return Ms2Enhancer(configuration=ms_enhancer_config, logger=logger, db_loader=db_loader)
+
+
+class TestMs2Enhancer:
+    """Test class for Ms2Enhancer."""
+
+    def test_initialization(self, ms2_enhancer: Ms2Enhancer, logger: logging.Logger) -> None:
+        """Test that Ms2Enhancer correctly initializes, caching DBs and Lotus objects.
+        
+        Args:
+            ms2_enhancer: The MS2 enhancer instance correctly initialized via fixtures.
+            logger: A logger instance.
+        """
+        assert ms2_enhancer is not None, "Ms2Enhancer should not be None."
+        assert ms2_enhancer.lotus_objects is not None, "Ms2Enhancer lotus_objects should be initialized."
+        assert len(ms2_enhancer.lotus_objects) > 0, "Ms2Enhancer should contain initialized LOTUS objects."
+        assert ms2_enhancer.name() == "ISDB Enhancer", "Ms2Enhancer name property should match."
+
+    def test_enhance_spectra(self, ms2_enhancer: Ms2Enhancer, analysis: Any, logger: logging.Logger) -> None:
+        """Test the MS2 spectrum enrichment.
+        
+        Args:
+            ms2_enhancer: The fully populated Ms2Enhancer instance.
+            analysis: Main analysis dataset loaded from project test directory.
+            logger: A contextual logger.
+        """
+        assert analysis.spectra is not None, "Analysis should have spectra to pass to MS2 enhancer."
+        original_spectra_count = len(analysis.spectra)
+        
+        start = time()
+        enhanced_spectra = ms2_enhancer.enhance(analysis.spectra, chunk_size=1000)
+        logger.info(f"Enhanced {len(enhanced_spectra)} MS2 spectra in {time() - start:.2f} seconds")
+        
+        assert enhanced_spectra is not None, "A valid list of enhanced spectra must be returned."
+        assert len(enhanced_spectra) == original_spectra_count, "The same number of spectra must be returned."
+
