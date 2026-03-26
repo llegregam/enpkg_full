@@ -136,7 +136,13 @@ sql_db
 tests/data
 
 enpkg/lib
-enpkg/tests
+
+# Remove big test folders
+enpkg/tests/__pycache__
+enpkg/tests/.databases
+enpkg/tests/.test_cache
+enpkg/tests/data_for_analysis
+
 enpkg/lib64
 enpkg/data
 enpkg/npc_classification_arx.duckdb
