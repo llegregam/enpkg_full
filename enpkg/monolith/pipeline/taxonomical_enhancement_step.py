@@ -2,11 +2,11 @@
 A pipeline step that performs taxonomical enrichment from a source taxon using the Open Tree of Life API.
 """
 
-from monolith.data.analysis import Analysis
-from monolith.pipeline.base_pipeline_step import PipelineStep
-from monolith.enhancers.taxa_enhancer import TaxaEnhancer
+from enpkg.monolith.data.analysis import Analysis
+from enpkg.monolith.pipeline.base_pipeline_step import PipelineStep
+from enpkg.monolith.enhancers.taxa_enhancer import TaxaEnhancer
 
-class TaxonomicalEnrichmentStep(PipelineStep):
+class TaxonomicalEnhancementStep(PipelineStep):
 
     def process(self, analysis: Analysis) -> Analysis:
         # 1. Guard check
