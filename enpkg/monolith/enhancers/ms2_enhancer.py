@@ -17,7 +17,7 @@ from matchms import Spectrum
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
-from enpkg.monolith.configuration.MSEnhancer_config import ISDBEnhancerConfig, GeneralParams, Urls, Paths
+from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig, GeneralParams, Urls, Paths
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.otl_class import Match
@@ -29,11 +29,11 @@ class Ms2Enhancer(Enhancer):
     """Enhancer that adds ISDB information to the analysis."""
 
     def __init__(
-        self, configuration: ISDBEnhancerConfig, logger: Logger
+        self, configuration: MSEnhancerConfig, logger: Logger, db_loader: DBLoader
     ):
         """Initializes the enhancer."""
         
-        if not isinstance(configuration, ISDBEnhancerConfig):
+        if not isinstance(configuration, MSEnhancerConfig):
             raise TypeError(
                 f"Expected configuration of type ISDBEnhancerConfig, got {type(configuration)}"
             )
@@ -43,13 +43,13 @@ class Ms2Enhancer(Enhancer):
         self.logger = logger
 
         self.logger.info("Loading Databases")
-        self.databases = DBLoader(configuration=configuration, logger=logger) # use the db_loader to get db paths to ensure they are downloaded
+        self.db_loader = db_loader
         
         start = time()
-        self.databases.load_taxonomical_databases()
+        self.db_loader.load_taxonomical_databases()
         self.logger.debug("Taxonomical databases loaded in %.2f seconds", time() - start)
         start = time()
-        self.databases.load_spectral_databases(mode="pos") # TODO: add mode param to config
+        self.db_loader.load_spectral_databases(mode="pos") # TODO: add mode param to config
         self.logger.debug("Spectral databases loaded in %.2f seconds", time() - start)
         
         self.logger.info(
@@ -59,15 +59,15 @@ class Ms2Enhancer(Enhancer):
 
         # Liberate memory by deleting the original dataframes and keeping only the Lotus objects and spectral database in memory
         # (Can't be bothered to wait for the garbage collector)
-        del self.databases.lotus_metadata, self.databases.lotus_metadata_pathways, 
-        self.databases.lotus_metadata_superclasses, self.databases.lotus_metadata_classes
+        del self.db_loader.lotus_metadata, self.db_loader.lotus_metadata_pathways, 
+        self.db_loader.lotus_metadata_superclasses, self.db_loader.lotus_metadata_classes
 
         # TODO: Could be put elsewhere
-        if not isinstance(self.databases.spectral_db, list):
-            raise TypeError(f"Expected spectral_db to be a list, got {type(self.databases.spectral_db)}")
-        if not all(isinstance(spectrum, Spectrum) for spectrum in self.databases.spectral_db):
+        if not isinstance(self.db_loader.spectral_db, list):
+            raise TypeError(f"Expected spectral_db to be a list, got {type(self.db_loader.spectral_db)}")
+        if not all(isinstance(spectrum, Spectrum) for spectrum in self.db_loader.spectral_db):
             raise TypeError("Expected all entries in spectral_db to be of type matchms.Spectrum")
-        if not all(spectrum.get("compound_name") is not None for spectrum in self.databases.spectral_db[:10]):
+        if not all(spectrum.get("compound_name") is not None for spectrum in self.db_loader.spectral_db[:10]):
             raise ValueError("Expected all spectra in spectral_db to have 'compound_name' metadata for short inchikey matching")
 
         self.logger.info("Adding Lotus entries to spectral database")
@@ -92,7 +92,7 @@ class Ms2Enhancer(Enhancer):
 
         start = time()
         for spectrum in tqdm(
-            self.databases.spectral_db,
+            self.db_loader.spectral_db,
             desc="Adding Lotus entries to spectral database",
             dynamic_ncols=True,
             leave=False,
@@ -134,19 +134,19 @@ class Ms2Enhancer(Enhancer):
         """Initializes the Lotus objects from the metadata dataframe."""
 
         start = time()
-        structure_smiles_column_number: int = self.databases.lotus_metadata.columns.get_loc(
+        structure_smiles_column_number: int = self.db_loader.lotus_metadata.columns.get_loc(
             "structure_smiles"
         )
-        Lotus.setup_lotus_columns(list(self.databases.lotus_metadata.columns))
+        Lotus.setup_lotus_columns(list(self.db_loader.lotus_metadata.columns))
         self.logger.debug(f"Lotus columns set up in %.2f seconds", time() - start)
         self.logger.debug(f"Lotus columns: {Lotus._columns}")
-        self.logger.debug(f"Converting {len(self.databases.lotus_metadata)} Lotus entries to Lotus objects")
+        self.logger.debug(f"Converting {len(self.db_loader.lotus_metadata)} Lotus entries to Lotus objects")
         
         # Create lookup dictionaries for pathways, superclasses, and classes
         start = time()
-        pathways_lookup = self.databases.lotus_metadata_pathways.T.to_dict('series')
-        superclasses_lookup = self.databases.lotus_metadata_superclasses.T.to_dict('series')
-        classes_lookup = self.databases.lotus_metadata_classes.T.to_dict('series')
+        pathways_lookup = self.db_loader.lotus_metadata_pathways.T.to_dict('series')
+        superclasses_lookup = self.db_loader.lotus_metadata_superclasses.T.to_dict('series')
+        classes_lookup = self.db_loader.lotus_metadata_classes.T.to_dict('series')
         self.logger.debug(f"Built lookup dictionaries in {time() - start:.2f} seconds")
 
         start = time()
@@ -161,7 +161,7 @@ class Ms2Enhancer(Enhancer):
                 classes=classes_lookup[row[structure_smiles_column_number]],
             )
             for row in tqdm(
-                self.databases.lotus_metadata.values,
+                self.db_loader.lotus_metadata.values,
                 desc="Creating Lotus objects",
                 leave=False,
                 dynamic_ncols=True,
@@ -212,7 +212,7 @@ class Ms2Enhancer(Enhancer):
 
             cosine_similarities_with_database = calculate_scores(
                 references=spectra_chunk,
-                queries=self.databases.spectral_db,
+                queries=self.db_loader.spectral_db,
                 similarity_function=similarity_score,
             )
             
@@ -229,35 +229,34 @@ class Ms2Enhancer(Enhancer):
                 desc="Processing chunk similarities",
                 leave=False,
             ):
-                if ref_idx < query_idx:
-                    msms_score, n_matches = cosinegreedy.pair(
-                        spectra_chunk[ref_idx], self.databases.spectral_db[query_idx]
-                    )[()] # Numpy indexing to extract a "scalar" (here a tuple (score, n_matches)) value from a 0-dim array
-                    if (
-                        msms_score > self.configuration.spectral_match_params.min_score
-                        and 
-                        n_matches > self.configuration.spectral_match_params.min_peaks
-                    ):
-                        lotus_entries = self.databases.spectral_db[query_idx].get("lotus_entries")
-                        # self.logger.debug(
-                        #     f"Number of Lotus entries associated with matched spectrum: {len(lotus_entry) if lotus_entry is not None else 0}"
-                        # )
-                        spectra_chunk[ref_idx].add_ms2_annotation(
-                            MS2ChemicalAnnotation(
-                                source="Lotus",
-                                queried_against="ISDB", # TODO: Create versioning system for databases and include version in the annotation
-                                scores={
-                                    "cosine_similarity": {
-                                        "value": msms_score,
-                                        "n_matches": n_matches
-                                    }
-                                },
-                                lotus_entries=lotus_entries,
-                            )
+                msms_score, n_matches = cosinegreedy.pair(
+                    spectra_chunk[ref_idx], self.db_loader.spectral_db[query_idx]
+                )[()] # Numpy indexing to extract a "scalar" (here a tuple (score, n_matches)) value from a 0-dim array
+                if (
+                    msms_score > self.configuration.spectral_match_params.min_score
+                    and 
+                    n_matches > self.configuration.spectral_match_params.min_peaks
+                ):
+                    lotus_entries = self.db_loader.spectral_db[query_idx].get("lotus_entries")
+                    # self.logger.debug(
+                    #     f"Number of Lotus entries associated with matched spectrum: {len(lotus_entry) if lotus_entry is not None else 0}"
+                    # )
+                    spectra_chunk[ref_idx].add_ms2_annotation(
+                        MS2ChemicalAnnotation(
+                            source="Lotus",
+                            queried_against="ISDB", # TODO: Create versioning system for databases and include version in the annotation
+                            scores={
+                                "cosine_similarity": {
+                                    "value": msms_score,
+                                    "n_matches": n_matches
+                                }
+                            },
+                            lotus_entries=lotus_entries,
                         )
-                        self.logger.debug(
-                            f"Added ISDB annotation to spectrum {spectra_chunk[ref_idx].ms2_annotations[-1]} with cosine similarity {msms_score} and number of matched peaks {n_matches}"
-                            )
+                    )
+                    self.logger.debug(
+                        f"Added ISDB annotation to spectrum {spectra_chunk[ref_idx].ms2_annotations[-1]} with cosine similarity {msms_score} and number of matched peaks {n_matches}"
+                        )
                         
         # TODO: Decide if analysis should be modified in place or if we should return a new enriched analysis object
         return spectrum_list

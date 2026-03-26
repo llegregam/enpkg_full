@@ -22,7 +22,7 @@ from enpkg.monolith.loaders.database_loader import DBLoader
 class MS1Enhancer(Enhancer):
     """Enhancer that adds MS1 information to the analysis."""
 
-    def __init__(self, configuration: MSEnhancerConfig, logger: Logger):
+    def __init__(self, configuration: MSEnhancerConfig, logger: Logger, db_loader: DBLoader):
         """Initializes the enhancer."""
 
         if not isinstance(configuration, MSEnhancerConfig):
@@ -31,13 +31,15 @@ class MS1Enhancer(Enhancer):
             )
         if not isinstance(logger, Logger):
             raise TypeError(f"Expected logger of type logging.Logger, got {type(logger)}")
+        if not isinstance(db_loader, DBLoader):
+            raise TypeError(f"Expected db_loader of type DBLoader, got {type(db_loader)}")
         
         self.configuration = configuration
         self.logger = logger
 
         self.logger.info("Loading Databases")
-        self.databases = DBLoader(configuration=configuration, logger=logger) # use the db_loader to get db paths to ensure they are downloaded
-        self.databases.load_taxonomical_databases()
+        self.db_loader = db_loader
+        self.db_loader.load_taxonomical_databases()
         # lotus_grouped_by_structure_molecular_formula = self._initialize_lotus_objects()
         # self.logger.info("Finished loading databases and initializing LOTUS objects")   
         # self.logger.debug(f"Sample LOTUS object: {lotus_grouped_by_structure_molecular_formula[0][0]}") 
@@ -97,13 +99,13 @@ class MS1Enhancer(Enhancer):
         returns: List of lists of LOTUS objects, where each inner list contains LOTUS entries with the same molecular formula.
         """
 
-        structure_smiles_col: int = self.databases.lotus_metadata.columns.get_loc(
+        structure_smiles_col: int = self.db_loader.lotus_metadata.columns.get_loc(
             "structure_smiles"
         )
         
         # Initialize class-level column mappings for efficient Lotus object creation
         # This allows Lotus.from_pandas_series to know which index corresponds to which field
-        Lotus.setup_lotus_columns(list(self.databases.lotus_metadata.columns))
+        Lotus.setup_lotus_columns(list(self.db_loader.lotus_metadata.columns))
         
         # Transpose classification DataFrames for O(1) column access by SMILES key
         # Original shape: (num_classes, num_compounds) with SMILES as columns
@@ -111,9 +113,9 @@ class MS1Enhancer(Enhancer):
         # This is more efficient than .to_dict() which copies all data into Python dicts
         start = time()
         
-        pathways_t = self.databases.lotus_metadata_pathways.T
-        superclasses_t = self.databases.lotus_metadata_superclasses.T
-        classes_t = self.databases.lotus_metadata_classes.T
+        pathways_t = self.db_loader.lotus_metadata_pathways.T
+        superclasses_t = self.db_loader.lotus_metadata_superclasses.T
+        classes_t = self.db_loader.lotus_metadata_classes.T
         self.logger.debug(f"Transposed classification DataFrames in {time() - start:.2f} seconds")
         
         # Build nested structure: group all LOTUS entries by molecular formula
@@ -136,7 +138,7 @@ class MS1Enhancer(Enhancer):
                 for smiles in (row[structure_smiles_col],)  # Cache SMILES lookup
             ]
             for (_, group) in tqdm(
-                self.databases.lotus_metadata.groupby(by=["structure_molecular_formula"]),
+                self.db_loader.lotus_metadata.groupby(by=["structure_molecular_formula"]),
                 desc="Initializing LOTUS objects",
                 dynamic_ncols=True,
                 leave=False,
@@ -157,9 +159,9 @@ class MS1Enhancer(Enhancer):
         self.logger.info("Running enrichment process")
         number_of_spectra = len(spectrum_list)
         self.logger.info(f"Number of spectra to enrich: {number_of_spectra}")
-        self._number_of_pathways = self.databases.lotus_metadata_pathways.shape[1]
-        self._number_of_superclasses = self.databases.lotus_metadata_superclasses.shape[1]
-        self._number_of_classes = self.databases.lotus_metadata_classes.shape[1]
+        self._number_of_pathways = self.db_loader.lotus_metadata_pathways.shape[1]
+        self._number_of_superclasses = self.db_loader.lotus_metadata_superclasses.shape[1]
+        self._number_of_classes = self.db_loader.lotus_metadata_classes.shape[1]
 
         if not hasattr(self, "_adducts"):
             self.logger.info("Initializing LOTUS objects and adducts for the first time")
