@@ -5,10 +5,10 @@ Module defining the molecular networking step in the pipeline.
 import pandas as pd
 import networkx as nx
 
-from monolith.data.analysis import Analysis
-from monolith.pipeline.base_pipeline_step import PipelineStep
-from monolith.enhancers.network_enhancer import NetworkEnhancer
-from monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
+from enpkg.monolith.data.analysis import Analysis
+from enpkg.monolith.pipeline.base_pipeline_step import PipelineStep
+from enpkg.monolith.enhancers.network_enhancer import NetworkEnhancer
+from enpkg.monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
 
 class MolecularNetworkingStep(PipelineStep):
     """
@@ -62,5 +62,5 @@ class MolecularNetworkingStep(PipelineStep):
     def process(self, analysis: Analysis) -> Analysis:
         
         enhancer = NetworkEnhancer(configuration=self.config)
-        molecular_network = enhancer.enrich(analysis)
+        molecular_network = enhancer.enhance(analysis)
         return analysis.model_copy(update={"molecular_network": molecular_network})
