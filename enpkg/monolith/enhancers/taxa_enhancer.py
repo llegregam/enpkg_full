@@ -3,11 +3,11 @@
 from typing import Dict
 from opentree import OT
 import requests
-from monolith.data.analysis import Analysis
-from monolith.enhancers.enhancer import Enhancer
-from monolith.data.otl_class import Match, LineageItem
-from monolith.data.wikidata_ott_query_class import WikidataOTTQuery
-from monolith.exceptions import EnrichmentError
+from enpkg.monolith.data.analysis import Analysis
+from enpkg.monolith.enhancers.enhancer import Enhancer
+from enpkg.monolith.data.otl_class import Match, LineageItem
+from enpkg.monolith.data.wikidata_ott_query_class import WikidataOTTQuery
+from enpkg.monolith.exceptions import EnrichmentError
 
 
 class TaxaEnhancer(Enhancer):
