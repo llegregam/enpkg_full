@@ -11,19 +11,19 @@ from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.data.otl_class import Match
 from enpkg.monolith.utils.label_propagation_algorithm import label_propagation_algorithm
+from enpkg.tests.test_enhancers.test_ms2_enhancer import db_loader
 
 
 class WeightsEnhancer(Enhancer):
     """Enhancer that adds taxonomical and chemical weights to the annotations and reranks them."""
 
-    def __init__(self, configuration:ReweightingConfig, logger: logging.Logger):
+    def __init__(self, configuration:ReweightingConfig, logger: logging.Logger, db_loader: DBLoader):
 
         self.configuration = configuration
         self.logger = logger
-
+        self.db_loader = db_loader 
         self.logger.info("Loading Databases")
-        self.databases = DBLoader(configuration=configuration, logger=logger) # use the db_loader to get db paths to ensure they are downloaded
-        self.databases.load_taxonomical_databases()
+        self.db_loader.load_taxonomical_databases()
 
 
     def name(self) -> str:
@@ -192,9 +192,9 @@ class WeightsEnhancer(Enhancer):
     def enhance(self, analysis: Analysis) -> Analysis:
         """Adds taxonomical and chemical weights to the annotations and reranks them."""
 
-        self._number_of_pathways = self.databases.lotus_metadata_pathways.shape[1]
-        self._number_of_superclasses = self.databases.lotus_metadata_superclasses.shape[1]
-        self._number_of_classes = self.databases.lotus_metadata_classes.shape[1]
+        self._number_of_pathways = self.db_loader.lotus_metadata_pathways.shape[1]
+        self._number_of_superclasses = self.db_loader.lotus_metadata_superclasses.shape[1]
+        self._number_of_classes = self.db_loader.lotus_metadata_classes.shape[1]
 
         pathway_features, superclass_features, class_features = self.compute_ms1_classifications(analysis)
 
