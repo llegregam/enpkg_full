@@ -71,14 +71,15 @@ class AnalysisLoader:
         if intensity_col is None:
             raise ValueError("No column containing 'Peak height' or 'Peak area' found in quantification table")
         
+        # We need to check if the spectral identifier is the same as the one in the quantification table
         return Analysis(
             run_name=run_name,
             spectra=tuple(AnnotatedSpectrum(
                 spectrum=spectrum,
-                mass_over_charge=row["row m/z"],
-                retention_time=row["row retention time"],
-                intensity=row[intensity_col],)
-                for spectrum, (_, row) in zip(spectra, quant_table.iterrows())
+                mass_over_charge=quant_table.loc[int(spectrum.get("feature_id")), "row m/z"],
+                retention_time=quant_table.loc[int(spectrum.get("feature_id")), "row retention time"],
+                intensity=quant_table.loc[int(spectrum.get("feature_id")), intensity_col],)
+                for spectrum in spectra
             ),  
             metadata=metadata,
             ionization_mode=ionization_mode,
@@ -87,7 +88,10 @@ class AnalysisLoader:
     @classmethod
     def _load_quantification_table(cls, path: Path) -> pd.DataFrame:
         """Load quantification table from file."""
-        return pd.read_csv(path, sep=None, engine="python")
+
+        quant_table = pd.read_csv(path, sep=None, engine="python")
+        quant_table.set_index("row ID", inplace=True)
+        return quant_table
     
     @classmethod
     def _load_spectra(cls, path: Path) -> tuple:
