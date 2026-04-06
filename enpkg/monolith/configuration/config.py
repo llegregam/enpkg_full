@@ -21,6 +21,7 @@ class GeneralParams(BaseModel):
         pattern="^(pos|neg)$",
         description="Ionization mode polarity ('pos' or 'neg')"
     )
+    
 
 class EnhancerConfig(BaseModel, ABC):
     """Interface for building enhancer configurations."""
@@ -32,6 +33,9 @@ class EnhancerConfig(BaseModel, ABC):
         default_factory=GeneralParams,
         description="General processing parameters"
     )
+
+    def __repr__(self):
+        return f"{self.__class__.__name__} input parameters:\n{self.model_dump_json(indent=2)}"
 
     @classmethod
     def from_yaml(cls, path: str):

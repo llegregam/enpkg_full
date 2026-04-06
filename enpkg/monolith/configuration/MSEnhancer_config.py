@@ -131,7 +131,7 @@ class SpectralMatchParams(BaseModel):
         description="MS/MS fragment mass tolerance (in Da)"
     )
     min_score: float = Field(
-        default=0.2,
+        default=0.20,
         ge=0.0,
         le=1.0,
         description="Minimum spectral similarity score for a match"
@@ -163,7 +163,7 @@ class DownloaderParams(BaseModel):
     )
     
 class MSEnhancerConfig(EnhancerConfig, BaseModel):
-    """Configuration for ISDB Enhancers.
+    """Configuration for MS Enhancers.
     
     Combines all sub-configurations for spectral matching against
     the In-Silico DataBase with taxonomic and chemical reweighting.
