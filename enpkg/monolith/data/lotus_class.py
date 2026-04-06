@@ -140,9 +140,10 @@ class Lotus:
     def __repr__(self) -> str:
         """Return a string representation of the LOTUS entry."""
         return (
-            f"Lotus(Traditional name: {self.structure_name_traditional}, "
-            f"InChIKey: {self.structure_inchikey},"
-            f"Organism: {self.organism_name})"
+            f"Lotus(\nTraditional name: {self.structure_name_traditional}, "
+            f"\nInChIKey: {self.structure_inchikey},"
+            f"\nOrganism: {self.organism_name}),"
+            f"\nMolecular formula: {self.structure_molecular_formula},"
         )
 
     def __eq__(self, other: object) -> bool:
