@@ -5,6 +5,7 @@ from typing import Optional
 from logging import Logger
 import pandas as pd
 import numpy as np
+import random
 
 from tqdm.auto import tqdm
 
@@ -15,7 +16,7 @@ from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.otl_class import Match
 from enpkg.monolith.data.ms1_data_classes import ChemicalAdduct, MS1EnhancerConfig
 from enpkg.monolith.utils import binary_search_by_key, label_propagation_algorithm
-from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig, GeneralParams, Urls, Paths
+from enpkg.monolith.configuration.MSEnhancer_config import DownloaderParams, MSEnhancerConfig, GeneralParams, Urls, Paths
 from enpkg.monolith.loaders.database_loader import DBLoader
 
 
@@ -84,6 +85,12 @@ class MS1Enhancer(Enhancer):
         # we match the precursor mass with the adducts, we can do so
         # via binary search.
         adducts = sorted(adducts, key=lambda x: x.adduct_mass)
+        self.logger.debug(
+            "Sample adducts (first 10): %s",
+            "\n".join(
+                f"  {i+1}. {adduct}" for i, adduct in enumerate(random.sample(adducts, min(10, len(adducts))))
+            ),
+        )
 
         return adducts
 
@@ -113,6 +120,7 @@ class MS1Enhancer(Enhancer):
         start = time()
         
         pathways_t = {row[0]: np.array(row[1:]) for row in self.db_loader.lotus_metadata_pathways.iter_rows()}
+        self.logger.debug(f"Random sample of built pathways_t entries: {random.sample(list(pathways_t.items()), 5)}")
         superclasses_t = {row[0]: np.array(row[1:]) for row in self.db_loader.lotus_metadata_superclasses.iter_rows()}
         classes_t = {row[0]: np.array(row[1:]) for row in self.db_loader.lotus_metadata_classes.iter_rows()}
         self.logger.debug(f"Built classification dictionaries DataFrames in {time() - start:.2f} seconds")
@@ -144,7 +152,7 @@ class MS1Enhancer(Enhancer):
             )
         ]
         self.logger.debug(f"Built {len(lotus_grouped_by_structure_molecular_formula)} LOTUS groups in {time() - start:.2f} seconds")
-
+        self.logger.debug(f"Sample of 5 LOTUS groups: {random.sample(lotus_grouped_by_structure_molecular_formula, min(5, len(lotus_grouped_by_structure_molecular_formula)))}")
         return lotus_grouped_by_structure_molecular_formula
 
 
@@ -206,68 +214,50 @@ class MS1Enhancer(Enhancer):
 
                 if upper_mass_bound_index == len(self._adducts):
                     break
-
             spectrum.ms1_annotations = self._adducts[lower_mass_bound_index:upper_mass_bound_index]
+        self.logger.debug(f"Showing sample of spectrA with MS1 annotations after enrichment:")
+        for i, spectrum in enumerate(random.sample(spectrum_list, k=10)):
+            for annotation in spectrum.ms1_annotations:
+                self.logger.debug(
+                    f"Spectrum {spectrum.feature_id} (precursor m/z: {spectrum.precursor_mz}) matched with adduct {annotation.recipe} of LOTUS entry {annotation.lotus[0].structure_name_traditional} (adduct mass: {annotation.adduct_mass})"
+                )
         return spectrum_list
     
 
 if __name__ == "__main__":
     # Run tests with: pytest enpkg/tests/test_ms1_enhancer.py -v
-    import subprocess
-    import sys
+    # import subprocess
+    # import sys
     
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "enpkg/tests/test_ms1_enhancer.py", "-v"],
-        cwd="/home/llegregam/git_projects/enpkg_full",
-    )
-    sys.exit(result.returncode)
+    # result = subprocess.run(
+    #     [sys.executable, "-m", "pytest", "enpkg/tests/test_ms1_enhancer.py", "-v"],
+    #     cwd="/home/llegregam/git_projects/enpkg_full",
+    # )
+    # sys.exit(result.returncode)
 
     # --- Original inline test code (kept for reference) ---
-    # import logging
+    import logging
     # import pickle
-    # from enpkg.monolith.data.ms1_data_classes.ms1_configuration_class import MS1EnhancerConfig
-    # from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-    
+    from enpkg.monolith.data.ms1_data_classes.ms1_configuration_class import MS1EnhancerConfig
+    from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
+    from enpkg.monolith.pipeline.test_pol import load_config
 
-    # logging.basicConfig(level=logging.DEBUG)
-    # logger = logging.getLogger("MS1EnhancerTest")
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger("MS1EnhancerTest")
 
-    # paths = Paths(
-    #     taxo_db_metadata="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/enhancers/test_isdb/taxo_db_metadata.csv",
-    #     spectral_db_pos="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/enhancers/test_isdb/spectral_db_pos.pkl",
-    #     taxo_db_pathways="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/enhancers/test_isdb/taxo_db_pathways.csv",
-    #     taxo_db_superclasses="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/enhancers/test_isdb/taxo_db_superclasses.csv",
-    #     taxo_db_classes="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/enhancers/test_isdb/taxo_db_classes.csv"
-    # )
-    # paths = Paths()
-    # urls = Urls(
-    #     taxo_db_metadata="https://zenodo.org/record/7534071/files/230106_frozen_metadata.csv.gz",
-    #     taxo_db_pathways="https://zenodo.org/records/13951644/files/pathways.csv.gz?download=1",
-    #     taxo_db_superclasses="https://zenodo.org/records/13951644/files/superclasses.csv.gz?download=1",
-    #     taxo_db_classes="https://zenodo.org/records/13951644/files/classes.csv.gz?download=1",
-    #     spectral_db_pos="https://zenodo.org/records/8287341/files/isdb_pos_cleaned.pkl"
-    # )
-
-    # config = MSEnhancerConfig(
-    #     general_params=GeneralParams(
-    #         redownload_if_exists=False,
-    #         download_dir="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/enhancers/test_isdb",
-    #         polarity="pos"
-        
-    #     ),
-    #     urls = urls,
-    #     paths = paths
-    # )
-    # # TODO: Think about how ionization mode is set in the pipelines.
-    # analysis = AnalysisLoader.from_files(
-    #     path_to_spectra="/home/llegregam/git_projects/enpkg_full/data/input/enpkg_toy_dataset/msdata/processed/VGF151_E05_pos.mgf",
-    #     path_to_metadata="/home/llegregam/git_projects/enpkg_full/data/input/enpkg_toy_dataset/metadata/metadata.tsv",
-    #     path_to_quant_table="/home/llegregam/git_projects/enpkg_full/data/input/enpkg_toy_dataset/msdata/processed/VGF151_E05_pos_quant.csv",
-    #     ionization_mode="pos"
-    # )
-
-    # enhancer = MS1Enhancer(configuration=config, logger=logger)
-    
+    config = load_config()
+    logger.info(f"Using configuration:\n{config}")
+    # TODO: Think about how ionization mode is set in the pipelines.
+    analysis = AnalysisLoader.from_files(
+        path_to_spectra="/home/llegregam/git_projects/enpkg_full/data/input/enpkg_toy_dataset/msdata/processed/VGF151_E05_pos.mgf",
+        path_to_metadata="/home/llegregam/git_projects/enpkg_full/data/input/enpkg_toy_dataset/metadata/metadata.tsv",
+        path_to_quant_table="/home/llegregam/git_projects/enpkg_full/data/input/enpkg_toy_dataset/msdata/processed/VGF151_E05_pos_quant.csv",
+        ionization_mode="pos"
+    )
+    db_loader = DBLoader(configuration=config.ms_config, logger=logger)
+    enhancer = MS1Enhancer(configuration=config.ms_config, logger=logger, db_loader=db_loader)
+    # enhancer.initialize_adducts(enhancer.initialize_lotus_objects())
+    enhancer.enhance(analysis.spectra)
     # # Cache path for LOTUS objects
     # lotus_cache_path = "/home/llegregam/git_projects/enpkg_full/enpkg/monolith/enhancers/test_isdb/lotus_grouped_by_structure_molecular_formula.pkl"
     
