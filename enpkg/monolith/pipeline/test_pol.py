@@ -2,6 +2,8 @@ import logging
 import random
 import time
 
+from collections import namedtuple
+
 import polars as pl
 
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
@@ -20,11 +22,9 @@ from enpkg.monolith.configuration.MSEnhancer_config import (
 )
 from enpkg.monolith.loaders.database_loader import DBLoader
 
-from enpkg.tests.conftest import DATABASE_DIR
+from enpkg.tests.test_enhancers.conftest import DATABASE_DIR
 
-
-def main():
-
+def setup_logger():
     logger = logging.getLogger(__name__)
     file_handler = logging.FileHandler("./test_pipeline.log", mode="w")
     stream_handler = logging.StreamHandler()
@@ -36,7 +36,44 @@ def main():
     stream_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
+    return logger
+
+def load_config():
+    paths = Paths()
+    urls = Urls(
+        taxo_db_metadata="https://zenodo.org/record/7534071/files/230106_frozen_metadata.csv.gz",
+        taxo_db_pathways="https://zenodo.org/records/13951644/files/pathways.csv.gz?download=1",
+        taxo_db_superclasses="https://zenodo.org/records/13951644/files/superclasses.csv.gz?download=1",
+        taxo_db_classes="https://zenodo.org/records/13951644/files/classes.csv.gz?download=1",
+        spectral_db_pos="https://zenodo.org/records/8287341/files/isdb_pos_cleaned.pkl",
+    )
+
+    enhancer_configs = namedtuple("Config", ["network_enhancer_config", "ms_config"])
+    config = enhancer_configs(
+        network_enhancer_config=NetworkEnhancerConfig(),
+        ms_config=MSEnhancerConfig(
+            downloader_params=DownloaderParams(
+                redownload_if_exists=False,
+                download_dir=str(DATABASE_DIR),
+                urls=urls,
+                paths=paths,
+               ),
+            general_params=GeneralParams(
+                recompute=False,
+                polarity="pos"
+            )   
+        )
+    )
+    return config
+
+def main():
+
+    logger = setup_logger()
+    config = load_config()
     number_of_test_spectra = 50
+    logger.info(f"Using configuration:\n{config}")
+    db_loader = DBLoader(configuration=config.ms_config, logger=logger)
+
 
     # Load analysis data
     analysis = AnalysisLoader.from_files(
@@ -45,7 +82,7 @@ def main():
         path_to_quant_table="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/test-data/actea_EtOAc-1_pos_quant.csv",
         ionization_mode="pos"
     )
-
+    
     # Simplified the selection process from random manual loop selection to using python native random.sample helper.
     test_spectra_indices = random.sample(range(len(analysis.spectra)), min(number_of_test_spectra, len(analysis.spectra)))
     
@@ -79,7 +116,7 @@ def main():
 
     print("Running molecular networking step...")
     molecular_networking_step = MolecularNetworkingStep(
-        NetworkEnhancerConfig()
+        config=config.network_enhancer_config,
     )
     if molecular_networking_step.can_run(analysis):
         analysis = molecular_networking_step.process(analysis)
@@ -92,43 +129,25 @@ def main():
     else:
         logger.info("Molecular networking step cannot run on this analysis.")
 
-    paths = Paths()
-    urls = Urls(
-        taxo_db_metadata="https://zenodo.org/record/7534071/files/230106_frozen_metadata.csv.gz",
-        taxo_db_pathways="https://zenodo.org/records/13951644/files/pathways.csv.gz?download=1",
-        taxo_db_superclasses="https://zenodo.org/records/13951644/files/superclasses.csv.gz?download=1",
-        taxo_db_classes="https://zenodo.org/records/13951644/files/classes.csv.gz?download=1",
-        spectral_db_pos="https://zenodo.org/records/8287341/files/isdb_pos_cleaned.pkl",
-    )
-    ms_config = MSEnhancerConfig(
-            downloader_params=DownloaderParams(
-                redownload_if_exists=False,
-                download_dir=str(DATABASE_DIR),
-                urls=urls,
-                paths=paths,
-            )
-        )
-    db_loader = DBLoader(configuration=ms_config, logger=logger)
+    
 
     logger.info("Running MS1 enhancement step...")
     ms1_enhancement_step = MS1EnhancementStep(
         logger=logger,
-        config=ms_config,
+        config=config.ms_config,
         db_loader=db_loader
     )
     if ms1_enhancement_step.can_run(analysis):
         analysis = ms1_enhancement_step.process(analysis)
         assert len(analysis.spectra) > 0, "MS1 enhancement should not remove spectra from the analysis."
         for spectrum in analysis.spectra:
-            logger.debug(f"Spectrum {spectrum.get('feature_id')}")
-            for i, annotation in enumerate(spectrum.ms1_annotations):
-                logger.debug(f"MS1 annotation {i}: {annotation}")
+            print(f"Spectrum {spectrum.get('feature_id')} has {len(spectrum.ms1_annotations)} MS1 annotations after enhancement.")
         logger.info(f"MS1 enhancement completed. Number of spectra after enhancement: {len(analysis.spectra)}")
     else:
         logger.info("MS1 enhancement step cannot run on this analysis.")
 
     ms2_enhancement_step = MS2EnrichmentStep(
-        config=ms_config,
+        config=config.ms_config,
         logger=logger,
         db_loader=db_loader
     )
@@ -137,9 +156,7 @@ def main():
         assert len(analysis.spectra) > 0, "MS2 enhancement should not remove spectra from the analysis."
         logger.info(f"MS2 enhancement completed. Number of spectra after enhancement: {len(analysis.spectra)}")
         for spectrum in analysis.spectra:
-            logger.debug(f"Spectrum {spectrum.get('feature_id')}")
-            for i, annotation in enumerate(spectrum.ms2_annotations):
-                logger.debug(f"MS2 annotation {i}: {annotation}")
+            print(f"Spectrum {spectrum.get('feature_id')} has {len(spectrum.ms2_annotations)} MS2 annotations after enhancement.")
     else:
         logger.info("MS2 enhancement step cannot run on this analysis.")
 
