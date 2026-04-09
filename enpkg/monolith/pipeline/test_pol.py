@@ -1,6 +1,6 @@
 import logging
 import random
-import time
+from pathlib import Path
 
 from collections import namedtuple
 
@@ -12,11 +12,14 @@ from enpkg.monolith.pipeline.molecular_networking_step import MolecularNetworkin
 from enpkg.monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
 from enpkg.monolith.pipeline.ms1_enhancement_step import MS1EnhancementStep
 from enpkg.monolith.pipeline.ms2_enhancement_step import MS2EnrichmentStep
+from enpkg.monolith.pipeline.weights_enhancement_step import WeightsEnhancementStep
 from enpkg.monolith.data.otl_class import Match
+from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
 from enpkg.monolith.configuration.MSEnhancer_config import (
     DownloaderParams,
     MSEnhancerConfig,
     GeneralParams,
+    SpectralMatchParams,
     Urls,
     Paths,
 )
@@ -57,7 +60,15 @@ def load_config():
                 download_dir=str(DATABASE_DIR),
                 urls=urls,
                 paths=paths,
+                duckdb_path=str(Path(DATABASE_DIR / "enpkg.duckdb"))
                ),
+            spectral_match_params=SpectralMatchParams(
+                parent_mz_tol=0.01,
+                method="cosine_hungarian",
+                msms_mz_tol=0.01,
+                min_score=0.20,
+                min_peaks=12
+            ),
             general_params=GeneralParams(
                 recompute=False,
                 polarity="pos"
@@ -84,10 +95,10 @@ def main():
     )
     
     # Simplified the selection process from random manual loop selection to using python native random.sample helper.
-    test_spectra_indices = random.sample(range(len(analysis.spectra)), min(number_of_test_spectra, len(analysis.spectra)))
+    # test_spectra_indices = random.sample(range(len(analysis.spectra)), min(number_of_test_spectra, len(analysis.spectra)))
     
-    logger.info(f"List of randomly selected spectra indices for testing: {test_spectra_indices}")
-    analysis.spectra = [analysis.spectra[i] for i in test_spectra_indices]
+    # logger.info(f"List of randomly selected spectra indices for testing: {test_spectra_indices}")
+    # analysis.spectra = [analysis.spectra[i] for i in test_spectra_indices]
 
     # Initialize pipeline steps
     print("Running taxonomical enrichment step...")
@@ -160,7 +171,18 @@ def main():
     else:
         logger.info("MS2 enhancement step cannot run on this analysis.")
 
-    
+    reweighting_step = WeightsEnhancementStep(
+        config=ReweightingConfig(
+            downloader_params=config.ms_config.downloader_params,
+        ),
+        logger=logger,
+        db_loader=db_loader,
+    )
+    if reweighting_step.can_run(analysis):
+        analysis = reweighting_step.process(analysis)
+        logger.info("Weights enhancement completed.")
+    else:
+        logger.info("Weights enhancement step cannot run on this analysis.")
 
 if __name__ == "__main__":
 
