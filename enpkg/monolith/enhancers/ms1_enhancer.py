@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """Submodule for the MS1 level enhancer, which adds the Adducts to a given batch and computes its LPA scores."""
 
 from time import time
@@ -11,13 +13,15 @@ from tqdm.auto import tqdm
 
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.enhancers.adducts import POSITIVE_RECIPES, NEGATIVE_RECIPES
-from enpkg.monolith.data.analysis import Analysis, AnnotatedSpectrum
+from enpkg.monolith.data.analysis import AnnotatedSpectrum
 from enpkg.monolith.data.lotus_class import Lotus
-from enpkg.monolith.data.otl_class import Match
-from enpkg.monolith.data.ms1_data_classes import ChemicalAdduct, MS1EnhancerConfig
+from enpkg.monolith.data.ms1_data_classes import ChemicalAdduct
 from enpkg.monolith.utils import binary_search_by_key, label_propagation_algorithm
-from enpkg.monolith.configuration.MSEnhancer_config import DownloaderParams, MSEnhancerConfig, GeneralParams, Urls, Paths
+from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig 
 from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.enhancers.adducts import POSITIVE_RECIPES, NEGATIVE_RECIPES
+from enpkg.monolith.data.ms1_data_classes.adduct_class import ADDUCT_MASSES
+from enpkg.monolith.loaders.database_manager import DatabaseManager
 
 
 class MS1Enhancer(Enhancer):
@@ -94,66 +98,225 @@ class MS1Enhancer(Enhancer):
 
         return adducts
 
-    def initialize_lotus_objects(self) -> list[list[Lotus]]:
+    def initialize_lotus_objects(
+        self,
+        spectrum_list: Optional[list] = None,
+    ) -> list[list[Lotus]]:
         """
         Initialize the LOTUS objects and group them by their molecular formula.
-            This function performs the following steps:
-            1. Validates that the LOTUS metadata is not empty and that all entries have the same molecular formula.
-            2. Transposes the classification DataFrames for efficient access by SMILES key.
-            3. Iterates over the LOTUS metadata grouped by molecular formula, creating LOTUS objects for each entry and grouping them by their molecular formula.
-            4. Caches the SMILES lookup within the inner loop to avoid redundant index operations.
-        
-        returns: List of lists of LOTUS objects, where each inner list contains LOTUS entries with the same molecular formula.
+
+        When a DuckDB database is configured and ``spectrum_list`` is provided,
+        only compounds whose exact mass falls within the reachable range of the
+        spectra's precursor m/z values are loaded (on-demand path). This can
+        dramatically reduce the number of Lotus objects constructed when the
+        sample covers only a fraction of the full LOTUS chemical space.
+
+        Falls back to loading all compounds from the pre-loaded DataFrames when
+        no DuckDB path is configured or no spectrum_list is given.
+
+        Parameters
+        ----------
+        spectrum_list:
+            Optional list of AnnotatedSpectrum objects. Used to compute the
+            on-demand mass window when DuckDB is available.
+
+        Returns
+        -------
+        List of lists of LOTUS objects, where each inner list contains LOTUS
+        entries with the same molecular formula.
+        """
+        duckdb_path = self.db_loader.configuration.downloader_params.duckdb_path
+        if duckdb_path and spectrum_list is not None:
+            return self._initialize_lotus_objects_from_duckdb(spectrum_list, duckdb_path)
+        return self._initialize_lotus_objects_from_dataframes()
+
+    def _initialize_lotus_objects_from_duckdb(
+        self,
+        spectrum_list: list,
+        duckdb_path: str,
+    ) -> list[list[Lotus]]:
+        """
+        On-demand Lotus initialisation using DuckDB.
+
+        Derives the exact-mass window reachable from the spectra via all
+        adduct recipes, queries only those compounds, and constructs Lotus
+        objects from the JOIN result (no separate dict lookups needed).
         """
 
-        structure_smiles_col: int = self.db_loader.lotus_metadata.columns.index(
-            "structure_smiles"
+        recipes = (
+            POSITIVE_RECIPES
+            if self.configuration.general_params.polarity == "pos"
+            else NEGATIVE_RECIPES
         )
-        
+        tol = self.configuration.spectral_match_params.parent_mz_tol
+        precursor_mzs = [s.precursor_mz for s in spectrum_list]
+
+        # Compute the exact-mass window reachable from all spectra + all recipes.
+        # For each recipe: exact_mass = (precursor_mz * charge - adduct_sum) / multimer_factor
+        # We accumulate the global min/max across all (recipe, spectrum) pairs.
+        global_min = float("inf")
+        global_max = float("-inf")
+        for recipe in recipes:
+            adduct_sum = sum(
+                ADDUCT_MASSES[k] * v for k, v in recipe.ingredients.items()
+            )
+            for mz in precursor_mzs:
+                em_min = ((mz - tol) * recipe.charge - adduct_sum) / recipe.multimer_factor
+                em_max = ((mz + tol) * recipe.charge - adduct_sum) / recipe.multimer_factor
+                if em_min < global_min:
+                    global_min = em_min
+                if em_max > global_max:
+                    global_max = em_max
+
+        # # Add a small buffer to account for floating-point rounding
+        # global_min -= tol
+        # global_max += tol
+
+
+        self.logger.debug(
+            f"On-demand DuckDB query: exact_mass ∈ [{global_min:.4f}, {global_max:.4f}] "
+            f"Da (from {len(precursor_mzs)} spectra × {len(recipes)} recipes)"
+        )
+        start = time()
+        with DatabaseManager(duckdb_path, read_only=True) as db:
+            df = db._conn.execute("""
+                SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
+                       c.structure_smiles, c.structure_molecular_formula,
+                       c.structure_exact_mass, c.structure_xlogp,
+                       c."structure_smiles_2D", c.structure_cid,
+                       c."structure_nameIupac", c."structure_nameTraditional",
+                       c.structure_stereocenters_total,
+                       c.structure_stereocenters_unspecified,
+                       c.structure_taxonomy_classyfire_chemontid,
+                       c.structure_taxonomy_classyfire_01kingdom,
+                       c.structure_taxonomy_classyfire_02superclass,
+                       c.structure_taxonomy_classyfire_03class,
+                       c.structure_taxonomy_classyfire_04directparent,
+                       c.organism_wikidata, c.organism_name,
+                       c.organism_taxonomy_gbifid, c.organism_taxonomy_ncbiid,
+                       c.organism_taxonomy_ottid,
+                       c.organism_taxonomy_01domain, c.organism_taxonomy_02kingdom,
+                       c.organism_taxonomy_03phylum, c.organism_taxonomy_04class,
+                       c.organism_taxonomy_05order, c.organism_taxonomy_06family,
+                       c.organism_taxonomy_07tribe, c.organism_taxonomy_08genus,
+                       c.organism_taxonomy_09species, c.organism_taxonomy_10varietas,
+                       c.reference_wikidata, c.reference_doi, c.manual_validation,
+                       n.pathways, n.superclasses, n.classes
+                FROM compounds c
+                LEFT JOIN npc_classifications n USING (structure_smiles)
+                WHERE c.structure_exact_mass BETWEEN ? AND ?
+            """, [global_min, global_max]).pl()
+
+        self.logger.debug(
+            f"DuckDB returned {len(df):,} compounds in {time() - start:.2f}s "
+            f"(out of full DB)"
+        )
+        if df.is_empty():
+            self.logger.warning("DuckDB on-demand query returned 0 compounds; check mass tolerance")
+            return []
+
+        return self._build_lotus_groups_from_df(df)
+
+    def _initialize_lotus_objects_from_dataframes(self) -> list[list[Lotus]]:
+        """
+        Lotus initialisation from the pre-loaded Polars DataFrames (original path).
+        """
+        import polars as pl
+
         # Initialize class-level column mappings for efficient Lotus object creation
         # This allows Lotus.from_polars_row to know which index corresponds to which field
         Lotus.setup_lotus_columns(list(self.db_loader.lotus_metadata.columns))
-        
-        # Convert classification DataFrames to O(1) dictionary lookups mapped by SMILES key.
-        # Original shape: (num_compounds, num_classes) where first column is SMILES.
-        # We store them as {SMILES: np.array([class_values])}
+        n_compound_cols = len(self.db_loader.lotus_metadata.columns)
+
+        # Collapse score columns + join onto metadata (same pattern as ms2 DataFrame path)
         start = time()
-        
-        pathways_t = {row[0]: np.array(row[1:]) for row in self.db_loader.lotus_metadata_pathways.iter_rows()}
-        self.logger.debug(f"Random sample of built pathways_t entries: {random.sample(list(pathways_t.items()), 5)}")
-        superclasses_t = {row[0]: np.array(row[1:]) for row in self.db_loader.lotus_metadata_superclasses.iter_rows()}
-        classes_t = {row[0]: np.array(row[1:]) for row in self.db_loader.lotus_metadata_classes.iter_rows()}
-        self.logger.debug(f"Built classification dictionaries DataFrames in {time() - start:.2f} seconds")
-        
+        pw_cols = self.db_loader.lotus_metadata_pathways.columns[1:]
+        sc_cols = self.db_loader.lotus_metadata_superclasses.columns[1:]
+        cl_cols = self.db_loader.lotus_metadata_classes.columns[1:]
+        merged = (
+            self.db_loader.lotus_metadata
+            .join(
+                self.db_loader.lotus_metadata_pathways.select(
+                    "structure_smiles", pl.concat_list(pw_cols).alias("pathways")
+                ),
+                on="structure_smiles", how="left",
+            )
+            .join(
+                self.db_loader.lotus_metadata_superclasses.select(
+                    "structure_smiles", pl.concat_list(sc_cols).alias("superclasses")
+                ),
+                on="structure_smiles", how="left",
+            )
+            .join(
+                self.db_loader.lotus_metadata_classes.select(
+                    "structure_smiles", pl.concat_list(cl_cols).alias("classes")
+                ),
+                on="structure_smiles", how="left",
+            )
+        )
+        self.logger.debug(f"Built merged DataFrame in {time() - start:.2f}s")
+
         # Build nested structure: group all LOTUS entries by molecular formula
         # Outer loop: iterate over groups (one per unique molecular formula)
         # Inner loop: iterate over rows within each group (individual compounds/isomers)
-        # 
-        # The `for smiles in (row[...],)` pattern creates a single-element tuple,
-        # effectively caching the SMILES lookup to avoid 3 separate index operations
         start = time()
-        # TODO: Bottleneck, needs optimization. Maybe when we build the real db.
-        lotus_grouped_by_structure_molecular_formula: list[list[Lotus]] = [
+        lotus_grouped: list[list[Lotus]] = [
             [
                 Lotus.from_polars_row(
-                    list(row),  # Convert polars row to list for Lotus constructor
-                    pathways=pathways_t[smiles],        # NPC pathway probability distribution
-                    superclasses=superclasses_t[smiles], # NPC superclass probability distribution  
-                    classes=classes_t[smiles],           # NPC class probability distribution
+                    list(row[:n_compound_cols]),
+                    pathways=np.array(row[n_compound_cols]) if row[n_compound_cols] is not None else np.array([]),
+                    superclasses=np.array(row[n_compound_cols + 1]) if row[n_compound_cols + 1] is not None else np.array([]),
+                    classes=np.array(row[n_compound_cols + 2]) if row[n_compound_cols + 2] is not None else np.array([]),
                 )
                 for row in group.iter_rows()
-                for smiles in (row[structure_smiles_col],)  # Cache SMILES lookup
             ]
-            for name, group in tqdm(
-                self.db_loader.lotus_metadata.group_by("structure_molecular_formula"),
+            for _, group in tqdm(
+                merged.group_by("structure_molecular_formula"),
                 desc="Initializing LOTUS objects",
                 dynamic_ncols=True,
                 leave=False,
             )
         ]
-        self.logger.debug(f"Built {len(lotus_grouped_by_structure_molecular_formula)} LOTUS groups in {time() - start:.2f} seconds")
-        self.logger.debug(f"Sample of 5 LOTUS groups: {random.sample(lotus_grouped_by_structure_molecular_formula, min(5, len(lotus_grouped_by_structure_molecular_formula)))}")
-        return lotus_grouped_by_structure_molecular_formula
+        self.logger.debug(f"Built {len(lotus_grouped)} LOTUS groups in {time() - start:.2f}s")
+        return lotus_grouped
+
+    def _build_lotus_groups_from_df(self, df) -> list[list[Lotus]]:
+        """
+        Build Lotus objects grouped by molecular formula from a Polars DataFrame
+        returned by a DuckDB query (includes 'pathways', 'superclasses', 'classes' LIST columns).
+        """
+        import polars as pl
+
+        # The compound columns are everything except the three appended LIST columns
+        list_col_set = {"pathways", "superclasses", "classes"}
+        compound_cols = [c for c in df.columns if c not in list_col_set]
+        Lotus.setup_lotus_columns(compound_cols)
+
+        smiles_idx = compound_cols.index("structure_smiles")
+        formula_idx = compound_cols.index("structure_molecular_formula")
+
+        start = time()
+        # Partition by formula in Python (Polars group_by on a subset of columns)
+        formula_col = df["structure_molecular_formula"]
+        unique_formulas = formula_col.unique().to_list()
+
+        lotus_groups: list[list[Lotus]] = []
+        for formula in tqdm(unique_formulas, desc="Initializing LOTUS objects", dynamic_ncols=True, leave=False):
+            group_mask = formula_col == formula
+            group_df = df.filter(group_mask)
+            group: list[Lotus] = []
+            for row in group_df.iter_rows():
+                # row has compound columns + pathways, superclasses, classes at the end
+                compound_row = list(row[:len(compound_cols)])
+                pw = np.array(row[len(compound_cols)]) if row[len(compound_cols)] is not None else np.array([])
+                sc = np.array(row[len(compound_cols) + 1]) if row[len(compound_cols) + 1] is not None else np.array([])
+                cl = np.array(row[len(compound_cols) + 2]) if row[len(compound_cols) + 2] is not None else np.array([])
+                group.append(Lotus.from_polars_row(compound_row, pathways=pw, superclasses=sc, classes=cl))
+            if group:
+                lotus_groups.append(group)
+
+        self.logger.debug(f"Built {len(lotus_groups)} LOTUS groups in {time() - start:.2f}s")
+        return lotus_groups
 
 
     def name(self) -> str:
@@ -173,7 +336,11 @@ class MS1Enhancer(Enhancer):
         if not hasattr(self, "_adducts"):
             self.logger.info("Initializing LOTUS objects and adducts for the first time")
             start = time()
-            lotus_grouped_by_structure_molecular_formula = self.initialize_lotus_objects()
+            lotus_grouped_by_structure_molecular_formula = self.initialize_lotus_objects(
+                spectrum_list=spectrum_list
+            )
+            self.logger.info(f"Finished initializing LOTUS objects in {time() - start:.2f} seconds")
+            start = time()
             self._adducts = self.initialize_adducts(lotus_grouped_by_structure_molecular_formula)
             self.logger.info(
                 f"Initialized {len(self._adducts)} adducts in {time() - start:.2f} seconds"
@@ -190,11 +357,11 @@ class MS1Enhancer(Enhancer):
         ):
             lower_mass_bound = (
                 spectrum.precursor_mz
-                - spectrum.precursor_mz * self.configuration.spectral_match_params.parent_mz_tol
+                - self.configuration.spectral_match_params.parent_mz_tol
             )
             upper_mass_bound = (
                 spectrum.precursor_mz
-                + spectrum.precursor_mz * self.configuration.spectral_match_params.parent_mz_tol
+                + self.configuration.spectral_match_params.parent_mz_tol
             )
 
             # Find the lower bound by exploring the sorted adducts via binary search
@@ -243,7 +410,7 @@ if __name__ == "__main__":
     from enpkg.monolith.pipeline.test_pol import load_config
 
     logging.basicConfig(level=logging.DEBUG)
-    logger = logging.getLogger("MS1EnhancerTest")
+    logger = logging.getLogger("root")
 
     config = load_config()
     logger.info(f"Using configuration:\n{config}")

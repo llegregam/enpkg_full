@@ -1,6 +1,7 @@
 """Configuration classes for ISDB enrichment."""
 
 from typing import Optional
+from enum import Enum
 from pydantic import BaseModel, Field
 
 from enpkg.monolith.configuration.config import GeneralParams, EnhancerConfig
@@ -116,7 +117,6 @@ class Paths(BaseModel):
         """Return count of non-None paths."""
         return sum(1 for _ in self)
 
-
 class SpectralMatchParams(BaseModel):
     """Parameters for spectral matching."""
 
@@ -141,6 +141,10 @@ class SpectralMatchParams(BaseModel):
         ge=1,
         description="Minimum number of matching peaks required"
     )
+    method: str = Field(
+        default="cosine_greedy",
+        description="Spectral similarity method to use ('cosine_greedy' or 'cosine_hungarian')"
+    )
 
 class DownloaderParams(BaseModel):
     """Parameters for controlling database downloading behavior."""
@@ -160,6 +164,10 @@ class DownloaderParams(BaseModel):
     urls: Optional[Urls] = Field(
         default=None,
         description="Remote URLs for database downloads (optional)"
+    )
+    duckdb_path: Optional[str] = Field(
+        default=None,
+        description="Path to persistent DuckDB file. If None, falls back to CSV/pickle loading."
     )
     
 class MSEnhancerConfig(EnhancerConfig, BaseModel):
