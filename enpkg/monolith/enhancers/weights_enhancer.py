@@ -11,7 +11,6 @@ from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.data.otl_class import Match
 from enpkg.monolith.utils.label_propagation_algorithm import label_propagation_algorithm
-from enpkg.tests.test_enhancers.test_ms2_enhancer import db_loader
 
 
 class WeightsEnhancer(Enhancer):
@@ -192,9 +191,9 @@ class WeightsEnhancer(Enhancer):
     def enhance(self, analysis: Analysis) -> Analysis:
         """Adds taxonomical and chemical weights to the annotations and reranks them."""
 
-        self._number_of_pathways = self.db_loader.lotus_metadata_pathways.shape[1]
-        self._number_of_superclasses = self.db_loader.lotus_metadata_superclasses.shape[1]
-        self._number_of_classes = self.db_loader.lotus_metadata_classes.shape[1]
+        self._number_of_pathways = self.db_loader._number_of_pathways
+        self._number_of_superclasses = self.db_loader._number_of_superclasses
+        self._number_of_classes = self.db_loader._number_of_classes
 
         pathway_features, superclass_features, class_features = self.compute_ms1_classifications(analysis)
 

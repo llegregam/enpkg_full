@@ -14,10 +14,11 @@ class Pipeline(ABC):
 
     logger: Logger
 
-    def __init__(self):
+    def __init__(self, enhancers: list[Enhancer]):
         """Initializes the pipeline."""
         self.logger = getLogger(self.name())
         self.logger.info("Initializing pipeline %s", self.name())
+        self._enhancers = enhancers
 
     @abstractmethod
     def name(self) -> str:

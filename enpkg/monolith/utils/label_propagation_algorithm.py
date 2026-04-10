@@ -138,7 +138,7 @@ def label_propagation_algorithm(
         features = new_features
 
         # We update the features
-        global_progress_bar.update(n=convergence_percentage - global_progress_bar.n)
+        global_progress_bar.update(n=float(convergence_percentage - global_progress_bar.n))
         global_progress_bar.set_postfix(
             {
                 "Variation": last_variation,

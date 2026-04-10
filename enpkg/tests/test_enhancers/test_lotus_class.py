@@ -112,7 +112,7 @@ def test_repr(lotus_data_full):
     series, pathways, superclasses, classes = lotus_data_full
     lotus = Lotus.from_polars_row(series, pathways, superclasses, classes)
     repr_str = repr(lotus)
-    assert "Lotus(Traditional name: traditional name" in repr_str
+    assert "Lotus(\nTraditional name: traditional name" in repr_str
     assert "InChIKey: VNJWNFJMXRGDHO-UHFFFAOYSA-N" in repr_str
     assert "Organism: Some organism" in repr_str
 
