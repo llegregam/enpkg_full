@@ -6,7 +6,7 @@ from logging import Logger
 from tabnanny import check
 from typing import Optional
 
-from PySirius import AccountCredentials
+# from PySirius import AccountCredentials
 from dotenv import load_dotenv
 
 from enpkg.monolith.enhancers.enhancer import Enhancer
@@ -152,12 +152,16 @@ class SiriusEnhancer(Enhancer):
             "--input", self.config.sirius_params.path_to_input_spectra,
             "-o", output_path,
             "formula",
+            "-p",
+            "orbitrap",
             "fingerprint",
             "canopus",
             "structure",
             "--database",
             "pubchem",
             "write-summaries",
+            "--output",
+            self.config.sirius_params.output_directory + "/summaries/"
         ]
 
         if self.config.sirius_params.recompute:

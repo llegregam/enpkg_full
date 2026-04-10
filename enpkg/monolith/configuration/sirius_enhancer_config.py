@@ -1,11 +1,6 @@
 """Configuration for Sirius."""
 
-import os
-from typing import Optional
-from dataclasses import dataclass
-
-from dotenv import load_dotenv
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field
 
 from enpkg.monolith.configuration.config import EnhancerConfig
 
