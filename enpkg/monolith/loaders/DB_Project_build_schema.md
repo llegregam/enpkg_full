@@ -57,7 +57,7 @@ A singleton/context manager that:
 
 ### Phase 1 - Import existing CSV/pkl data
 - One-time script to ingest current LOTUS CSVs and spectral pickles into DuckDB tables
-- Much faster subsequent loads (~100x for the 27-second class loading currently seen)
+- Much faster subsequent loads (~100x for the previous 27-second class loading)
 
 ### Phase 2 - Modify loaders
 - `DBLoader` becomes a thin wrapper around `DatabaseManager`
