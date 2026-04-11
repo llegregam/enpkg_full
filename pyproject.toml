@@ -42,6 +42,12 @@ pytest = "^7.4.4"
 lz4 = "^4.4.5"
 joblib = "^1.5.3"
 
+[tool.poetry.group.gui]
+optional = true
+
+[tool.poetry.group.gui.dependencies]
+streamlit = "^1.37"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
