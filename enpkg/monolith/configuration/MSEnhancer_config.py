@@ -11,11 +11,11 @@ class Urls(BaseModel):
     """URLs for remote data files."""
 
     taxo_db_metadata: Optional[str] = Field(
-        default=None,
+        default="https://zenodo.org/record/7534071/files/230106_frozen_metadata.csv.gz",
         description="URL for taxonomic database metadata"
     )
     spectral_db_pos: Optional[str] = Field(
-        default=None,
+        default="https://zenodo.org/records/8287341/files/isdb_pos_cleaned.pkl",
         description="URL for positive mode spectral database"
     )
     spectral_db_neg: Optional[str] = Field(
@@ -23,42 +23,43 @@ class Urls(BaseModel):
         description="URL for negative mode spectral database"
     )
     taxo_db_pathways: Optional[str] = Field(
-        default=None,
+        default="https://zenodo.org/records/13951644/files/pathways.csv.gz?download=1",
         description="URL for taxonomic pathways database"
     )
     taxo_db_superclasses: Optional[str] = Field(
-        default=None,
+        default="https://zenodo.org/records/13951644/files/superclasses.csv.gz?download=1",
         description="URL for taxonomic superclasses database"
     )
     taxo_db_classes: Optional[str] = Field(
-        default=None,
+        default="https://zenodo.org/records/13951644/files/classes.csv.gz?download=1",
         description="URL for taxonomic classes database"
     )
 
     @property
     def empty(self) -> bool:
-        """Check if all URLs are None."""
-        return all(
-            getattr(self, field_name) is None
-            for field_name in self.model_fields
-        )
+        """Check if all URLs are None or empty strings."""
+        for field_name in self.__class__.model_fields:
+            value = getattr(self, field_name)
+            if value is not None and value.strip():
+                return False
+        return True
 
     def __iter__(self):
-        """Iterate over non-None URL values."""
-        for field_name in self.model_fields:
+        """Iterate over non-None, non-empty URL values."""
+        for field_name in self.__class__.model_fields:
             value = getattr(self, field_name)
-            if value is not None:
+            if value is not None and value.strip():
                 yield value
 
     def items(self):
-        """Iterate over (field_name, url) pairs for non-None URLs."""
-        for field_name in self.model_fields:
+        """Iterate over (field_name, url) pairs for non-None, non-empty URLs."""
+        for field_name in self.__class__.model_fields:
             value = getattr(self, field_name)
-            if value is not None:
+            if value is not None and value.strip():
                 yield field_name, value
 
     def __len__(self) -> int:
-        """Return count of non-None URLs."""
+        """Return count of non-None, non-empty URLs."""
         return sum(1 for _ in self)
 
 
@@ -95,20 +96,20 @@ class Paths(BaseModel):
         """Return list of all defined paths."""
         return [
             getattr(self, field_name)
-            for field_name in self.model_fields
+            for field_name in self.__class__.model_fields
             if getattr(self, field_name) is not None
         ]
 
     def __iter__(self):
         """Iterate over non-None path values."""
-        for field_name in self.model_fields:
+        for field_name in self.__class__.model_fields:
             value = getattr(self, field_name)
             if value is not None:
                 yield value
 
     def items(self):
         """Iterate over (field_name, path) pairs for non-None paths."""
-        for field_name in self.model_fields:
+        for field_name in self.__class__.model_fields:
             value = getattr(self, field_name)
             if value is not None:
                 yield field_name, value
@@ -157,9 +158,9 @@ class DownloaderParams(BaseModel):
         default=None,
         description="Directory for downloaded files. When set, paths are auto-derived from URLs."
     )
-    paths: Paths = Field(
-        ...,
-        description="Local file paths for databases"
+    paths: Optional[Paths] = Field(
+        default=None,
+        description="Local file paths for databases (optional, overrides download_dir)"
     )
     urls: Optional[Urls] = Field(
         default=None,
