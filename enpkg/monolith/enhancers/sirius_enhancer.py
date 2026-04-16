@@ -86,8 +86,14 @@ class SiriusEnhancer(Enhancer):
         os.environ["SIRIUS_PASSWORD"] = password
         
     def _run_sirius(self, args: list[str]) -> subprocess.CompletedProcess:
+        sirius_path = self.config.sirius_params.path_to_sirius
+        if not sirius_path:
+            raise RuntimeError(
+                "Path to Sirius executable is not configured. "
+                "Please set the PATH_TO_SIRIUS environment variable or configure it in the SiriusEnhancerConfig."
+            )
         return subprocess.run(
-            [self.config.sirius_params.path_to_sirius, *args],
+            [sirius_path, *args],
             check=True,
             env=os.environ.copy(),
             shell=False,
