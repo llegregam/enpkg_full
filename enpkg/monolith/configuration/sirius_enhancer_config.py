@@ -3,13 +3,14 @@
 from pydantic import BaseModel, Field
 
 from enpkg.monolith.configuration.config import EnhancerConfig
+from typing import Optional
 
 class SiriusParams(BaseModel):
     """Parameters for the Sirius Enhancer."""
 
     path_to_sirius: str = Field(
-        default=None,
-        description="Path to the Sirius executable or JAR file."
+        default="PATH_TO_SIRIUS",
+        description="Path to the Sirius executable."
     )
     sirius_command_arg: str = Field(
         default="",
