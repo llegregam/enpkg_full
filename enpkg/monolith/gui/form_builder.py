@@ -20,10 +20,32 @@ def render_model(
     key_prefix: str,
     exclude_fields: set[str] | None = None,
 ) -> dict:
-    """Render widgets for every field in ``model_cls`` and return a dict.
+    """
+    Render a Streamlit form for a given Pydantic BaseModel class and return the user-provided values.
 
-    Fields listed in ``exclude_fields`` are skipped entirely — useful for
-    lifting shared sub-configs (e.g. ``general_params``) out of the form.
+    This function dynamically generates Streamlit widgets for each field in the provided Pydantic BaseModel class.
+    It allows users to input values for the fields, which are then returned as a dictionary compatible with
+    Pydantic's validation methods (e.g., `model_cls.model_validate`). The function supports pre-populating fields
+    with existing values and excluding specific fields from rendering.
+
+    Args:
+        model_cls (type[BaseModel]): 
+            The Pydantic BaseModel subclass (e.g., `EnhancerConfig`) to render in the GUI. Each field in the model
+            is rendered as a corresponding Streamlit widget based on its type and metadata.
+        current (dict | None): 
+            A dictionary of current values to pre-populate the widgets with. This is useful for editing existing
+            configurations or loading values from a YAML file. If `None`, fields will use their default values.
+        key_prefix (str): 
+            A unique string prefix to ensure Streamlit widget keys are distinct across the form. This is typically
+            the block ID (e.g., "ms1") to avoid key collisions in Streamlit's session state.
+        exclude_fields (set[str] | None, optional): 
+            A set of field names to exclude from rendering. This is useful for cases where certain fields (e.g.,
+            shared sub-configurations like `general_params`) are rendered separately. Defaults to `None`.
+    
+    Returns:
+        dict: 
+            A dictionary mapping field names to the current values of the corresponding widgets. This dictionary
+            can be validated and coerced using `model_cls.model_validate`.
     """
     current = current or {}
     exclude_fields = exclude_fields or set()
@@ -91,6 +113,36 @@ def _render_field(
     current_value: Any,
     key: str,
 ) -> Any:
+    """
+    Render a Streamlit widget for a single Pydantic field.
+
+    This function generates a Streamlit widget based on the type and metadata of a given Pydantic field.
+    It supports various field types, including nested BaseModel instances, lists, booleans, integers, floats,
+    and strings. The rendered widget allows users to input or modify the field's value, which is then returned
+    for further processing or validation. 
+
+    Args:
+        name (str): 
+            The name of the field to render. This is used as the label for the widget.
+        field_info (FieldInfo): 
+            The Pydantic `FieldInfo` object containing metadata about the field, such as its type, default value,
+            description, and validation constraints.
+        current_value (Any): 
+            The current value of the field, used to pre-populate the widget. If `None`, the field's default value
+            (if defined) is used instead.
+        key (str): 
+            A unique key for the Streamlit widget. This ensures that the widget's state is properly managed
+            within Streamlit's session state.
+
+    Returns:
+        Any: 
+            The value entered by the user in the widget. The type of the returned value depends on the field's type:
+            - For nested BaseModel fields, a dictionary of values is returned.
+            - For lists, a list of strings is returned.
+            - For booleans, integers, and floats, the corresponding primitive type is returned.
+            - For strings, either a free-form text input or a dropdown (if choices are defined) is returned.
+    """
+
     annotation, _ = _unwrap_optional(field_info.annotation)
     help_text = field_info.description or ""
     default = current_value if current_value is not None else _default_for(field_info)
