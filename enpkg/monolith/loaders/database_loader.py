@@ -104,21 +104,30 @@ class DBLoader:
     
     def _derive_path_from_url(self, url: str, download_dir: str) -> str:
         """Extract filename from URL and combine with download directory.
-        
+
         Handles query parameters (e.g., ?download=1) and URL encoding.
+        Raises DBLoaderError if the URL doesn't contain a valid filename.
         """
+        if not url or not url.strip():
+            raise DBLoaderError(f"URL cannot be empty")
+
         parsed = urlparse(url)
         # Get the path component and extract filename
         path = unquote(parsed.path)
         filename = Path(path).name
-        
+
         if not filename:
-            raise DBLoaderError(f"Could not extract filename from URL: {url}")
-        
+            raise DBLoaderError(
+                f"Could not extract filename from URL '{url}'. "
+                f"URL path component: '{parsed.path}'. "
+                f"Extracted path: '{path}'. "
+                f"Please ensure the URL points to a file, not a directory."
+            )
+
         # Ensure download directory exists
         dir_path = Path(download_dir)
         dir_path.mkdir(parents=True, exist_ok=True)
-        
+
         return str(dir_path / filename)
 
     def _download_databases(self) -> None:
@@ -351,25 +360,22 @@ class DBLoader:
         self.logger.debug(f"Loaded Taxonomical Database metadata with columns: {self.lotus_metadata.columns}")
 
         start = time()
-        self.lotus_metadata_pathways: pl.DataFrame = pl.read_csv(
-            self.configuration.downloader_params.paths.taxo_db_pathways
-        )
+        _df = pl.read_csv(self.configuration.downloader_params.paths.taxo_db_pathways)
+        self.lotus_metadata_pathways: pl.DataFrame = _df.rename({_df.columns[0]: "structure_smiles"})
         self.logger.info(f"Loaded Taxonomical Database pathways in {time() - start:.2f} seconds")
         self._number_of_pathways = self.lotus_metadata_pathways.shape[1] - 1
         self._pathways = self.lotus_metadata_pathways.columns[1:]
 
         start = time()
-        self.lotus_metadata_superclasses: pl.DataFrame = pl.read_csv(
-            self.configuration.downloader_params.paths.taxo_db_superclasses
-        )
+        _df = pl.read_csv(self.configuration.downloader_params.paths.taxo_db_superclasses)
+        self.lotus_metadata_superclasses: pl.DataFrame = _df.rename({_df.columns[0]: "structure_smiles"})
         self.logger.info(f"Loaded Taxonomical Database superclasses in {time() - start:.2f} seconds")
         self._number_of_superclasses = self.lotus_metadata_superclasses.shape[1] - 1
         self._superclasses = self.lotus_metadata_superclasses.columns[1:]
 
         start = time()
-        self.lotus_metadata_classes: pl.DataFrame = pl.read_csv(
-            self.configuration.downloader_params.paths.taxo_db_classes
-        )
+        _df = pl.read_csv(self.configuration.downloader_params.paths.taxo_db_classes)
+        self.lotus_metadata_classes: pl.DataFrame = _df.rename({_df.columns[0]: "structure_smiles"})
         self.logger.info(f"Loaded Taxonomical Database classes in {time() - start:.2f} seconds")
         self._number_of_classes = self.lotus_metadata_classes.shape[1] - 1
         self._classes = self.lotus_metadata_classes.columns[1:]
