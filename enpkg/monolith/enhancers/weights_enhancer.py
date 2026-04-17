@@ -86,9 +86,6 @@ class WeightsEnhancer(Enhancer):
                 )
 
             total_taxonomical_similarities = np.sum(taxonomical_similarities)
-            self.logger.debug(
-                f"Spectrum {i}: taxonomical similarities = {taxonomical_similarities},\nTotal = {total_taxonomical_similarities}"
-            )
             if total_taxonomical_similarities > 0:
                 taxonomical_similarities /= total_taxonomical_similarities
 
