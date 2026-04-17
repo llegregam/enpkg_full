@@ -1,21 +1,42 @@
 """Central registry of pipeline blocks exposed to the GUI.
 
-Adding a new block to the GUI requires exactly one entry here: the display
-label, the Pydantic config class (or None), the PipelineStep subclass, and a
-list of dependency block ids. The app, form builder, and runner all read this
-registry rather than hard-coding the list of steps.
+Adding a new block to the GUI requires exactly one entry here.  Each entry
+bundles everything the GUI needs to know about a block:
+
+- display label and description (for the sidebar checkboxes / tooltips)
+- PipelineStep subclass and Pydantic config class (for the runner + forms)
+- dependency list (which other blocks must also be selected)
+- **log_summary function** (for the post-run report in the log file)
+
+The ``log_summary`` field is *required*. This is intentional: it forces every
+new block author to think about what part of the ``Analysis`` their step
+modifies and to provide a human-readable summary for the log.  If the block
+doesn't yet expose its outputs on the ``Analysis`` model, a minimal stub that
+says so is acceptable — see ``_log_sirius`` for an example.
+
+**How to write a ``log_summary`` function:**
+
+1. Accept ``(logger: logging.Logger, analysis: Analysis) -> None``.
+2. Read only the fields your block is responsible for (e.g. OTT matches for
+   taxonomical, molecular_network for networking).
+3. Log at INFO level with aligned labels so the summary block is readable.
+4. Handle the case where the field is ``None`` or empty (the block may have
+   been skipped by ``can_run``).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from typing import Optional, Type
+from typing import Callable, Optional, Type
 
+import networkx as nx
 from pydantic import BaseModel
 
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
 from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
 from enpkg.monolith.configuration.sirius_enhancer_config import SiriusEnhancerConfig
+from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.pipeline.base_pipeline_step import PipelineStep
 from enpkg.monolith.pipeline.molecular_networking_step import MolecularNetworkingStep
 from enpkg.monolith.pipeline.ms1_enhancement_step import MS1EnhancementStep
@@ -24,24 +45,145 @@ from enpkg.monolith.pipeline.sirius_enhancement_step import SiriusEnhancementSte
 from enpkg.monolith.pipeline.taxonomical_enhancement_step import TaxonomicalEnhancementStep
 from enpkg.monolith.pipeline.weights_enhancement_step import WeightsEnhancementStep
 
+# Callable signature for every block's post-run log summary.
+# Each function receives the shared logger and the final Analysis, and should
+# log the relevant metrics at INFO level.
+SummaryFn = Callable[[logging.Logger, Analysis], None]
+
 
 @dataclass(frozen=True)
 class BlockSpec:
+    """Immutable descriptor for a single pipeline block.
+
+    Every field except ``description`` and ``depends_on`` is required.  The
+    ``log_summary`` callable is invoked after a successful run to append a
+    per-block section to the run log.
+    """
+
     id: str
     label: str
     step_cls: Type[PipelineStep]
     config_cls: Optional[Type[BaseModel]]
+    log_summary: SummaryFn
     description: str = ""
     depends_on: tuple[str, ...] = field(default_factory=tuple)
 
 
-# Canonical execution order — the runner iterates this list in order.
+# ---------------------------------------------------------------------------
+# Per-block log summary functions
+#
+# Each function inspects the ``Analysis`` for the fields that its associated
+# pipeline step is responsible for and logs a readable summary.
+# ---------------------------------------------------------------------------
+
+def _log_taxonomical(logger: logging.Logger, analysis: Analysis) -> None:
+    """Summarise Open Tree of Life matches added by the taxonomical step.
+
+    Reads ``analysis.ott_matches``.  If matches exist, logs the best match
+    name, OTT id, score, and full lineage breakdown.
+    """
+    ott = analysis.ott_matches or []
+    logger.info("    OTT matches            : %d", len(ott))
+    if not ott:
+        return
+    best = ott[0]
+    logger.info("    Best match             : %s (OTT %d, score %.3f)",
+                best.taxon.name, best.ott_id, best.score)
+    if best.lineage is not None:
+        # Walk the standard taxonomic ranks and collect non-None values.
+        ranks = []
+        for rank_name in ("kingdom", "phylum", "klass", "order",
+                          "family", "genus", "species"):
+            val = getattr(best, rank_name, None)
+            if val:
+                # 'klass' is used in Python to avoid shadowing the builtin;
+                # display as 'class' for readability.
+                label = "class" if rank_name == "klass" else rank_name
+                ranks.append(f"{label}={val}")
+        if ranks:
+            logger.info("    Lineage                : %s", " > ".join(ranks))
+
+
+def _log_network(logger: logging.Logger, analysis: Analysis) -> None:
+    """Summarise the molecular similarity network.
+
+    Reads ``analysis.molecular_network`` (a ``networkx.Graph``).  Logs node
+    and edge counts, degree statistics, and the number of connected components.
+    """
+    network = analysis.molecular_network
+    if network is None:
+        logger.info("    (no molecular network on analysis)")
+        return
+    logger.info("    Nodes                  : %d", len(network.nodes))
+    logger.info("    Edges                  : %d", len(network.edges))
+    degrees = [d for _, d in network.degree()]
+    if degrees:
+        logger.info("    Avg degree             : %.2f", sum(degrees) / len(degrees))
+        logger.info("    Max degree             : %d", max(degrees))
+    n_components = nx.number_connected_components(network)
+    logger.info("    Connected components   : %d", n_components)
+
+
+def _log_ms1(logger: logging.Logger, analysis: Analysis) -> None:
+    """Summarise MS1 adduct-matching annotations.
+
+    Counts how many spectra received at least one MS1 annotation and the
+    total number of annotations across all spectra.
+    """
+    n_spectra = len(analysis.spectra)
+    n_annotated = sum(1 for s in analysis.spectra if s.has_ms1_annotations())
+    total = sum(len(s.ms1_annotations) for s in analysis.spectra)
+    logger.info("    Spectra with MS1 annotations : %d / %d", n_annotated, n_spectra)
+    logger.info("    Total MS1 annotations        : %d", total)
+
+
+def _log_ms2(logger: logging.Logger, analysis: Analysis) -> None:
+    """Summarise MS2 spectral-matching (ISDB) annotations.
+
+    Counts how many spectra received at least one MS2 annotation and the
+    total number of annotations across all spectra.
+    """
+    n_spectra = len(analysis.spectra)
+    n_annotated = sum(1 for s in analysis.spectra if s.has_ms2_annotations())
+    total = sum(len(s.ms2_annotations) for s in analysis.spectra)
+    logger.info("    Spectra with MS2 annotations : %d / %d", n_annotated, n_spectra)
+    logger.info("    Total MS2 annotations        : %d", total)
+
+
+def _log_sirius(logger: logging.Logger, analysis: Analysis) -> None:
+    """Summarise Sirius structure-identification results.
+
+    Stub: Sirius annotations are not yet surfaced on the Analysis data model
+    (``SiriusChemicalAnnotation`` is commented out in ``AnnotatedSpectrum``).
+    Expand this once the field is wired in.
+    """
+    logger.info("    Sirius step completed (annotation summary not yet available)")
+
+
+def _log_weights(logger: logging.Logger, analysis: Analysis) -> None:
+    """Summarise the reranking / reweighting step.
+
+    Stub: the weights step modifies annotation scores in-place rather than
+    adding a new field to ``Analysis``.  Expand this once final-score fields
+    or a ranked-results list is exposed on the data model.
+    """
+    logger.info("    Reranking step completed (score summary not yet available)")
+
+
+# ---------------------------------------------------------------------------
+# Block registry — canonical execution order
+#
+# The runner iterates this list in order.  Adding a new pipeline block means
+# adding one entry here with all required fields (including ``log_summary``).
+# ---------------------------------------------------------------------------
+
 BLOCKS: list[BlockSpec] = [
     BlockSpec(
         id="taxonomical",
         label="Taxonomical enrichment",
         step_cls=TaxonomicalEnhancementStep,
         config_cls=None,
+        log_summary=_log_taxonomical,
         description="Fetches Open Tree of Life matches for the source organism. Requires source_taxon in metadata.",
     ),
     BlockSpec(
@@ -49,6 +191,7 @@ BLOCKS: list[BlockSpec] = [
         label="Molecular networking",
         step_cls=MolecularNetworkingStep,
         config_cls=NetworkEnhancerConfig,
+        log_summary=_log_network,
         description="Builds a spectral similarity network from MS/MS spectra.",
     ),
     BlockSpec(
@@ -56,6 +199,7 @@ BLOCKS: list[BlockSpec] = [
         label="MS1 enhancement",
         step_cls=MS1EnhancementStep,
         config_cls=MSEnhancerConfig,
+        log_summary=_log_ms1,
         description="Matches MS1 precursor m/z against adduct libraries. Shares config with MS2.",
     ),
     BlockSpec(
@@ -63,6 +207,7 @@ BLOCKS: list[BlockSpec] = [
         label="MS2 enhancement",
         step_cls=MS2EnrichmentStep,
         config_cls=MSEnhancerConfig,
+        log_summary=_log_ms2,
         description="Matches MS/MS spectra against spectral databases (ISDB).",
     ),
     BlockSpec(
@@ -70,6 +215,7 @@ BLOCKS: list[BlockSpec] = [
         label="Sirius",
         step_cls=SiriusEnhancementStep,
         config_cls=SiriusEnhancerConfig,
+        log_summary=_log_sirius,
         description="Runs the external Sirius binary for structure identification.",
     ),
     BlockSpec(
@@ -77,6 +223,7 @@ BLOCKS: list[BlockSpec] = [
         label="Weights / reranking",
         step_cls=WeightsEnhancementStep,
         config_cls=ReweightingConfig,
+        log_summary=_log_weights,
         description="Reranks annotations using taxonomic and chemical consistency. Requires the molecular network.",
         depends_on=("network",),
     ),
