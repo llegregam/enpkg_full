@@ -1,9 +1,9 @@
 """Submodule for the ISDB enhancer."""
 
-import gc
 import logging
 from time import time
-from typing import Optional
+import sys
+import tracemalloc
 from logging import Logger
 import matchms
 import pandas as pd
@@ -42,9 +42,11 @@ class Ms2Enhancer(Enhancer):
             raise TypeError(f"Expected logger of type logging.Logger, got {type(logger)}")
         if not isinstance(db_loader, DBLoader):
             raise TypeError(f"Expected db_loader of type DBLoader, got {type(db_loader)}")
+        tracemalloc.start()
         self.configuration = configuration
         self.logger = logger
         self.db_loader = db_loader
+        snapshot_1 = tracemalloc.take_snapshot()
         
         self.logger.info("Loading Databases")
         start = time()
@@ -59,15 +61,24 @@ class Ms2Enhancer(Enhancer):
         )
         start = time()
         self._initialize_lotus_objects()
+        snapshot_2 = tracemalloc.take_snapshot()
+        snapshot_1_stats = snapshot_1.statistics("stat_1")
+        snapshot_2_stats = snapshot_2.statistics("stat_2")
+        print(f"MEmory usage before initializing Lotus objects: {snapshot_1.statistics('stat_1')}")
+        print(f"Memory usage after initializing Lotus objects: {snapshot_2.statistics('stat_1')} MB")
         self.logger.info(
             "Converted Taxonomical Database metadata DataFrame to Lotus objects in %.2f seconds",
             time() - start,
         )
-        # Liberate memory by deleting the original dataframes and keeping only the Lotus objects and spectral database in memory
-        # (Can't be bothered to wait for the garbage collector)
-        del self.db_loader.lotus_metadata, self.db_loader.lotus_metadata_pathways, 
-        self.db_loader.lotus_metadata_superclasses, self.db_loader.lotus_metadata_classes
-        gc.collect()
+
+        print("Size of the parts of the db_loader:")
+        print(f"  - lotus_metadata: {sys.getsizeof(self.db_loader.lotus_metadata)} bytes")
+        print(f"  - lotus_metadata_pathways: {sys.getsizeof(self.db_loader.lotus_metadata_pathways)} bytes")
+        print(f"  - lotus_metadata_superclasses: {sys.getsizeof(self.db_loader.lotus_metadata_superclasses)} bytes")
+        print(f"  - lotus_metadata_classes: {sys.getsizeof(self.db_loader.lotus_metadata_classes)} bytes")
+        # del self.db_loader.lotus_metadata, self.db_loader.lotus_metadata_pathways,
+        # self.db_loader.lotus_metadata_superclasses, self.db_loader.lotus_metadata_classes
+        # gc.collect()
 
         # TODO: Could be put elsewhere
         if not isinstance(self.db_loader.spectral_db, list):
@@ -353,9 +364,9 @@ if __name__ == "__main__":
     config.ms_config.spectral_match_params.method = "cosine_hungarian" # or "hungarian"
     # )
     analysis = AnalysisLoader.from_files(
-        path_to_spectra="/home/llegregam/git_projects/enpkg_full/data/input/enpkg_toy_dataset/msdata/processed/VGF151_E05_pos.mgf",
-        path_to_metadata="/home/llegregam/git_projects/enpkg_full/data/input/enpkg_toy_dataset/metadata/metadata.tsv",
-        path_to_quant_table="/home/llegregam/git_projects/enpkg_full/data/input/enpkg_toy_dataset/msdata/processed/VGF151_E05_pos_quant.csv",
+        path_to_spectra="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/actea_EtOAc-1_pos.mgf",
+        path_to_metadata="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/qualome_metadata.txt",
+        path_to_quant_table="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/actea_EtOAc-1_pos_quant.csv",
         ionization_mode="pos"
     )
     logger.info(f"Loading enhancer from file")
