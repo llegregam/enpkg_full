@@ -280,7 +280,14 @@ if __name__ == "__main__":
     )
     logger.info(f"Loading enhancer from file")
     start = time()
-    enhancer = Ms2Enhancer(configuration=config.ms_config, logger=logger, db_loader=DBLoader(configuration=config.ms_config, logger=logger))
+    db_loader = DBLoader(configuration=config.ms_config, logger=logger)
+    lotus_store = LotusStore(
+        duckdb_path=config.ms_config.downloader_params.duckdb_path, logger=logger,
+    )
+    enhancer = Ms2Enhancer(
+        configuration=config.ms_config, logger=logger,
+        db_loader=db_loader, lotus_store=lotus_store,
+    )
     logger.info(f"Enhancer loaded in {time() - start:.2f} seconds")
     start = time()
     enhancer.enhance(analysis.spectra)
