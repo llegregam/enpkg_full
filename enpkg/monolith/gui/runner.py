@@ -416,10 +416,9 @@ def _build_step(
         logger.debug("Instantiating Network step with config")
         return cls(config)
     if block_id == "ms1":
-        # MS1 needs the LotusStore for mass-windowed Lotus access; db_loader is still
-        # threaded through until Step 3 of the refactor migrates MS1 off it.
-        logger.debug("Instantiating MS1 step with config, db_loader and lotus_store")
-        return cls(config=config, logger=logger, db_loader=db_loader)
+        # MS1 only needs the LotusStore for mass-windowed Lotus access.
+        logger.debug("Instantiating MS1 step with config and lotus_store")
+        return cls(config=config, logger=logger, lotus_store=lotus_store)
     if block_id == "ms2":
         logger.debug("Instantiating MS2 step with config, db_loader and lotus_store")
         return cls(
