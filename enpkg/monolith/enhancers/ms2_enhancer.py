@@ -2,9 +2,9 @@
 
 import logging
 from time import time
-import sys
-import tracemalloc
 from logging import Logger
+from typing import Optional
+
 import matchms
 import pandas as pd
 import numpy as np
@@ -24,16 +24,21 @@ from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.utils import binary_search_by_key
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.database_manager import DatabaseManager
+from enpkg.monolith.loaders.lotus_store import LotusStore
 
 
 class Ms2Enhancer(Enhancer):
     """Enhancer that adds ISDB information to the analysis."""
 
     def __init__(
-        self, configuration: MSEnhancerConfig, logger: Logger, db_loader: DBLoader
+        self,
+        configuration: MSEnhancerConfig,
+        logger: Logger,
+        db_loader: DBLoader,
+        lotus_store: LotusStore,
     ):
         """Initializes the enhancer."""
-        
+
         if not isinstance(configuration, MSEnhancerConfig):
             raise TypeError(
                 f"Expected configuration of type ISDBEnhancerConfig, got {type(configuration)}"
@@ -42,43 +47,27 @@ class Ms2Enhancer(Enhancer):
             raise TypeError(f"Expected logger of type logging.Logger, got {type(logger)}")
         if not isinstance(db_loader, DBLoader):
             raise TypeError(f"Expected db_loader of type DBLoader, got {type(db_loader)}")
-        tracemalloc.start()
+        if not isinstance(lotus_store, LotusStore):
+            raise TypeError(f"Expected lotus_store of type LotusStore, got {type(lotus_store)}")
         self.configuration = configuration
         self.logger = logger
         self.db_loader = db_loader
-        snapshot_1 = tracemalloc.take_snapshot()
-        
+        self.lotus_store = lotus_store
+        # Lotus list + library-spectrum linking are built lazily on first enhance().
+        # In batch mode this means only the first experiment pays the build cost;
+        # subsequent ones reuse the same list (the full compound set is identical
+        # across experiments).
+        self.lotus_objects: Optional[list[Lotus]] = None
+
         self.logger.info("Loading Databases")
+        # We still call load_taxonomical_databases() so DBLoader's DataFrames are
+        # populated for any other consumer (e.g. MS1 before Step 3 migrates it).
         start = time()
         self.db_loader.load_taxonomical_databases()
         self.logger.debug("Taxonomical databases loaded in %.2f seconds", time() - start)
         start = time()
         self.db_loader.load_spectral_databases(mode="pos") # TODO: add mode param to config
         self.logger.debug("Spectral databases loaded in %.2f seconds", time() - start)
-        
-        self.logger.info(
-            "Converting Taxonomical Database metadata DataFrame to Lotus objects"
-        )
-        start = time()
-        self._initialize_lotus_objects()
-        snapshot_2 = tracemalloc.take_snapshot()
-        snapshot_1_stats = snapshot_1.statistics("stat_1")
-        snapshot_2_stats = snapshot_2.statistics("stat_2")
-        print(f"MEmory usage before initializing Lotus objects: {snapshot_1.statistics('stat_1')}")
-        print(f"Memory usage after initializing Lotus objects: {snapshot_2.statistics('stat_1')} MB")
-        self.logger.info(
-            "Converted Taxonomical Database metadata DataFrame to Lotus objects in %.2f seconds",
-            time() - start,
-        )
-
-        print("Size of the parts of the db_loader:")
-        print(f"  - lotus_metadata: {sys.getsizeof(self.db_loader.lotus_metadata)} bytes")
-        print(f"  - lotus_metadata_pathways: {sys.getsizeof(self.db_loader.lotus_metadata_pathways)} bytes")
-        print(f"  - lotus_metadata_superclasses: {sys.getsizeof(self.db_loader.lotus_metadata_superclasses)} bytes")
-        print(f"  - lotus_metadata_classes: {sys.getsizeof(self.db_loader.lotus_metadata_classes)} bytes")
-        # del self.db_loader.lotus_metadata, self.db_loader.lotus_metadata_pathways,
-        # self.db_loader.lotus_metadata_superclasses, self.db_loader.lotus_metadata_classes
-        # gc.collect()
 
         # TODO: Could be put elsewhere
         if not isinstance(self.db_loader.spectral_db, list):
@@ -88,14 +77,34 @@ class Ms2Enhancer(Enhancer):
         if not all(spectrum.get("compound_name") is not None for spectrum in self.db_loader.spectral_db[:10]):
             raise ValueError("Expected all spectra in spectral_db to have 'compound_name' metadata for short inchikey matching")
 
+        self.logger.info("ISDB Enhancer initialized successfully")
+
+    def _ensure_lotus_objects(self) -> None:
+        """Build the sorted Lotus list and link library spectra on first use.
+
+        Deferred from __init__ so the (expensive) full-compound materialisation
+        only happens if enhance() is actually called. Idempotent: subsequent
+        calls short-circuit on the cached self.lotus_objects.
+        """
+        if self.lotus_objects is not None:
+            return
+
+        self.logger.info(
+            "Converting Taxonomical Database metadata to Lotus objects (via LotusStore)"
+        )
+        start = time()
+        self.lotus_objects = self.lotus_store.all_sorted_by_short_inchikey()
+        self.logger.info(
+            "Built %d Lotus objects in %.2f seconds",
+            len(self.lotus_objects), time() - start,
+        )
+
         self.logger.info("Adding Lotus entries to spectral database")
         start = time()
         self._link_lotus_to_spectra()
         self.logger.debug(
             "Added Lotus entries to spectral database in %.2f seconds", time() - start
         )
-
-        self.logger.info("ISDB Enhancer initialized successfully")
 
     def name(self) -> str:
         """Returns the name of the enhancer."""
