@@ -672,6 +672,42 @@ class DatabaseManager:
         )
         return df
 
+    def get_compounds_by_mass_range(self, low: float, high: float) -> pl.DataFrame:
+        """Return compounds with structure_exact_mass in [low, high], joined with npc_classifications."""
+        logger.debug("Querying compounds with exact_mass in [%.4f, %.4f]", low, high)
+        t0 = time()
+        df = self._conn.execute("""
+            SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
+                   c.structure_smiles, c.structure_molecular_formula,
+                   c.structure_exact_mass, c.structure_xlogp,
+                   c."structure_smiles_2D", c.structure_cid,
+                   c."structure_nameIupac", c."structure_nameTraditional",
+                   c.structure_stereocenters_total,
+                   c.structure_stereocenters_unspecified,
+                   c.structure_taxonomy_classyfire_chemontid,
+                   c.structure_taxonomy_classyfire_01kingdom,
+                   c.structure_taxonomy_classyfire_02superclass,
+                   c.structure_taxonomy_classyfire_03class,
+                   c.structure_taxonomy_classyfire_04directparent,
+                   c.organism_wikidata, c.organism_name,
+                   c.organism_taxonomy_gbifid, c.organism_taxonomy_ncbiid,
+                   c.organism_taxonomy_ottid,
+                   c.organism_taxonomy_01domain, c.organism_taxonomy_02kingdom,
+                   c.organism_taxonomy_03phylum, c.organism_taxonomy_04class,
+                   c.organism_taxonomy_05order, c.organism_taxonomy_06family,
+                   c.organism_taxonomy_07tribe, c.organism_taxonomy_08genus,
+                   c.organism_taxonomy_09species, c.organism_taxonomy_10varietas,
+                   c.reference_wikidata, c.reference_doi, c.manual_validation,
+                   n.pathways, n.superclasses, n.classes
+            FROM compounds c
+            LEFT JOIN npc_classifications n USING (structure_smiles)
+            WHERE c.structure_exact_mass BETWEEN ? AND ?
+        """, [low, high]).pl()
+        logger.debug(
+            "get_compounds_by_mass_range returned %d rows in %.2fs", len(df), time() - t0
+        )
+        return df
+
     # ── Spectral queries ───────────────────────────────────────────────────────
 
     def get_spectra_by_mode(self, mode: str) -> list[Spectrum]:
