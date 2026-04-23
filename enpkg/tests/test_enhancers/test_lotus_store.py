@@ -74,7 +74,15 @@ def _seed_duckdb(path: str, compounds: list[dict]) -> None:
                 [c["structure_smiles"], [0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
             )
 
-        # Register NPC column names in _meta_columns.
+        # _meta_columns is created lazily by import_from_csvs; create it here for seeded dbs.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS _meta_columns (
+                table_name TEXT,
+                col_index  INTEGER,
+                col_name   TEXT,
+                PRIMARY KEY (table_name, col_index)
+            )
+        """)
         for tbl, names in (
             ("pathways",     ["pw1", "pw2"]),
             ("superclasses", ["sc1", "sc2"]),
@@ -123,9 +131,9 @@ class TestLotusStoreConstruction:
         assert store.number_of_pathways == 2
         assert store.number_of_superclasses == 2
         assert store.number_of_classes == 2
-        assert store.pathways == ("pw1", "pw2")
-        assert store.superclasses == ("sc1", "sc2")
-        assert store.classes == ("cl1", "cl2")
+        assert store.pathways_col_names == ("pw1", "pw2")
+        assert store.superclasses_col_names == ("sc1", "sc2")
+        assert store.classes_col_names == ("cl1", "cl2")
         assert tuple(store.compound_columns) == tuple(_COMPOUND_COLS)
 
 
