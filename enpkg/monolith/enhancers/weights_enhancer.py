@@ -8,7 +8,7 @@ import numpy as np
 from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.data.analysis import Analysis
-from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.loaders.lotus_store import LotusStore
 from enpkg.monolith.data.otl_class import Match
 from enpkg.monolith.utils.label_propagation_algorithm import label_propagation_algorithm
 
@@ -16,13 +16,13 @@ from enpkg.monolith.utils.label_propagation_algorithm import label_propagation_a
 class WeightsEnhancer(Enhancer):
     """Enhancer that adds taxonomical and chemical weights to the annotations and reranks them."""
 
-    def __init__(self, configuration:ReweightingConfig, logger: logging.Logger, db_loader: DBLoader):
+    def __init__(self, configuration: ReweightingConfig, logger: logging.Logger, lotus_store: LotusStore):
 
         self.configuration = configuration
         self.logger = logger
-        self.db_loader = db_loader 
-        self.logger.info("Loading Databases")
-        self.db_loader.load_taxonomical_databases()
+        # The weights enhancer only needs the pathway / superclass / class counts,
+        # which LotusStore resolves up-front from the DuckDB metadata table.
+        self.lotus_store = lotus_store
 
 
     def name(self) -> str:
@@ -188,9 +188,11 @@ class WeightsEnhancer(Enhancer):
     def enhance(self, analysis: Analysis) -> Analysis:
         """Adds taxonomical and chemical weights to the annotations and reranks them."""
 
-        self._number_of_pathways = self.db_loader._number_of_pathways
-        self._number_of_superclasses = self.db_loader._number_of_superclasses
-        self._number_of_classes = self.db_loader._number_of_classes
+        # Classification counts now come from the LotusStore (DuckDB-resolved at
+        # construction time), not from DBLoader DataFrames.
+        self._number_of_pathways = self.lotus_store.number_of_pathways
+        self._number_of_superclasses = self.lotus_store.number_of_superclasses
+        self._number_of_classes = self.lotus_store.number_of_classes
 
         pathway_features, superclass_features, class_features = self.compute_ms1_classifications(analysis)
 
