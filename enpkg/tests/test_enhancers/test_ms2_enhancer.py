@@ -12,6 +12,7 @@ from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.loaders.lotus_store import LotusStore
 
 if "PROJECT_ROOT" in os.environ:
     PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
@@ -38,27 +39,39 @@ def db_loader(ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger) -> D
 
 
 @pytest.fixture(scope="class")
+def lotus_store(ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger) -> LotusStore:
+    return LotusStore(
+        duckdb_path=ms_enhancer_config.downloader_params.duckdb_path,
+        logger=logger,
+    )
+
+
+@pytest.fixture(scope="class")
 def ms2_enhancer(
     ms_enhancer_config: MSEnhancerConfig,
     logger: logging.Logger,
     db_loader: DBLoader,
+    lotus_store: LotusStore,
 ) -> Ms2Enhancer:
-    return Ms2Enhancer(configuration=ms_enhancer_config, logger=logger, db_loader=db_loader)
+    return Ms2Enhancer(
+        configuration=ms_enhancer_config, logger=logger,
+        db_loader=db_loader, lotus_store=lotus_store,
+    )
 
 
 class TestMs2Enhancer:
     """Test class for Ms2Enhancer."""
 
     def test_initialization(self, ms2_enhancer: Ms2Enhancer, logger: logging.Logger) -> None:
-        """Test that Ms2Enhancer correctly initializes, caching DBs and Lotus objects.
-        
+        """Test that Ms2Enhancer correctly initializes and defers Lotus loading to first enhance().
+
         Args:
             ms2_enhancer: The MS2 enhancer instance correctly initialized via fixtures.
             logger: A logger instance.
         """
         assert ms2_enhancer is not None, "Ms2Enhancer should not be None."
-        assert ms2_enhancer.lotus_objects is not None, "Ms2Enhancer lotus_objects should be initialized."
-        assert len(ms2_enhancer.lotus_objects) > 0, "Ms2Enhancer should contain initialized LOTUS objects."
+        # Lotus objects are now built lazily on first enhance() call, not at __init__.
+        assert ms2_enhancer.lotus_objects is None, "Ms2Enhancer lotus_objects should be None before enhance()."
         assert ms2_enhancer.name() == "ISDB Enhancer", "Ms2Enhancer name property should match."
 
     def test_enhance_spectra(self, ms2_enhancer: Ms2Enhancer, analysis: Any, logger: logging.Logger) -> None:
