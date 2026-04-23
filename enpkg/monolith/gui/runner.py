@@ -15,9 +15,11 @@ from typing import Any, Optional
 
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
+from enpkg.monolith.exceptions import DBLoaderError
 from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.loaders.lotus_store import LotusStore
 
 LOG_DIR = Path("gui_workspace") / "logs"
 
@@ -229,6 +231,7 @@ def build_shared_steps(
 
     # Shared DBLoader covers MS1, MS2, and weights — only build it once.
     db_loader: Optional[DBLoader] = None
+    lotus_store: Optional[LotusStore] = None
     ms_config: Optional[MSEnhancerConfig] = None
     if selected_set & {"ms1", "ms2"}:
         ms_config = configs.get("ms1") or configs.get("ms2")
@@ -244,11 +247,24 @@ def build_shared_steps(
         db_loader = DBLoader(configuration=ms_config, logger=logger)
         logger.debug("DBLoader initialized for weights")
 
+    # LotusStore is built from the same DuckDB file DBLoader was pointed at.
+    # It owns all compound-side Lotus access (shared by MS1, MS2, weights).
+    if db_loader is not None and (selected_set & {"ms1", "ms2", "weights"}):
+        duckdb_path = ms_config.downloader_params.duckdb_path if ms_config else None
+        if not duckdb_path:
+            raise DBLoaderError(
+                "A DuckDB path is required for MS1/MS2/weights; CSV fallback is no longer supported."
+            )
+        lotus_store = LotusStore(duckdb_path=duckdb_path, logger=logger)
+        logger.debug("LotusStore initialized from %s", duckdb_path)
+
     steps: dict[str, Any] = {}
     for block_id in selected_ids:
         if block_id in skip:
             continue
-        steps[block_id] = _build_step(block_id, configs.get(block_id), logger, db_loader)
+        steps[block_id] = _build_step(
+            block_id, configs.get(block_id), logger, db_loader, lotus_store,
+        )
         logger.debug("Built step %s", block_id)
 
     return steps, db_loader
@@ -382,7 +398,13 @@ def _apply_download_dir(ms_config: MSEnhancerConfig, database_dir: Path) -> None
     ms_config.downloader_params.download_dir = str(database_dir)
 
 
-def _build_step(block_id: str, config: Any, logger: logging.Logger, db_loader: Optional[DBLoader]) -> Any:
+def _build_step(
+    block_id: str,
+    config: Any,
+    logger: logging.Logger,
+    db_loader: Optional[DBLoader],
+    lotus_store: Optional[LotusStore],
+) -> Any:
     block = BLOCKS_BY_ID[block_id]
     cls = block.step_cls
     logger.debug("Building step for block_id=%s, step_class=%s", block_id, cls.__name__)
@@ -393,9 +415,17 @@ def _build_step(block_id: str, config: Any, logger: logging.Logger, db_loader: O
     if block_id == "network":
         logger.debug("Instantiating Network step with config")
         return cls(config)
-    if block_id in ("ms1", "ms2"):
-        logger.debug("Instantiating %s step with config and db_loader", block_id.upper())
+    if block_id == "ms1":
+        # MS1 needs the LotusStore for mass-windowed Lotus access; db_loader is still
+        # threaded through until Step 3 of the refactor migrates MS1 off it.
+        logger.debug("Instantiating MS1 step with config, db_loader and lotus_store")
         return cls(config=config, logger=logger, db_loader=db_loader)
+    if block_id == "ms2":
+        logger.debug("Instantiating MS2 step with config, db_loader and lotus_store")
+        return cls(
+            config=config, logger=logger,
+            db_loader=db_loader, lotus_store=lotus_store,
+        )
     if block_id == "sirius":
         logger.debug("Instantiating Sirius step with config and logger")
         return cls(config=config, logger=logger)
