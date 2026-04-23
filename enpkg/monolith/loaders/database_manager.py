@@ -4,11 +4,10 @@ Persistent DuckDB wrapper for LOTUS compound metadata and spectral library.
 This module provides a DatabaseManager class that:
   - Owns a file-backed DuckDB connection
   - Creates the schema (compounds, npc_classifications, spectral_library tables)
-  - Imports data from the original CSV and pickle sources (one-time operation)
   - Exposes query methods that return Polars DataFrames or list[Spectrum]
 
-All public attributes exposed by DBLoader (lotus_metadata, lotus_metadata_pathways, etc.)
-are reconstructed from DuckDB queries so downstream code needs no changes.
+LotusStore is the primary consumer of the compound queries exposed here;
+DBLoader now only wraps the spectral-library loader on top of this.
 """
 
 import gc
@@ -107,7 +106,8 @@ CREATE INDEX IF NOT EXISTS idx_spectral_short_inchikey
 _SPECTRAL_IMPORT_CHUNK_SIZE = 50_000
 
 # Columns in the compounds table that map 1-to-1 to the original CSV columns.
-# Order matters: Lotus.setup_lotus_columns() will be called with this list.
+# Order matters: LotusStore builds its column-to-index map from this list when
+# constructing Lotus objects via Lotus.from_row(columns, ...).
 _COMPOUND_COLUMNS = [
     "structure_wikidata",
     "structure_inchikey",
