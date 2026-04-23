@@ -9,6 +9,7 @@ from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.pipeline.base_pipeline_step import PipelineStep
 from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
 from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.loaders.lotus_store import LotusStore
 
 
 class MS2EnrichmentStep(PipelineStep):
@@ -16,19 +17,28 @@ class MS2EnrichmentStep(PipelineStep):
     A pipeline step that performs MS2 enrichment.
     """
 
-    def __init__(self, config: MSEnhancerConfig, logger: logging.Logger, db_loader: DBLoader):
+    def __init__(
+        self,
+        config: MSEnhancerConfig,
+        logger: logging.Logger,
+        db_loader: DBLoader,
+        lotus_store: LotusStore,
+    ):
 
         super().__init__(config)
         self.logger = logger
         self.db_loader = db_loader
-        
+        self.lotus_store = lotus_store
+
     def can_run(self, analysis: Analysis) -> bool:
         # check if analysis has spectra
         return len(analysis.spectra) > 0
-    
+
     def process(self, analysis: Analysis) -> Analysis:
-        
-        enhancer = Ms2Enhancer(self.config, self.logger, self.db_loader)
+
+        enhancer = Ms2Enhancer(
+            self.config, self.logger, self.db_loader, self.lotus_store,
+        )
         try:
             enriched_spectra = enhancer.enhance(analysis.spectra)
         except Exception as e:
