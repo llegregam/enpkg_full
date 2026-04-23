@@ -13,7 +13,7 @@ from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.data.ms1_data_classes.adduct_class import ChemicalAdduct
 from enpkg.monolith.enhancers.ms1_enhancer import MS1Enhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.loaders.lotus_store import LotusStore
 
 if "PROJECT_ROOT" in os.environ:
     PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
@@ -36,39 +36,34 @@ def analysis():
 
 
 @pytest.fixture(scope="class")
-def db_loader(ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger) -> DBLoader:
-    return DBLoader(configuration=ms_enhancer_config, logger=logger)
+def lotus_store(ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger) -> LotusStore:
+    return LotusStore(
+        duckdb_path=ms_enhancer_config.downloader_params.duckdb_path,
+        logger=logger,
+    )
 
 
 @pytest.fixture(scope="class")
 def ms1_enhancer(
     ms_enhancer_config: MSEnhancerConfig,
     logger: logging.Logger,
-    db_loader: DBLoader,
+    lotus_store: LotusStore,
 ) -> MS1Enhancer:
-    return MS1Enhancer(configuration=ms_enhancer_config, logger=logger, db_loader=db_loader)
+    return MS1Enhancer(
+        configuration=ms_enhancer_config, logger=logger, lotus_store=lotus_store,
+    )
 
 
 @pytest.fixture(scope="class")
-def lotus_objects(ms1_enhancer: MS1Enhancer, logger: logging.Logger):
-    lotus_cache_path = CACHE_DIR / "lotus_grouped_by_structure_molecular_formula.pkl"
-    CACHE_DIR.mkdir(exist_ok=True)
-
-    if lotus_cache_path.exists():
-        logger.info("Loading LOTUS objects from cache...")
-        start = time()
-        with open(lotus_cache_path, "rb") as handle:
-            objects = pickle.load(handle)
-        logger.info(f"Loaded LOTUS objects from cache in {time() - start:.2f} seconds")
-    else:
-        logger.info("Computing LOTUS objects (first run)...")
-        objects = ms1_enhancer.initialize_lotus_objects()
-        start = time()
-        logger.info("Dumping LOTUS objects to cache with pickle")
-        with open(lotus_cache_path, "wb") as handle:
-            pickle.dump(objects, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        logger.info(f"Finished dumping LOTUS objects in {time() - start:.2f} seconds")
-
+def lotus_objects(ms1_enhancer: MS1Enhancer, analysis: Any, logger: logging.Logger):
+    # With the LotusStore-backed path, initialize_lotus_objects now REQUIRES a
+    # spectrum list so it can derive the reachable mass window. We no longer
+    # pickle-cache the result: the query is a fast DuckDB range scan, and the
+    # cache hid staleness bugs when the toy dataset or DB file changed.
+    logger.info("Computing LOTUS objects via LotusStore mass-window query...")
+    start = time()
+    objects = ms1_enhancer.initialize_lotus_objects(spectrum_list=analysis.spectra)
+    logger.info(f"Computed {len(objects)} formula groups in {time() - start:.2f} seconds")
     return objects
 
 
