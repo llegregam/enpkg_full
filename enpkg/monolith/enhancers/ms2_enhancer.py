@@ -112,10 +112,11 @@ class Ms2Enhancer(Enhancer):
     
     def _link_lotus_to_spectra(self) -> None:
         """Link Lotus entries to spectral database entries by short inchikey.
-        
+
         For each spectrum, finds all Lotus entries with matching short inchikey
         using binary search and attaches them as metadata.
         """
+        assert self.lotus_objects is not None
 
         start = time()
         for spectrum in tqdm(
