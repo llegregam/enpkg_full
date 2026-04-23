@@ -61,6 +61,7 @@ def ms_enhancer_config(common_urls: Urls) -> MSEnhancerConfig:
             download_dir=str(DATABASE_DIR),
             urls=common_urls,
             paths=Paths(),
+            duckdb_path=str(DATABASE_DIR / "enpkg.duckdb"),
         ),
     )
 
@@ -77,6 +78,7 @@ def reweighting_config(common_urls: Urls) -> ReweightingConfig:
             download_dir=str(DATABASE_DIR),
             urls=common_urls,
             paths=Paths(),
+            duckdb_path=str(DATABASE_DIR / "enpkg.duckdb"),
         ),
     )
 
