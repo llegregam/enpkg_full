@@ -1,6 +1,6 @@
 """Data class representing the key information of a LOTUS entry."""
 
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 from dataclasses import dataclass
 import numpy as np
 from enpkg.monolith.data.otl_class import Match
@@ -55,6 +55,67 @@ class Lotus:
     def setup_lotus_columns(cls, columns: list[str]):
         """Set up the columns of the LOTUS DataFrame."""
         cls._columns = {column: i for i, column in enumerate(columns)}
+
+    @classmethod
+    def from_row(
+        cls,
+        columns: Mapping[str, int],
+        series: list[Any],
+        pathways: np.ndarray,
+        superclasses: np.ndarray,
+        classes: np.ndarray,
+    ) -> "Lotus":
+        """Create a Lotus object from a parsed row using an explicit column index map.
+
+        Unlike from_polars_row this does not read any class-level state, which makes
+        it safe to use when multiple Lotus-producing stores exist side by side.
+        """
+        series = [
+            None if (value is None or (isinstance(value, float) and np.isnan(value))) else value
+            for value in series
+        ]
+
+        return cls(
+            structure_wikidata=series[columns["structure_wikidata"]],
+            structure_inchikey=series[columns["structure_inchikey"]],
+            structure_inchi=series[columns["structure_inchi"]],
+            structure_smiles=series[columns["structure_smiles"]],
+            structure_molecular_formula=series[columns["structure_molecular_formula"]],
+            structure_exact_mass=series[columns["structure_exact_mass"]],
+            structure_xlogp=series[columns["structure_xlogp"]],
+            structure_smiles_2d=series[columns["structure_smiles_2D"]],
+            structure_cid=series[columns["structure_cid"]],
+            structure_name_iupac=series[columns["structure_nameIupac"]],
+            structure_name_traditional=series[columns["structure_nameTraditional"]],
+            structure_taxonomy_hammer_pathways=pathways,
+            structure_taxonomy_hammer_superclasses=superclasses,
+            structure_taxonomy_hammer_classes=classes,
+            structure_stereocenters_total=series[columns["structure_stereocenters_total"]],
+            structure_stereocenters_unspecified=series[columns["structure_stereocenters_unspecified"]],
+            structure_taxonomy_classyfire_chemontid=series[columns["structure_taxonomy_classyfire_chemontid"]],
+            structure_taxonomy_classyfire_01kingdom=series[columns["structure_taxonomy_classyfire_01kingdom"]],
+            structure_taxonomy_classyfire_02superclass=series[columns["structure_taxonomy_classyfire_02superclass"]],
+            structure_taxonomy_classyfire_03class=series[columns["structure_taxonomy_classyfire_03class"]],
+            structure_taxonomy_classyfire_04directparent=series[columns["structure_taxonomy_classyfire_04directparent"]],
+            organism_wikidata=series[columns["organism_wikidata"]],
+            organism_name=series[columns["organism_name"]],
+            organism_taxonomy_gbifid=series[columns["organism_taxonomy_gbifid"]],
+            organism_taxonomy_ncbiid=series[columns["organism_taxonomy_ncbiid"]],
+            organism_taxonomy_ottid=series[columns["organism_taxonomy_ottid"]],
+            domain=series[columns["organism_taxonomy_01domain"]],
+            kingdom=series[columns["organism_taxonomy_02kingdom"]],
+            phylum=series[columns["organism_taxonomy_03phylum"]],
+            klass=series[columns["organism_taxonomy_04class"]],
+            order=series[columns["organism_taxonomy_05order"]],
+            family=series[columns["organism_taxonomy_06family"]],
+            tribe=series[columns["organism_taxonomy_07tribe"]],
+            genus=series[columns["organism_taxonomy_08genus"]],
+            species=series[columns["organism_taxonomy_09species"]],
+            varietas=series[columns["organism_taxonomy_10varietas"]],
+            reference_wikidata=series[columns["reference_wikidata"]],
+            reference_doi=series[columns["reference_doi"]],
+            manual_validation=series[columns["manual_validation"]],
+        )
 
     @classmethod
     def from_polars_row(
