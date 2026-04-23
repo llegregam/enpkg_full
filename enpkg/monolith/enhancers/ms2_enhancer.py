@@ -60,11 +60,8 @@ class Ms2Enhancer(Enhancer):
         self.lotus_objects: Optional[list[Lotus]] = None
 
         self.logger.info("Loading Databases")
-        # We still call load_taxonomical_databases() so DBLoader's DataFrames are
-        # populated for any other consumer (e.g. MS1 before Step 3 migrates it).
-        start = time()
-        self.db_loader.load_taxonomical_databases()
-        self.logger.debug("Taxonomical databases loaded in %.2f seconds", time() - start)
+        # Taxonomy access is fully owned by LotusStore now; DBLoader is only
+        # around for the spectral DB.
         start = time()
         self.db_loader.load_spectral_databases(mode="pos") # TODO: add mode param to config
         self.logger.debug("Spectral databases loaded in %.2f seconds", time() - start)
