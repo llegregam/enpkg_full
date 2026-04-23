@@ -429,6 +429,6 @@ def _build_step(
         logger.debug("Instantiating Sirius step with config and logger")
         return cls(config=config, logger=logger)
     if block_id == "weights":
-        logger.debug("Instantiating Weights step with config, logger, and db_loader")
-        return cls(config=config, logger=logger, db_loader=db_loader)
+        logger.debug("Instantiating Weights step with config, logger, and lotus_store")
+        return cls(config=config, logger=logger, lotus_store=lotus_store)
     raise ValueError(f"Unknown block id: {block_id}")
