@@ -10,6 +10,7 @@ from logging import Logger
 from time import time
 from typing import Iterator
 
+from duckdb import pl
 import numpy as np
 from tqdm.auto import tqdm
 
@@ -33,6 +34,7 @@ class LotusStore:
         self._duckdb_path = duckdb_path
         self.logger = logger
 
+        # Get column names of each 
         with DatabaseManager(duckdb_path, read_only=True) as db:
             if not db.is_populated():
                 raise DBLoaderError(
@@ -65,7 +67,7 @@ class LotusStore:
         self.logger.debug("Fetching all compounds sorted by short_inchikey")
         start = time()
         with DatabaseManager(self._duckdb_path, read_only=True) as db:
-            df = db.get_compounds_sorted_by_short_inchikey()
+            df = db.get_compound_metadata_sorted_by_short_inchikey()
         self.logger.debug(
             "DuckDB returned %d compounds in %.2fs", len(df), time() - start
         )
@@ -83,7 +85,7 @@ class LotusStore:
         )
         start = time()
         with DatabaseManager(self._duckdb_path, read_only=True) as db:
-            df = db.get_compounds_by_mass_range(em_min, em_max)
+            df = db.get_compound_metadata_by_mass_range(em_min, em_max)
         self.logger.debug(
             "DuckDB returned %d compounds in %.2fs", len(df), time() - start
         )
@@ -103,7 +105,7 @@ class LotusStore:
         )
         start = time()
         with DatabaseManager(self._duckdb_path, read_only=True) as db:
-            df = db.get_compounds_by_mass_range(em_min, em_max)
+            df = db.get_compound_metadata_by_mass_range(em_min, em_max)
         self.logger.debug(
             "DuckDB returned %d compounds in %.2fs", len(df), time() - start
         )
@@ -136,7 +138,21 @@ class LotusStore:
         )
         return groups
 
-    def _iter_lotus_from_df(self, df, desc: str) -> Iterator[Lotus]:
+    def _iter_lotus_from_df(self, df: pl.DataFrame, desc: str) -> Iterator[Lotus]:
+        """Stream lotus objects from each row of a DataFrame.
+
+        Converts DataFrame rows into Lotus objects following the column structure
+        guarantee from DatabaseManager: compound columns first, then pathways,
+        superclasses, and classes columns in that order.
+
+        Args:
+            df: A Polars DataFrame returned from DatabaseManager query methods
+                with columns ordered as: [compound_cols..., pathways, superclasses, classes].
+            desc: Description text for the progress bar.
+
+        Yields:
+            Lotus: One Lotus object per DataFrame row.
+        """
         n_compound_cols = len(self._compound_columns)
         for row in tqdm(
             df.iter_rows(),
@@ -148,6 +164,21 @@ class LotusStore:
             yield self._row_to_lotus(row, n_compound_cols)
 
     def _row_to_lotus(self, row: tuple, n_compound_cols: int) -> Lotus:
+        """Convert a DataFrame row tuple into a Lotus object.
+
+        Assumes the row follows the DatabaseManager column order contract:
+        indices [0:n_compound_cols] contain compound metadata columns,
+        index n_compound_cols contains pathways data,
+        index n_compound_cols+1 contains superclasses data,
+        index n_compound_cols+2 contains classes data.
+
+        Args:
+            row: A tuple from DataFrame.iter_rows() containing all columns in order.
+            n_compound_cols: The number of compound metadata columns (len(self._compound_columns)).
+
+        Returns:
+            Lotus: A Lotus object constructed from the row data.
+        """
         pw = row[n_compound_cols]
         sc = row[n_compound_cols + 1]
         cl = row[n_compound_cols + 2]
