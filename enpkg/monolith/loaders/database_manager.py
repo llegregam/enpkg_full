@@ -548,14 +548,13 @@ class DatabaseManager:
 
     # ── Compound queries ───────────────────────────────────────────────────────
 
-    def get_all_compounds(self) -> pl.DataFrame:
+    def get_all_compound_metadata(self) -> pl.DataFrame:
         """
-        Return all compounds joined with npc_classifications as a Polars DataFrame.
+        Return all compound metadata joined with npc_classifications as a Polars DataFrame.
 
-        The result includes the standard compound columns plus
-        'pathways', 'superclasses', 'classes' LIST columns.
+        The result includes structure, taxonomy, organism, reference, and NPC classification data.
         """
-        logger.debug("Querying all compounds with NPC classifications")
+        logger.debug("Querying all compound metadata with NPC classifications")
         t0 = time()
         df = self._conn.execute("""
             SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
@@ -583,12 +582,12 @@ class DatabaseManager:
             FROM compounds c
             LEFT JOIN npc_classifications n USING (structure_smiles)
         """).pl()
-        logger.debug("get_all_compounds returned %d rows in %.2fs", len(df), time() - t0)
+        logger.debug("get_all_compound_metadata returned %d rows in %.2fs", len(df), time() - t0)
         return df
 
-    def get_compounds_sorted_by_short_inchikey(self) -> pl.DataFrame:
-        """Like get_all_compounds() but ordered by short_inchikey (for Ms2Enhancer)."""
-        logger.debug("Querying all compounds sorted by short_inchikey")
+    def get_compound_metadata_sorted_by_short_inchikey(self) -> pl.DataFrame:
+        """Like get_all_compound_metadata() but ordered by short_inchikey."""
+        logger.debug("Querying compound metadata sorted by short_inchikey")
         t0 = time()
         df = self._conn.execute("""
             SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
@@ -618,14 +617,14 @@ class DatabaseManager:
             ORDER BY c.short_inchikey
         """).pl()
         logger.debug(
-            "get_compounds_sorted_by_short_inchikey returned %d rows in %.2fs",
+            "get_compound_metadata_sorted_by_short_inchikey returned %d rows in %.2fs",
             len(df), time() - t0,
         )
         return df
 
-    def get_compounds_by_formulas(self, formulas: list[str]) -> pl.DataFrame:
+    def get_compound_metadata_by_formulas(self, formulas: list[str]) -> pl.DataFrame:
         """
-        Return compounds whose molecular formula is in the provided list,
+        Return compound metadata whose molecular formula is in the provided list,
         joined with npc_classifications.
 
         Parameters
@@ -634,9 +633,9 @@ class DatabaseManager:
             List of molecular formula strings (e.g., ['C10H12O3', 'C15H24']).
         """
         if not formulas:
-            logger.debug("get_compounds_by_formulas called with empty list — returning empty DataFrame")
+            logger.debug("get_compound_metadata_by_formulas called with empty list — returning empty DataFrame")
             return pl.DataFrame()
-        logger.debug("Querying compounds for %d molecular formulas", len(formulas))
+        logger.debug("Querying compound metadata for %d molecular formulas", len(formulas))
         t0 = time()
         placeholders = ", ".join("?" * len(formulas))
         df = self._conn.execute(f"""
@@ -667,14 +666,14 @@ class DatabaseManager:
             WHERE c.structure_molecular_formula IN ({placeholders})
         """, formulas).pl()
         logger.debug(
-            "get_compounds_by_formulas returned %d rows for %d formulas in %.2fs",
+            "get_compound_metadata_by_formulas returned %d rows for %d formulas in %.2fs",
             len(df), len(formulas), time() - t0,
         )
         return df
 
-    def get_compounds_by_mass_range(self, low: float, high: float) -> pl.DataFrame:
-        """Return compounds with structure_exact_mass in [low, high], joined with npc_classifications."""
-        logger.debug("Querying compounds with exact_mass in [%.4f, %.4f]", low, high)
+    def get_compound_metadata_by_mass_range(self, low: float, high: float) -> pl.DataFrame:
+        """Return compound metadata with structure_exact_mass in [low, high], joined with npc_classifications."""
+        logger.debug("Querying compound metadata with exact_mass in [%.4f, %.4f]", low, high)
         t0 = time()
         df = self._conn.execute("""
             SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
@@ -704,7 +703,7 @@ class DatabaseManager:
             WHERE c.structure_exact_mass BETWEEN ? AND ?
         """, [low, high]).pl()
         logger.debug(
-            "get_compounds_by_mass_range returned %d rows in %.2fs", len(df), time() - t0
+            "get_compound_metadata_by_mass_range returned %d rows in %.2fs", len(df), time() - t0
         )
         return df
 
