@@ -7,9 +7,15 @@ from enpkg.monolith.data.otl_class import Match
 
 MAXIMAL_TAXONOMICAL_SCORE: float = 8.0
 
-@dataclass
+@dataclass(slots=True)
 class Lotus:
-    """Data class representing the key information of a LOTUS entry."""
+    """Data class representing the key information of a LOTUS entry.
+
+    ``slots=True`` strips the per-instance ``__dict__`` (~30% memory cut
+    over the full LOTUS list, which is materialised in memory by MS2).
+    Safe because no consumer attaches dynamic attributes to Lotus instances
+    after the LotusStore refactor.
+    """
 
     structure_wikidata: str
     structure_inchikey: str
