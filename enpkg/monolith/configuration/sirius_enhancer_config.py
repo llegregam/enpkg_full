@@ -27,10 +27,10 @@ class SiriusParams(BaseModel):
         default="sirius_output",
         description="Directory where Sirius outputs will be stored."
     )
-    zip_output: bool = Field(
-        default=True,
-        description="Whether to zip the output directory after processing."
-    )
+    # zip_output: bool = Field(
+    #     default=True,
+    #     description="Whether to zip the output directory after processing."
+    # )
     sirius_user_env: str = Field(
         default="SIRIUS_USER",
         description="Environment variable name for the Sirius API user. If passed in, passed in value will have priority."
