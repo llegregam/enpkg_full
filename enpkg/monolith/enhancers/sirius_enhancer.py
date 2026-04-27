@@ -154,26 +154,46 @@ class SiriusEnhancer(Enhancer):
         else:
             raise ValueError(f"Invalid polarity: {self.config.general_params.polarity}. Must be 'pos' or 'neg'.")
         
+        db_list = (
+            "public_spectra_2506,METACYC,BloodExposome,CHEBI,COCONUT,FooDB,"
+            "GNPS,HMDB,HSDB,KEGG,KNAPSACK,LOTUS,LIPIDMAPS,MACONDA,MESH,MiMeDB,NORMAN,PLANTCYC,"
+            "PUBCHEMANNOTATIONBIO,PUBCHEMANNOTATIONDRUG,PUBCHEMANNOTATIONFOOD,"
+            "PUBCHEMANNOTATIONSAFETYANDTOXIC,SUPERNATURAL,TeroMol,YMDB"
+        )
+        identity_search_precursor_deviation = 20.0  # in ppm
+        ms2_mass_deviation = 5.0  # in ppm
+
         sirius_args = [
             "--input", self.config.sirius_params.path_to_input_spectra,
             "-o", output_path,
-            "formula",
-            "-p",
-            "orbitrap",
-            "fingerprint",
-            "canopus",
-            "structure",
-            "--database",
-            "pubchem",
+            # Configuration options must be passed via the `config` subcommand;
+            # they are not top-level CLI options.
+            "config",
+            "--AlgorithmProfile=orbitrap",
+            f"--MS2MassDeviation.allowedMassDeviation={ms2_mass_deviation}ppm",
+            f"--SpectralSearchDB={db_list}",
+            "--AdductSettings.fallback=[[M+H]+,[M+Na]+,[M+K]+]",
+            "--FormulaSettings.enforced=H,C,N,O,P",
+            f"--IdentitySearchSettings.precursorDeviation={identity_search_precursor_deviation}ppm",
+            "--FormulaSearchSettings.performBottomUpAboveMz=0",
+            "--ExpansiveSearchConfidenceMode.confidenceScoreSimilarityMode=EXACT",
+            "--FormulaSearchDB=",
+            f"--StructureSearchDB={db_list}",
+            "--SpectralSearchLog=0",
+            # Tool subcommands run after `config`
+            "spectra-search",
+            "formulas",
+            "fingerprints",
+            "classes",
+            "structures",
             "write-summaries",
-            "--output",
-            self.config.sirius_params.output_directory + "/summaries/"
+            "--output", self.config.sirius_params.output_directory + "/summaries/"
         ]
 
         if self.config.sirius_params.recompute:
             sirius_args.append("--recompute")
-        if self.config.sirius_params.zip_output:
-            sirius_args.append("--zip-output")
+        # if hasattr(self.config.sirius_params, "zip_output") and self.config.sirius_params.zip_output:
+        #     sirius_args.append("--zip-output")
         
             
         self._run_sirius(sirius_args)
@@ -187,9 +207,9 @@ if __name__ == "__main__":
     logger = logging.getLogger("SiriusEnhancer")
     logging.basicConfig(level=logging.DEBUG)
     analysis = AnalysisLoader.from_files(
-        path_to_spectra="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/test-data/actea_EtOAc-1_pos.mgf",
-        path_to_metadata="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/test-data/qualome_metadata.txt",
-        path_to_quant_table="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/test-data/actea_EtOAc-1_pos_quant.csv",
+        path_to_spectra="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/actea_EtOAc-1_pos.mgf",
+        path_to_metadata="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/qualome_metadata.txt",
+        path_to_quant_table="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/actea_EtOAc-1_pos_quant.csv",
         ionization_mode="pos"
     )
     logger.info(f"Analysis metadata: {analysis.metadata}")
@@ -198,12 +218,31 @@ if __name__ == "__main__":
         config=SiriusEnhancerConfig(
             sirius_params=SiriusParams(
                 path_to_sirius=os.environ.get("PATH_TO_SIRIUS", None),
-                path_to_input_spectra="/home/llegregam/git_projects/enpkg_full/enpkg/tests/test-data/enpkg_toy_dataset/msdata/processed/VGF138_A01_pos_sirius.mgf",
-                output_directory="/home/llegregam/git_projects/enpkg_full/enpkg/tests/sirius_out"
+                path_to_input_spectra="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/actea_EtOAc-1_pos_sirius.mgf",
+                output_directory="/home/llegregam/git_projects/enpkg_full/enpkg/monolith/test-data/sirius_output"
             )
         )
     )
     analysis = enhancer.enhance(analysis)
+
+    TEST_ARGS = [
+        "--AlgorithmProfile", "orbitrap",
+        "--MS2MassDeviation.allowedMassDeviation", "5.0ppm",
+        "--SpectralSearchDB", "public_spectra_2506,METACYC,BloodExposome,CHEBI,COCONUT,FooDB,GNPS,HMDB,HSDB,KEGG,KNAPSACK,LOTUS,LIPIDMAPS,MACONDA,MESH,MiMeDB,NORMAN,PLANTCYC,PUBCHEMANNOTATIONBIO,PUBCHEMANNOTATIONDRUG,PUBCHEMANNOTATIONFOOD,PUBCHEMANNOTATIONSAFETYANDTOXIC,SUPERNATURAL,TeroMol,YMDB",
+        "--AdductSettings.fallback", "[[M+H]+,[M+Na]+,[M+K]+]",
+        "--FormulaSettings.enforced", "H,C,N,O,P",
+        "--IdentitySearchSettings.precursorDeviation", "20.0ppm",
+        "--FormulaSearchSettings.performBottomUpAboveMz", "0",
+        "--ExpansiveSearchConfidenceMode.confidenceScoreSimilarityMode", "EXACT",
+        "--FormulaSearchDB", "",
+        "--StructureSearchDB", "public_spectra_2506,METACYC,BloodExposome,CHEBI,COCONUT,FooDB,GNPS,HMDB,HSDB,KEGG,KNAPSACK,LOTUS,LIPIDMAPS,MACONDA,MESH,MiMeDB,NORMAN,PLANTCYC,PUBCHEMANNOTATIONBIO,PUBCHEMANNOTATIONDRUG,PUBCHEMANNOTATIONFOOD,PUBCHEMANNOTATIONSAFETYANDTOXIC,SUPERNATURAL,TeroMol,YMDB",
+        "--SpectralSearchLog", "0",
+        "spectra-search",
+        "formulas",
+        "fingerprints",
+        "classes",
+        "structures",
+    ]
 
     # from PySirius import SiriusSDK
     # sdk = SiriusSDK()
