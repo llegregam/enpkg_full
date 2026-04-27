@@ -10,7 +10,7 @@ from logging import Logger
 from time import time
 from typing import Iterator
 
-from duckdb import pl
+import polars as pl
 import numpy as np
 from tqdm.auto import tqdm
 
@@ -78,14 +78,14 @@ class LotusStore:
         )
         return lotus_objects
 
-    def by_mass_range(self, em_min: float, em_max: float) -> list[Lotus]:
-        """Return Lotus entries whose exact mass is in [em_min, em_max]."""
+    def by_mass_range(self, mz_min: float, mz_max: float) -> list[Lotus]:
+        """Return Lotus entries whose exact mass is in [mz_min, mz_max]."""
         self.logger.debug(
-            "Fetching compounds with exact_mass in [%.4f, %.4f]", em_min, em_max
+            "Fetching compounds with exact_mass in [%.4f, %.4f]", mz_min, mz_max
         )
         start = time()
         with DatabaseManager(self._duckdb_path, read_only=True) as db:
-            df = db.get_compound_metadata_by_mass_range(em_min, em_max)
+            df = db.get_compound_metadata_by_mass_range(mz_min, mz_max)
         self.logger.debug(
             "DuckDB returned %d compounds in %.2fs", len(df), time() - start
         )
@@ -94,24 +94,24 @@ class LotusStore:
         return list(self._iter_lotus_from_df(df, desc="Creating Lotus objects"))
 
     def grouped_by_formula_for_mass_range(
-        self, em_min: float, em_max: float,
+        self, mz_min: float, mz_max: float,
     ) -> list[list[Lotus]]:
-        """Return Lotus entries in [em_min, em_max] grouped by molecular formula.
+        """Return Lotus entries in [mz_min, mz_max] grouped by molecular formula.
 
         Used by MS1 to build per-formula adducts.
         """
         self.logger.debug(
-            "Fetching + grouping compounds with exact_mass in [%.4f, %.4f]", em_min, em_max
+            "Fetching + grouping compounds with exact_mass in [%.4f, %.4f]", mz_min, mz_max
         )
         start = time()
         with DatabaseManager(self._duckdb_path, read_only=True) as db:
-            df = db.get_compound_metadata_by_mass_range(em_min, em_max)
+            df = db.get_compound_metadata_by_mass_range(mz_min, mz_max)
         self.logger.debug(
             "DuckDB returned %d compounds in %.2fs", len(df), time() - start
         )
         if df.is_empty():
             self.logger.warning(
-                "Mass-range query [%.4f, %.4f] returned 0 compounds", em_min, em_max
+                "Mass-range query [%.4f, %.4f] returned 0 compounds", mz_min, mz_max
             )
             return []
 
