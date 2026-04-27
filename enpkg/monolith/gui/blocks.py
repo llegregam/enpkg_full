@@ -8,6 +8,10 @@ bundles everything the GUI needs to know about a block:
 - dependency list (which other blocks must also be selected)
 - **log_summary function** (for the post-run report in the log file)
 
+Shared EnhancerConfig classes (e.g. MSEnhancerConfig for both MS1 and MS2) 
+are supported by declaring a shared key and listing the associated blocks in
+a constant at the bottom of this file.
+
 The ``log_summary`` field is *required*. This is intentional: it forces every
 new block author to think about what part of the ``Analysis`` their step
 modifies and to provide a human-readable summary for the log.  If the block
@@ -48,6 +52,8 @@ from enpkg.monolith.pipeline.weights_enhancement_step import WeightsEnhancementS
 # Callable signature for every block's post-run log summary.
 # Each function receives the shared logger and the final Analysis, and should
 # log the relevant metrics at INFO level.
+# So SummaryFn is shorthand for "any function that accepts a Logger 
+# and Analysis and returns None." 
 SummaryFn = Callable[[logging.Logger, Analysis], None]
 
 
@@ -83,11 +89,11 @@ def _log_taxonomical(logger: logging.Logger, analysis: Analysis) -> None:
     name, OTT id, score, and full lineage breakdown.
     """
     ott = analysis.ott_matches or []
-    logger.info("    OTT matches            : %d", len(ott))
+    logger.info("OTT matches: %d", len(ott))
     if not ott:
         return
     best = ott[0]
-    logger.info("    Best match             : %s (OTT %d, score %.3f)",
+    logger.info("Best match : %s (OTT %d, score %.3f)",
                 best.taxon.name, best.ott_id, best.score)
     if best.lineage is not None:
         # Walk the standard taxonomic ranks and collect non-None values.
@@ -101,7 +107,7 @@ def _log_taxonomical(logger: logging.Logger, analysis: Analysis) -> None:
                 label = "class" if rank_name == "klass" else rank_name
                 ranks.append(f"{label}={val}")
         if ranks:
-            logger.info("    Lineage                : %s", " > ".join(ranks))
+            logger.info("Lineage: %s", " > ".join(ranks))
 
 
 def _log_network(logger: logging.Logger, analysis: Analysis) -> None:
@@ -198,7 +204,7 @@ BLOCKS: list[BlockSpec] = [
         id="ms1",
         label="MS1 enhancement",
         step_cls=MS1EnhancementStep,
-        config_cls=MSEnhancerConfig,
+        config_cls=MSEnhancerConfig, # Shared with MS2
         log_summary=_log_ms1,
         description="Matches MS1 precursor m/z against adduct libraries. Shares config with MS2.",
     ),
@@ -206,7 +212,7 @@ BLOCKS: list[BlockSpec] = [
         id="ms2",
         label="MS2 enhancement",
         step_cls=MS2EnrichmentStep,
-        config_cls=MSEnhancerConfig,
+        config_cls=MSEnhancerConfig, # Shared with MS1
         log_summary=_log_ms2,
         description="Matches MS/MS spectra against spectral databases (ISDB).",
     ),
@@ -216,7 +222,7 @@ BLOCKS: list[BlockSpec] = [
         step_cls=SiriusEnhancementStep,
         config_cls=SiriusEnhancerConfig,
         log_summary=_log_sirius,
-        description="Runs the external Sirius binary for structure identification.",
+        description="Runs Sirius for structure identification.",
     ),
     BlockSpec(
         id="weights",
@@ -231,6 +237,10 @@ BLOCKS: list[BlockSpec] = [
 
 BLOCKS_BY_ID: dict[str, BlockSpec] = {b.id: b for b in BLOCKS}
 
-# Blocks that share a single MSEnhancerConfig instance in the unified YAML.
+# Blocks that share a single EnhancerConfig instance in the unified YAML should be declared here. 
+# The runner and config I/O will treat these blocks as a group, loading their config from the shared 
+# key and ensuring they are selected/deselected together in the UI.
+
+# MS shared config
 MS_SHARED_BLOCKS = ("ms1", "ms2")
 MS_SHARED_KEY = "ms_enhancer"
