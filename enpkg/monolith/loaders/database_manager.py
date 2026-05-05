@@ -201,7 +201,7 @@ class DatabaseManager:
 
     def import_from_csvs(
         self,
-        metadata_path: str,
+        lotus_metadata_path: str,
         pathways_path: str,
         superclasses_path: str,
         classes_path: str,
@@ -215,7 +215,7 @@ class DatabaseManager:
 
         Parameters
         ----------
-        metadata_path:
+        lotus_metadata_path:
             Path to the LOTUS metadata CSV (taxo_db_metadata).
         pathways_path:
             Path to the NPC pathways CSV (first column: SMILES).
@@ -227,7 +227,7 @@ class DatabaseManager:
         conn = self._conn
 
         # -- compounds -------------------------------------------------------
-        logger.info("Importing compounds from %s", metadata_path)
+        logger.info("Importing compounds from %s", lotus_metadata_path)
         t0 = time()
         conn.begin()
         try:
@@ -271,7 +271,7 @@ class DatabaseManager:
                     reference_wikidata,
                     reference_doi,
                     manual_validation
-                FROM read_csv('{metadata_path}',
+                FROM read_csv('{lotus_metadata_path}',
                     nullstr=['', 'NA', 'NaN'],
                     ignore_errors=true
                 )
@@ -456,6 +456,7 @@ class DatabaseManager:
                 precursor_mz = spec.get("precursor_mz")
                 if precursor_mz is None:
                     n_skipped += 1
+                    logger.warning("Skipping spectrum with no precursor_mz (metadata: %s)", spec.metadata)
                     continue
 
                 compound_name = spec.get("compound_name")
@@ -491,9 +492,9 @@ class DatabaseManager:
                 "charge":        charges,
                 "metadata_json": metadata_jsons,
             }).cast({
-                "id": pl.Int64,
-                "precursor_mz": pl.Float64,
-                "charge": pl.Int64,
+                "id": pl.Int32,
+                "precursor_mz": pl.Float32,
+                "charge": pl.Int8, # charge is usually small, especially in metabolomics
             })
 
             self._conn.begin()
