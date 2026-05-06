@@ -1,6 +1,7 @@
 """Submodule for the ISDB enhancer."""
 
 import logging
+from itertools import groupby
 from time import time
 from logging import Logger
 from typing import Optional
@@ -21,7 +22,6 @@ from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig, SpectralMatchParams
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import Lotus
-from enpkg.monolith.utils import binary_search_by_key
 from enpkg.monolith.utils.memlog import log_virtual_memory
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.database_manager import DatabaseManager
@@ -116,47 +116,27 @@ class Ms2Enhancer(Enhancer):
     def _link_lotus_to_spectra(self) -> None:
         """Link Lotus entries to spectral database entries by short inchikey.
 
-        For each spectrum, finds all Lotus entries with matching short inchikey
-        using binary search and attaches them as metadata.
+        Builds a dict short_inchikey -> [Lotus, ...] in one pass over the
+        pre-sorted self.lotus_objects, then attaches matching slices to each
+        spectrum via O(1) lookups.
         """
         assert self.lotus_objects is not None
 
         start = time()
+        lotus_by_short_inchikey: dict[str, list[Lotus]] = {
+            key: list(group)
+            for key, group in groupby(self.lotus_objects, key=lambda x: x.short_inchikey)
+        }
+
         for spectrum in tqdm(
             self.db_loader.spectral_db,
             desc="Adding Lotus entries to spectral database",
             dynamic_ncols=True,
             leave=False,
         ):
-            spectrum_short_inchikey = spectrum.get("compound_name")
-            (found, smallest_idx) = binary_search_by_key(
-                key=spectrum_short_inchikey,
-                array=self.lotus_objects,
-                key_func=lambda x: x.short_inchikey,
-            )
-
-            if not found:
-                continue
-
-            # Since we may have landed exactly in the middle of an array of short inchikeys
-            # with the same value, we need to identify the smallest index of the slice of
-            # short inchikeys with the same value.
-            while (
-                smallest_idx > 0
-                and self.lotus_objects[smallest_idx - 1].short_inchikey
-                == spectrum_short_inchikey
-            ):
-                smallest_idx -= 1
-
-            largest_idx = smallest_idx
-
-            while (
-                largest_idx < len(self.lotus_objects)
-                and self.lotus_objects[largest_idx].short_inchikey == spectrum_short_inchikey
-            ):
-                largest_idx += 1
-
-            spectrum.set("lotus_entries", self.lotus_objects[smallest_idx:largest_idx])
+            entries = lotus_by_short_inchikey.get(spectrum.get("compound_name"))
+            if entries is not None:
+                spectrum.set("lotus_entries", entries)
 
         self.logger.debug(f"Linked lotus to spectra in {time() - start:.2f} seconds")
 
