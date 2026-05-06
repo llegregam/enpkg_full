@@ -21,14 +21,15 @@ from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig, SpectralMatchParams
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import Lotus
-from enpkg.monolith.utils import binary_search_by_key, log_virtual_memory
+from enpkg.monolith.utils import binary_search_by_key
+from enpkg.monolith.utils.memlog import log_virtual_memory
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.database_manager import DatabaseManager
 from enpkg.monolith.loaders.lotus_store import LotusStore
 
 
 class Ms2Enhancer(Enhancer):
-    """Enhancer that adds ISDB information to the analysis."""
+    """Enhancer that adds MS2 information to the analysis."""
 
     def __init__(
         self,
@@ -41,7 +42,7 @@ class Ms2Enhancer(Enhancer):
 
         if not isinstance(configuration, MSEnhancerConfig):
             raise TypeError(
-                f"Expected configuration of type ISDBEnhancerConfig, got {type(configuration)}"
+                f"Expected configuration of type MSEnhancerConfig, got {type(configuration)}"
             )
         if not isinstance(logger, Logger):
             raise TypeError(f"Expected logger of type logging.Logger, got {type(logger)}")
@@ -74,7 +75,7 @@ class Ms2Enhancer(Enhancer):
         if not all(spectrum.get("compound_name") is not None for spectrum in self.db_loader.spectral_db[:10]):
             raise ValueError("Expected all spectra in spectral_db to have 'compound_name' metadata for short inchikey matching")
 
-        self.logger.info("ISDB Enhancer initialized successfully")
+        self.logger.info("MS2 Enhancer initialized successfully")
         log_virtual_memory(self.logger, "MS2 init done")
 
     def _ensure_lotus_objects(self) -> None:
@@ -110,7 +111,7 @@ class Ms2Enhancer(Enhancer):
 
     def name(self) -> str:
         """Returns the name of the enhancer."""
-        return "ISDB Enhancer"
+        return "MS2 Enhancer"
     
     def _link_lotus_to_spectra(self) -> None:
         """Link Lotus entries to spectral database entries by short inchikey.
@@ -160,7 +161,7 @@ class Ms2Enhancer(Enhancer):
         self.logger.debug(f"Linked lotus to spectra in {time() - start:.2f} seconds")
 
     def enhance(self, spectrum_list: list[AnnotatedSpectrum], chunk_size: int = 1000) -> list[AnnotatedSpectrum]:
-        """Adds ISDB information to the analysis."""
+        """Adds MS2 information to the analysis."""
 
         log_virtual_memory(self.logger, "MS2 enhance start")
         # First call in a batch triggers the expensive LotusStore fetch + library linking.
@@ -243,21 +244,21 @@ class Ms2Enhancer(Enhancer):
                     )
 
         # Debug: Sample 5 random spectra to show annotation statistics
-        import random
-        sample_size = min(5, len(spectrum_list))
-        sampled_spectra = random.sample(spectrum_list, k=sample_size)
-        for spectrum in sampled_spectra:
-            n_annotations = len(spectrum.ms2_annotations) if spectrum.ms2_annotations else 0
-            self.logger.debug(f"Spectrum {spectrum.feature_id}: {n_annotations} MS2 annotations")
-            if n_annotations > 0:
-                # Show first 3 annotations as sample
-                for i, annotation in enumerate(spectrum.ms2_annotations[:3]):
-                    self.logger.debug(
-                        f"  Annotation {i+1}: source={annotation.source}, "
-                        f"queried_against={annotation.queried_against}, "
-                        f"scores={annotation.scores}, "
-                        f"n_lotus_entries={len(annotation.lotus_entries) if annotation.lotus_entries else 0}"
-                    )
+        # import random
+        # sample_size = min(5, len(spectrum_list))
+        # sampled_spectra = random.sample(spectrum_list, k=sample_size)
+        # for spectrum in sampled_spectra:
+        #     n_annotations = len(spectrum.ms2_annotations) if spectrum.ms2_annotations else 0
+        #     self.logger.debug(f"Spectrum {spectrum.feature_id}: {n_annotations} MS2 annotations")
+        #     if n_annotations > 0:
+        #         # Show first 3 annotations as sample
+        #         for i, annotation in enumerate(spectrum.ms2_annotations[:3]):
+        #             self.logger.debug(
+        #                 f"  Annotation {i+1}: source={annotation.source}, "
+        #                 f"queried_against={annotation.queried_against}, "
+        #                 f"scores={annotation.scores}, "
+        #                 f"n_lotus_entries={len(annotation.lotus_entries) if annotation.lotus_entries else 0}"
+        #             )
 
         log_virtual_memory(self.logger, "MS2 enhance end")
         # TODO: Decide if analysis should be modified in place or if we should return a new enriched analysis object
