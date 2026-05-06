@@ -1,7 +1,5 @@
 """Test suite for the Network Enhancer."""
 import logging
-import os
-from pathlib import Path
 from time import time
 from typing import Any
 import networkx as nx
@@ -9,13 +7,7 @@ import pytest
 
 from enpkg.monolith.enhancers.network_enhancer import NetworkEnhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-
-if "PROJECT_ROOT" in os.environ:
-    PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-TEST_DATA_DIR = PROJECT_ROOT / "data" / "input"
+from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
 
 
 @pytest.fixture(scope="class")

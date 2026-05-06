@@ -1,5 +1,3 @@
-import os
-from pathlib import Path
 import logging
 
 import pytest
@@ -9,13 +7,7 @@ from enpkg.monolith.loaders.lotus_store import LotusStore
 from enpkg.monolith.enhancers.weights_enhancer import WeightsEnhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.data.analysis import Analysis
-
-if "PROJECT_ROOT" in os.environ:
-    PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-TEST_DATA_DIR = PROJECT_ROOT / "data" / "input"
+from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
 
 
 @pytest.fixture(scope="class")

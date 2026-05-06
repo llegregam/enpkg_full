@@ -1,6 +1,4 @@
 import logging
-import os
-from pathlib import Path
 from typing import Any
 from unittest.mock import patch, MagicMock
 
@@ -10,13 +8,7 @@ from enpkg.monolith.enhancers.sirius_enhancer import SiriusEnhancer
 from enpkg.monolith.configuration.sirius_enhancer_config import SiriusEnhancerConfig, SiriusParams
 from enpkg.monolith.configuration.config import GeneralParams
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-
-if "PROJECT_ROOT" in os.environ:
-    PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-TEST_DATA_DIR = PROJECT_ROOT / "data" / "input"
+from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
 
 
 @pytest.fixture(scope="class")

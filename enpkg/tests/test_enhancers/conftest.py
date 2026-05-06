@@ -28,7 +28,8 @@ if "PROJECT_ROOT" in os.environ:
 else:
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-DATABASE_DIR = PROJECT_ROOT / "gui_workspace" / "databases"
+DATABASE_DIR = PROJECT_ROOT / "tests" / ".databases"
+TEST_DATA_DIR = PROJECT_ROOT / "tests" / "data"
 
 
 @pytest.fixture(scope="session")

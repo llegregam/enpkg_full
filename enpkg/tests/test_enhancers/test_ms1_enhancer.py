@@ -1,9 +1,6 @@
 """Test suite for the MS1 Enhancer."""
 
 import logging
-import os
-import pickle
-from pathlib import Path
 from time import time
 from typing import Any, List
 
@@ -14,14 +11,7 @@ from enpkg.monolith.data.ms1_data_classes.adduct_class import ChemicalAdduct
 from enpkg.monolith.enhancers.ms1_enhancer import MS1Enhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
-
-if "PROJECT_ROOT" in os.environ:
-    PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-CACHE_DIR = PROJECT_ROOT / "enpkg" / "tests" / "test_enhancers" / ".test_cache"
-TEST_DATA_DIR = PROJECT_ROOT / "data" / "input"
+from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
 
 
 @pytest.fixture(scope="class")

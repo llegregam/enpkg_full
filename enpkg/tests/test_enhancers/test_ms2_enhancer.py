@@ -1,8 +1,6 @@
 """Test suite for the MS2 Enhancer."""
 
 import logging
-import os
-from pathlib import Path
 from time import time
 from typing import Any, List
 
@@ -13,13 +11,7 @@ from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
-
-if "PROJECT_ROOT" in os.environ:
-    PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-TEST_DATA_DIR = PROJECT_ROOT / "data" / "input"
+from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
 
 
 @pytest.fixture(scope="class")
