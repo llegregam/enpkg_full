@@ -28,7 +28,8 @@ if "PROJECT_ROOT" in os.environ:
 else:
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-DATABASE_DIR = PROJECT_ROOT / "gui_workspace" / "databases"
+DATABASE_DIR = PROJECT_ROOT / "tests" / ".databases"
+TEST_DATA_DIR = PROJECT_ROOT / "tests" / "data"
 
 
 @pytest.fixture(scope="session")
@@ -61,6 +62,7 @@ def ms_enhancer_config(common_urls: Urls) -> MSEnhancerConfig:
             download_dir=str(DATABASE_DIR),
             urls=common_urls,
             paths=Paths(),
+            duckdb_path=str(DATABASE_DIR / "enpkg.duckdb"),
         ),
     )
 
@@ -77,6 +79,7 @@ def reweighting_config(common_urls: Urls) -> ReweightingConfig:
             download_dir=str(DATABASE_DIR),
             urls=common_urls,
             paths=Paths(),
+            duckdb_path=str(DATABASE_DIR / "enpkg.duckdb"),
         ),
     )
 

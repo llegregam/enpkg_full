@@ -22,12 +22,15 @@ from __future__ import annotations
 
 import copy
 import logging
+import pickle
 import queue
+import tracemalloc
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from enpkg.monolith.dev_utils import log_memory_snapshot
 from enpkg.monolith.gui.runner import (
     LOG_DIR,
     RunResult,
@@ -53,6 +56,11 @@ class ExperimentInputs:
     subfolder: Path
     spectra_path: Path
     quant_path: Path
+    # Optional sibling spectra file picked up at discovery time when present:
+    # `{spectra_path.stem}_sirius{spectra_path.suffix}`. Used as the Sirius
+    # block's input when that block is selected; None means no such file
+    # was found in the subfolder.
+    sirius_spectra_path: Optional[Path] = None
 
 
 @dataclass
@@ -86,6 +94,11 @@ def discover_experiments(parent: Path) -> list[ExperimentInputs]:
 
     Each subfolder must contain exactly one spectra file and one quant file;
     subfolders missing either are skipped (the batch runner logs a warning).
+    A Sirius-specific spectra file (``<stem>_sirius<spectra suffix>``) is
+    picked up alongside if present and becomes available as
+    ``ExperimentInputs.sirius_spectra_path``; absence is fine here and only
+    becomes an error if the Sirius block is later selected for the run.
+
     ``run_name`` is derived from the spectra filename stem — this mirrors the
     default in :meth:`AnalysisLoader.from_files` and is what the shared
     metadata file is keyed by.
@@ -101,12 +114,17 @@ def discover_experiments(parent: Path) -> list[ExperimentInputs]:
         quant = _first_with_suffix(sub, QUANT_SUFFIXES)
         if quant is None:
             continue
+        # Look for a sibling Sirius input file with the same stem + suffix
+        # plus a `_sirius` infix. Strict match keeps the contract unambiguous.
+        sirius_candidate = sub / f"{spectra.stem}_sirius{spectra.suffix}"
+        sirius_path = sirius_candidate if sirius_candidate.is_file() else None
         experiments.append(
             ExperimentInputs(
                 run_name=spectra.stem,
                 subfolder=sub,
                 spectra_path=spectra,
                 quant_path=quant,
+                sirius_spectra_path=sirius_path,
             )
         )
     return experiments
@@ -141,15 +159,18 @@ def _make_batch_paths() -> tuple[Path, Path, Path]:
     return batch_dir, batch_dir / "runtime.log", batch_dir / "batch_summary.log"
 
 
-def _sirius_config_for(run_name: str, spectra_path: Path, shared_cfg: Any) -> Any:
+def _sirius_config_for(run_name: str, sirius_spectra_path: Path, shared_cfg: Any) -> Any:
     """Return a deep-copied Sirius config with per-experiment paths rewritten.
+
+    ``sirius_spectra_path`` is the experiment's Sirius-specific input file
+    (the ``<stem>_sirius<suffix>`` sibling of the regular spectra file).
 
     The shared config's ``output_directory`` is treated as the **base** path;
     each experiment gets its own subdirectory named after ``run_name``, so
     outputs don't collide when the batch runs multiple analyses.
     """
     cfg = copy.deepcopy(shared_cfg)
-    cfg.sirius_params.path_to_input_spectra = str(spectra_path)
+    cfg.sirius_params.path_to_input_spectra = str(sirius_spectra_path)
     cfg.sirius_params.output_directory = str(
         Path(shared_cfg.sirius_params.output_directory) / run_name
     )
@@ -215,6 +236,9 @@ def run_batch(
 
     sirius_shared_cfg = configs.get("sirius") if "sirius" in selected_ids else None
 
+    # Start tracing memory allocations for the batch
+    tracemalloc.start()
+
     # --- Iterate experiments ---------------------------------------------
     for exp in experiments:
         exp_dir = batch_dir / exp.run_name
@@ -229,6 +253,7 @@ def run_batch(
         batch.results.append(result)
 
         logger.info("=== [%s] Starting ===", exp.run_name)
+        log_memory_snapshot(logger, f"{exp.run_name}_START")
         try:
             analysis = AnalysisLoader.from_files(
                 path_to_spectra=str(exp.spectra_path),
@@ -244,15 +269,51 @@ def run_batch(
 
         steps = dict(shared_steps)
         if sirius_shared_cfg is not None:
+            # Sirius requires its own dedicated input file (`<stem>_sirius<suffix>`)
+            # in the experiment subfolder; surface a clear error when it's
+            # missing rather than silently feeding it the regular spectra file.
+            if exp.sirius_spectra_path is None:
+                msg = (
+                    f"Sirius block is selected but no '_sirius' spectra file was found "
+                    f"for experiment '{exp.run_name}' in {exp.subfolder}. Expected: "
+                    f"{exp.spectra_path.stem}_sirius{exp.spectra_path.suffix}."
+                )
+                logger.error("[%s] %s", exp.run_name, msg)
+                result.error = msg
+                continue
             try:
-                sirius_cfg = _sirius_config_for(exp.run_name, exp.spectra_path, sirius_shared_cfg)
+                sirius_cfg = _sirius_config_for(
+                    exp.run_name, exp.sirius_spectra_path, sirius_shared_cfg,
+                )
                 steps["sirius"] = SiriusEnhancementStep(config=sirius_cfg, logger=logger)
+                if not Path(sirius_cfg.sirius_params.output_directory).is_dir():
+                    Path(sirius_cfg.sirius_params.output_directory).mkdir(parents=True, exist_ok=True)
+                logger.info("[%s] Built Sirius step with input %s and output dir %s",
+                    exp.run_name,
+                    sirius_cfg.sirius_params.path_to_input_spectra,
+                    sirius_cfg.sirius_params.output_directory,
+                )
             except Exception as exc:
                 logger.exception("[%s] Failed to build Sirius step", exp.run_name)
                 result.error = f"Sirius step construction failed: {exc}"
                 continue
 
         _run_analysis(analysis, selected_ids, steps, logger, summary_logger, result)
+
+        # Persist the per-experiment Analysis object so it can be reloaded
+        # later for inspection / downstream tooling without re-running the
+        # whole pipeline. Best-effort: a pickle failure is logged but does not
+        # mark the experiment as failed.
+        if result.analysis is not None:
+            analysis_pkl = exp_dir / "analysis.pkl"
+            try:
+                with open(analysis_pkl, "wb") as f:
+                    pickle.dump(result.analysis, f, protocol=pickle.HIGHEST_PROTOCOL)
+                logger.info("[%s] Wrote analysis pickle: %s", exp.run_name, analysis_pkl)
+            except Exception:
+                logger.exception("[%s] Failed to write analysis pickle to %s", exp.run_name, analysis_pkl)
+
+        log_memory_snapshot(logger, f"{exp.run_name}_END")
         logger.info("=== [%s] Finished ===", exp.run_name)
 
     _write_batch_summary(batch)

@@ -26,6 +26,7 @@ from enpkg.monolith.configuration.MSEnhancer_config import (
     Paths,
 )
 from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.loaders.lotus_store import LotusStore
 
 from enpkg.tests.test_enhancers.conftest import DATABASE_DIR
 
@@ -52,7 +53,6 @@ def load_config():
         taxo_db_classes="https://zenodo.org/records/13951644/files/classes.csv.gz?download=1",
         spectral_db_pos="https://zenodo.org/records/8287341/files/isdb_pos_cleaned.pkl",
     )
-
     enhancer_configs = namedtuple("Config", ["network_enhancer_config", "ms_config", "sirius_config"])
     config = enhancer_configs(
         network_enhancer_config=NetworkEnhancerConfig(),
@@ -166,10 +166,14 @@ def main():
     if "ms1_enhancement_step" in to_run:
 
         logger.info("Running MS1 enhancement step...")
+        ms1_lotus_store = LotusStore(
+            duckdb_path=config.ms_config.downloader_params.duckdb_path,
+            logger=logger,
+        )
         ms1_enhancement_step = MS1EnhancementStep(
             logger=logger,
             config=config.ms_config,
-            db_loader=db_loader
+            lotus_store=ms1_lotus_store,
         )
         if ms1_enhancement_step.can_run(analysis):
             analysis = ms1_enhancement_step.process(analysis)
@@ -182,10 +186,15 @@ def main():
 
     if "ms2_enhancement_step" in to_run:
         logger.info("Running MS2 enhancement step...")
+        lotus_store = LotusStore(
+            duckdb_path=config.ms_config.downloader_params.duckdb_path,
+            logger=logger,
+        )
         ms2_enhancement_step = MS2EnrichmentStep(
             config=config.ms_config,
             logger=logger,
-            db_loader=db_loader
+            db_loader=db_loader,
+            lotus_store=lotus_store,
         )
         if ms2_enhancement_step.can_run(analysis):
             analysis = ms2_enhancement_step.process(analysis)
@@ -199,12 +208,16 @@ def main():
     if "weights_enhancement_step" in to_run:
 
         logger.info("Running weights enhancement step...")
+        weights_lotus_store = LotusStore(
+            duckdb_path=config.ms_config.downloader_params.duckdb_path,
+            logger=logger,
+        )
         reweighting_step = WeightsEnhancementStep(
             config=ReweightingConfig(
                 downloader_params=config.ms_config.downloader_params,
             ),
             logger=logger,
-            db_loader=db_loader,
+            lotus_store=weights_lotus_store,
         )
         if reweighting_step.can_run(analysis):
             analysis = reweighting_step.process(analysis)

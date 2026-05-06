@@ -1,21 +1,13 @@
-import os
-from pathlib import Path
 import logging
 
 import pytest
 
 from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
-from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.loaders.lotus_store import LotusStore
 from enpkg.monolith.enhancers.weights_enhancer import WeightsEnhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.data.analysis import Analysis
-
-if "PROJECT_ROOT" in os.environ:
-    PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-TEST_DATA_DIR = PROJECT_ROOT / "data" / "input"
+from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
 
 
 @pytest.fixture(scope="class")
@@ -29,8 +21,11 @@ def analysis():
     )
 
 @pytest.fixture(scope="class")
-def db_loader(reweighting_config, logger) -> DBLoader:
-    return DBLoader(configuration=reweighting_config, logger=logger)
+def lotus_store(reweighting_config, logger) -> LotusStore:
+    return LotusStore(
+        duckdb_path=reweighting_config.downloader_params.duckdb_path,
+        logger=logger,
+    )
 
 
 @pytest.fixture(scope="class")
@@ -42,9 +37,9 @@ def taxa_enhanced_analysis(analysis, taxa_enhancer, network_enhancer) -> Analysi
     return analysis.model_copy(update={"molecular_network": molecular_network})
 
 @pytest.fixture(scope="class")
-def weights_enhancer(reweighting_config, logger, db_loader) -> WeightsEnhancer:
-    """Fixture to initialize the WeightsEnhancer with the provided configuration, logger, and db_loader."""
-    return WeightsEnhancer(configuration=reweighting_config, logger=logger, db_loader=db_loader)
+def weights_enhancer(reweighting_config, logger, lotus_store) -> WeightsEnhancer:
+    """Fixture to initialize the WeightsEnhancer with the provided configuration, logger, and lotus_store."""
+    return WeightsEnhancer(configuration=reweighting_config, logger=logger, lotus_store=lotus_store)
 
 
 # Run test with following command:
@@ -59,7 +54,7 @@ class TestWeightsEnhancer:
         # Verify basic initialization properties
         assert weights_enhancer.name() == "Weights Enhancer"
         assert isinstance(weights_enhancer.configuration, ReweightingConfig)
-        assert isinstance(weights_enhancer.db_loader, DBLoader)
+        assert isinstance(weights_enhancer.lotus_store, LotusStore)
 
         # Verify that enhance updates the analysis object in place and appropriately sets features
         final_enhanced_analysis = weights_enhancer.enhance(taxa_enhanced_analysis)

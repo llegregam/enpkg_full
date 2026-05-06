@@ -4,11 +4,10 @@ Persistent DuckDB wrapper for LOTUS compound metadata and spectral library.
 This module provides a DatabaseManager class that:
   - Owns a file-backed DuckDB connection
   - Creates the schema (compounds, npc_classifications, spectral_library tables)
-  - Imports data from the original CSV and pickle sources (one-time operation)
   - Exposes query methods that return Polars DataFrames or list[Spectrum]
 
-All public attributes exposed by DBLoader (lotus_metadata, lotus_metadata_pathways, etc.)
-are reconstructed from DuckDB queries so downstream code needs no changes.
+LotusStore is the primary consumer of the compound queries exposed here;
+DBLoader now only wraps the spectral-library loader on top of this.
 """
 
 import gc
@@ -107,7 +106,8 @@ CREATE INDEX IF NOT EXISTS idx_spectral_short_inchikey
 _SPECTRAL_IMPORT_CHUNK_SIZE = 50_000
 
 # Columns in the compounds table that map 1-to-1 to the original CSV columns.
-# Order matters: Lotus.setup_lotus_columns() will be called with this list.
+# Order matters: LotusStore builds its column-to-index map from this list when
+# constructing Lotus objects via Lotus.from_row(columns, ...).
 _COMPOUND_COLUMNS = [
     "structure_wikidata",
     "structure_inchikey",
@@ -201,7 +201,7 @@ class DatabaseManager:
 
     def import_from_csvs(
         self,
-        metadata_path: str,
+        lotus_metadata_path: str,
         pathways_path: str,
         superclasses_path: str,
         classes_path: str,
@@ -215,7 +215,7 @@ class DatabaseManager:
 
         Parameters
         ----------
-        metadata_path:
+        lotus_metadata_path:
             Path to the LOTUS metadata CSV (taxo_db_metadata).
         pathways_path:
             Path to the NPC pathways CSV (first column: SMILES).
@@ -227,7 +227,7 @@ class DatabaseManager:
         conn = self._conn
 
         # -- compounds -------------------------------------------------------
-        logger.info("Importing compounds from %s", metadata_path)
+        logger.info("Importing compounds from %s", lotus_metadata_path)
         t0 = time()
         conn.begin()
         try:
@@ -271,7 +271,7 @@ class DatabaseManager:
                     reference_wikidata,
                     reference_doi,
                     manual_validation
-                FROM read_csv('{metadata_path}',
+                FROM read_csv('{lotus_metadata_path}',
                     nullstr=['', 'NA', 'NaN'],
                     ignore_errors=true
                 )
@@ -456,6 +456,7 @@ class DatabaseManager:
                 precursor_mz = spec.get("precursor_mz")
                 if precursor_mz is None:
                     n_skipped += 1
+                    logger.warning("Skipping spectrum with no precursor_mz (metadata: %s)", spec.metadata)
                     continue
 
                 compound_name = spec.get("compound_name")
@@ -491,9 +492,9 @@ class DatabaseManager:
                 "charge":        charges,
                 "metadata_json": metadata_jsons,
             }).cast({
-                "id": pl.Int64,
-                "precursor_mz": pl.Float64,
-                "charge": pl.Int64,
+                "id": pl.Int32,
+                "precursor_mz": pl.Float32,
+                "charge": pl.Int8, # charge is usually small, especially in metabolomics
             })
 
             self._conn.begin()
@@ -548,14 +549,13 @@ class DatabaseManager:
 
     # ── Compound queries ───────────────────────────────────────────────────────
 
-    def get_all_compounds(self) -> pl.DataFrame:
+    def get_all_compound_metadata(self) -> pl.DataFrame:
         """
-        Return all compounds joined with npc_classifications as a Polars DataFrame.
+        Return all compound metadata joined with npc_classifications as a Polars DataFrame.
 
-        The result includes the standard compound columns plus
-        'pathways', 'superclasses', 'classes' LIST columns.
+        The result includes structure, taxonomy, organism, reference, and NPC classification data.
         """
-        logger.debug("Querying all compounds with NPC classifications")
+        logger.debug("Querying all compound metadata with NPC classifications")
         t0 = time()
         df = self._conn.execute("""
             SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
@@ -583,12 +583,12 @@ class DatabaseManager:
             FROM compounds c
             LEFT JOIN npc_classifications n USING (structure_smiles)
         """).pl()
-        logger.debug("get_all_compounds returned %d rows in %.2fs", len(df), time() - t0)
+        logger.debug("get_all_compound_metadata returned %d rows in %.2fs", len(df), time() - t0)
         return df
 
-    def get_compounds_sorted_by_short_inchikey(self) -> pl.DataFrame:
-        """Like get_all_compounds() but ordered by short_inchikey (for Ms2Enhancer)."""
-        logger.debug("Querying all compounds sorted by short_inchikey")
+    def get_compound_metadata_sorted_by_short_inchikey(self) -> pl.DataFrame:
+        """Like get_all_compound_metadata() but ordered by short_inchikey."""
+        logger.debug("Querying compound metadata sorted by short_inchikey")
         t0 = time()
         df = self._conn.execute("""
             SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
@@ -618,14 +618,14 @@ class DatabaseManager:
             ORDER BY c.short_inchikey
         """).pl()
         logger.debug(
-            "get_compounds_sorted_by_short_inchikey returned %d rows in %.2fs",
+            "get_compound_metadata_sorted_by_short_inchikey returned %d rows in %.2fs",
             len(df), time() - t0,
         )
         return df
 
-    def get_compounds_by_formulas(self, formulas: list[str]) -> pl.DataFrame:
+    def get_compound_metadata_by_formulas(self, formulas: list[str]) -> pl.DataFrame:
         """
-        Return compounds whose molecular formula is in the provided list,
+        Return compound metadata whose molecular formula is in the provided list,
         joined with npc_classifications.
 
         Parameters
@@ -634,9 +634,9 @@ class DatabaseManager:
             List of molecular formula strings (e.g., ['C10H12O3', 'C15H24']).
         """
         if not formulas:
-            logger.debug("get_compounds_by_formulas called with empty list — returning empty DataFrame")
+            logger.debug("get_compound_metadata_by_formulas called with empty list — returning empty DataFrame")
             return pl.DataFrame()
-        logger.debug("Querying compounds for %d molecular formulas", len(formulas))
+        logger.debug("Querying compound metadata for %d molecular formulas", len(formulas))
         t0 = time()
         placeholders = ", ".join("?" * len(formulas))
         df = self._conn.execute(f"""
@@ -667,8 +667,44 @@ class DatabaseManager:
             WHERE c.structure_molecular_formula IN ({placeholders})
         """, formulas).pl()
         logger.debug(
-            "get_compounds_by_formulas returned %d rows for %d formulas in %.2fs",
+            "get_compound_metadata_by_formulas returned %d rows for %d formulas in %.2fs",
             len(df), len(formulas), time() - t0,
+        )
+        return df
+
+    def get_compound_metadata_by_mass_range(self, low: float, high: float) -> pl.DataFrame:
+        """Return compound metadata with structure_exact_mass in [low, high], joined with npc_classifications."""
+        logger.debug("Querying compound metadata with exact_mass in [%.4f, %.4f]", low, high)
+        t0 = time()
+        df = self._conn.execute("""
+            SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
+                   c.structure_smiles, c.structure_molecular_formula,
+                   c.structure_exact_mass, c.structure_xlogp,
+                   c."structure_smiles_2D", c.structure_cid,
+                   c."structure_nameIupac", c."structure_nameTraditional",
+                   c.structure_stereocenters_total,
+                   c.structure_stereocenters_unspecified,
+                   c.structure_taxonomy_classyfire_chemontid,
+                   c.structure_taxonomy_classyfire_01kingdom,
+                   c.structure_taxonomy_classyfire_02superclass,
+                   c.structure_taxonomy_classyfire_03class,
+                   c.structure_taxonomy_classyfire_04directparent,
+                   c.organism_wikidata, c.organism_name,
+                   c.organism_taxonomy_gbifid, c.organism_taxonomy_ncbiid,
+                   c.organism_taxonomy_ottid,
+                   c.organism_taxonomy_01domain, c.organism_taxonomy_02kingdom,
+                   c.organism_taxonomy_03phylum, c.organism_taxonomy_04class,
+                   c.organism_taxonomy_05order, c.organism_taxonomy_06family,
+                   c.organism_taxonomy_07tribe, c.organism_taxonomy_08genus,
+                   c.organism_taxonomy_09species, c.organism_taxonomy_10varietas,
+                   c.reference_wikidata, c.reference_doi, c.manual_validation,
+                   n.pathways, n.superclasses, n.classes
+            FROM compounds c
+            LEFT JOIN npc_classifications n USING (structure_smiles)
+            WHERE c.structure_exact_mass BETWEEN ? AND ?
+        """, [low, high]).pl()
+        logger.debug(
+            "get_compound_metadata_by_mass_range returned %d rows in %.2fs", len(df), time() - t0
         )
         return df
 

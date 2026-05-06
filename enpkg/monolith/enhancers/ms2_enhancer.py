@@ -1,10 +1,11 @@
 """Submodule for the ISDB enhancer."""
 
 import logging
+from itertools import groupby
 from time import time
-import sys
-import tracemalloc
 from logging import Logger
+from typing import Optional
+
 import matchms
 import pandas as pd
 import numpy as np
@@ -21,64 +22,50 @@ from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig, SpectralMatchParams
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import Lotus
-from enpkg.monolith.utils import binary_search_by_key
+from enpkg.monolith.utils.memlog import log_virtual_memory
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.database_manager import DatabaseManager
+from enpkg.monolith.loaders.lotus_store import LotusStore
 
 
 class Ms2Enhancer(Enhancer):
-    """Enhancer that adds ISDB information to the analysis."""
+    """Enhancer that adds MS2 information to the analysis."""
 
     def __init__(
-        self, configuration: MSEnhancerConfig, logger: Logger, db_loader: DBLoader
+        self,
+        configuration: MSEnhancerConfig,
+        logger: Logger,
+        db_loader: DBLoader,
+        lotus_store: LotusStore,
     ):
         """Initializes the enhancer."""
-        
+
         if not isinstance(configuration, MSEnhancerConfig):
             raise TypeError(
-                f"Expected configuration of type ISDBEnhancerConfig, got {type(configuration)}"
+                f"Expected configuration of type MSEnhancerConfig, got {type(configuration)}"
             )
         if not isinstance(logger, Logger):
             raise TypeError(f"Expected logger of type logging.Logger, got {type(logger)}")
         if not isinstance(db_loader, DBLoader):
             raise TypeError(f"Expected db_loader of type DBLoader, got {type(db_loader)}")
-        tracemalloc.start()
+        if not isinstance(lotus_store, LotusStore):
+            raise TypeError(f"Expected lotus_store of type LotusStore, got {type(lotus_store)}")
         self.configuration = configuration
         self.logger = logger
         self.db_loader = db_loader
-        snapshot_1 = tracemalloc.take_snapshot()
-        
+        self.lotus_store = lotus_store
+        # Lotus list + library-spectrum linking are built lazily on first enhance().
+        # In batch mode this means only the first experiment pays the build cost;
+        # subsequent ones reuse the same list (the full compound set is identical
+        # across experiments).
+        self.lotus_objects: Optional[list[Lotus]] = None
+
         self.logger.info("Loading Databases")
-        start = time()
-        self.db_loader.load_taxonomical_databases()
-        self.logger.debug("Taxonomical databases loaded in %.2f seconds", time() - start)
+        # Taxonomy access is fully owned by LotusStore now; DBLoader is only
+        # around for the spectral DB.
         start = time()
         self.db_loader.load_spectral_databases(mode="pos") # TODO: add mode param to config
         self.logger.debug("Spectral databases loaded in %.2f seconds", time() - start)
-        
-        self.logger.info(
-            "Converting Taxonomical Database metadata DataFrame to Lotus objects"
-        )
-        start = time()
-        self._initialize_lotus_objects()
-        snapshot_2 = tracemalloc.take_snapshot()
-        snapshot_1_stats = snapshot_1.statistics("stat_1")
-        snapshot_2_stats = snapshot_2.statistics("stat_2")
-        print(f"MEmory usage before initializing Lotus objects: {snapshot_1.statistics('stat_1')}")
-        print(f"Memory usage after initializing Lotus objects: {snapshot_2.statistics('stat_1')} MB")
-        self.logger.info(
-            "Converted Taxonomical Database metadata DataFrame to Lotus objects in %.2f seconds",
-            time() - start,
-        )
-
-        print("Size of the parts of the db_loader:")
-        print(f"  - lotus_metadata: {sys.getsizeof(self.db_loader.lotus_metadata)} bytes")
-        print(f"  - lotus_metadata_pathways: {sys.getsizeof(self.db_loader.lotus_metadata_pathways)} bytes")
-        print(f"  - lotus_metadata_superclasses: {sys.getsizeof(self.db_loader.lotus_metadata_superclasses)} bytes")
-        print(f"  - lotus_metadata_classes: {sys.getsizeof(self.db_loader.lotus_metadata_classes)} bytes")
-        # del self.db_loader.lotus_metadata, self.db_loader.lotus_metadata_pathways,
-        # self.db_loader.lotus_metadata_superclasses, self.db_loader.lotus_metadata_classes
-        # gc.collect()
 
         # TODO: Could be put elsewhere
         if not isinstance(self.db_loader.spectral_db, list):
@@ -88,171 +75,77 @@ class Ms2Enhancer(Enhancer):
         if not all(spectrum.get("compound_name") is not None for spectrum in self.db_loader.spectral_db[:10]):
             raise ValueError("Expected all spectra in spectral_db to have 'compound_name' metadata for short inchikey matching")
 
+        self.logger.info("MS2 Enhancer initialized successfully")
+        log_virtual_memory(self.logger, "MS2 init done")
+
+    def _ensure_lotus_objects(self) -> None:
+        """Build the sorted Lotus list and link library spectra on first use.
+
+        Deferred from __init__ so the (expensive) full-compound materialisation
+        only happens if enhance() is actually called. Idempotent: subsequent
+        calls short-circuit on the cached self.lotus_objects.
+        """
+        if self.lotus_objects is not None:
+            return
+
+        self.logger.info(
+            "Converting Taxonomical Database metadata to Lotus objects (via LotusStore)"
+        )
+        start = time()
+        self.lotus_objects = self.lotus_store.all_sorted_by_short_inchikey()
+        self.logger.info(
+            "Built %d Lotus objects in %.2f seconds",
+            len(self.lotus_objects), time() - start,
+        )
+        log_virtual_memory(
+            self.logger, f"MS2 lotus_objects built (N={len(self.lotus_objects)})"
+        )
+
         self.logger.info("Adding Lotus entries to spectral database")
         start = time()
         self._link_lotus_to_spectra()
         self.logger.debug(
             "Added Lotus entries to spectral database in %.2f seconds", time() - start
         )
-
-        self.logger.info("ISDB Enhancer initialized successfully")
+        log_virtual_memory(self.logger, "MS2 lotus linked")
 
     def name(self) -> str:
         """Returns the name of the enhancer."""
-        return "ISDB Enhancer"
+        return "MS2 Enhancer"
     
     def _link_lotus_to_spectra(self) -> None:
         """Link Lotus entries to spectral database entries by short inchikey.
-        
-        For each spectrum, finds all Lotus entries with matching short inchikey
-        using binary search and attaches them as metadata.
+
+        Builds a dict short_inchikey -> [Lotus, ...] in one pass over the
+        pre-sorted self.lotus_objects, then attaches matching slices to each
+        spectrum via O(1) lookups.
         """
+        assert self.lotus_objects is not None
 
         start = time()
+        lotus_by_short_inchikey: dict[str, list[Lotus]] = {
+            key: list(group)
+            for key, group in groupby(self.lotus_objects, key=lambda x: x.short_inchikey)
+        }
+
         for spectrum in tqdm(
             self.db_loader.spectral_db,
             desc="Adding Lotus entries to spectral database",
             dynamic_ncols=True,
             leave=False,
         ):
-            spectrum_short_inchikey = spectrum.get("compound_name")
-            (found, smallest_idx) = binary_search_by_key(
-                key=spectrum_short_inchikey,
-                array=self.lotus_objects,
-                key_func=lambda x: x.short_inchikey,
-            )
-
-            if not found:
-                continue
-
-            # Since we may have landed exactly in the middle of an array of short inchikeys
-            # with the same value, we need to identify the smallest index of the slice of
-            # short inchikeys with the same value.
-            while (
-                smallest_idx > 0
-                and self.lotus_objects[smallest_idx - 1].short_inchikey
-                == spectrum_short_inchikey
-            ):
-                smallest_idx -= 1
-
-            largest_idx = smallest_idx
-
-            while (
-                largest_idx < len(self.lotus_objects)
-                and self.lotus_objects[largest_idx].short_inchikey == spectrum_short_inchikey
-            ):
-                largest_idx += 1
-
-            spectrum.set("lotus_entries", self.lotus_objects[smallest_idx:largest_idx])
+            entries = lotus_by_short_inchikey.get(spectrum.get("compound_name"))
+            if entries is not None:
+                spectrum.set("lotus_entries", entries)
 
         self.logger.debug(f"Linked lotus to spectra in {time() - start:.2f} seconds")
 
-    
-    def _initialize_lotus_objects(self) -> None:
-        """Initializes the Lotus objects, sorted by short_inchikey for binary search.
-
-        Uses DuckDB's ORDER BY short_inchikey when a duckdb_path is configured,
-        avoiding the Python-side sorted() call over the full list.
-        """
-        duckdb_path = self.db_loader.configuration.downloader_params.duckdb_path
-        if duckdb_path:
-            self._initialize_lotus_objects_from_duckdb(duckdb_path)
-        else:
-            self._initialize_lotus_objects_from_dataframes()
-
-    def _initialize_lotus_objects_from_duckdb(self, duckdb_path: str) -> None:
-        """Load Lotus objects pre-sorted by short_inchikey from DuckDB."""
-
-
-        self.logger.debug(f"Loading Lotus objects from DuckDB (sorted): {duckdb_path}")
-        start = time()
-        with DatabaseManager(duckdb_path, read_only=True) as db:
-            df = db.get_compounds_sorted_by_short_inchikey()
-
-        self.logger.debug(f"DuckDB returned {len(df):,} compounds in {time() - start:.2f}s")
-
-        list_col_set = {"pathways", "superclasses", "classes"}
-        compound_cols = [c for c in df.columns if c not in list_col_set]
-        Lotus.setup_lotus_columns(compound_cols)
-
-        n_compound_cols = len(compound_cols)
-        start = time()
-        self.lotus_objects: list[Lotus] = [
-            Lotus.from_polars_row(
-                list(row[:n_compound_cols]),
-                pathways=np.array(row[n_compound_cols]) if row[n_compound_cols] is not None else np.array([]),
-                superclasses=np.array(row[n_compound_cols + 1]) if row[n_compound_cols + 1] is not None else np.array([]),
-                classes=np.array(row[n_compound_cols + 2]) if row[n_compound_cols + 2] is not None else np.array([]),
-            )
-            for row in tqdm(df.iter_rows(), total=len(df), desc="Creating Lotus objects", leave=False, dynamic_ncols=True)
-        ]
-        self.logger.debug(
-            "Created %d Lotus objects from DuckDB in %.2f seconds",
-            len(self.lotus_objects), time() - start,
-        )
-        # Already sorted by DuckDB ORDER BY short_inchikey — no Python sort needed.
-
-    def _initialize_lotus_objects_from_dataframes(self) -> None:
-        """Initializes the Lotus objects from the pre-loaded metadata DataFrames (original path)."""
-        import polars as pl
-
-        Lotus.setup_lotus_columns(list(self.db_loader.lotus_metadata.columns))
-        n_compound_cols = len(self.db_loader.lotus_metadata.columns)
-        self.logger.debug(f"Lotus columns: {Lotus._columns}")
-
-        # Collapse each classification DataFrame's score columns into a single list column,
-        # then join all three onto the metadata in one pass — mirrors the DuckDB path structure.
-        start = time()
-        pw_cols = self.db_loader.lotus_metadata_pathways.columns[1:]
-        sc_cols = self.db_loader.lotus_metadata_superclasses.columns[1:]
-        cl_cols = self.db_loader.lotus_metadata_classes.columns[1:]
-        merged = (
-            self.db_loader.lotus_metadata
-            .join(
-                self.db_loader.lotus_metadata_pathways.select(
-                    "structure_smiles", pl.concat_list(pw_cols).alias("pathways")
-                ),
-                on="structure_smiles", how="left",
-            )
-            .join(
-                self.db_loader.lotus_metadata_superclasses.select(
-                    "structure_smiles", pl.concat_list(sc_cols).alias("superclasses")
-                ),
-                on="structure_smiles", how="left",
-            )
-            .join(
-                self.db_loader.lotus_metadata_classes.select(
-                    "structure_smiles", pl.concat_list(cl_cols).alias("classes")
-                ),
-                on="structure_smiles", how="left",
-            )
-        )
-        self.logger.debug(f"Built merged DataFrame in {time() - start:.2f}s")
-
-        start = time()
-        self.lotus_objects: list[Lotus] = [
-            Lotus.from_polars_row(
-                list(row[:n_compound_cols]),
-                pathways=np.array(row[n_compound_cols]) if row[n_compound_cols] is not None else np.array([]),
-                superclasses=np.array(row[n_compound_cols + 1]) if row[n_compound_cols + 1] is not None else np.array([]),
-                classes=np.array(row[n_compound_cols + 2]) if row[n_compound_cols + 2] is not None else np.array([]),
-            )
-            for row in tqdm(merged.iter_rows(), total=len(merged), desc="Creating Lotus objects", leave=False, dynamic_ncols=True)
-        ]
-        self.logger.debug(
-            "Converted Taxonomical Database metadata DataFrame to Lotus objects in %.2f seconds",
-            time() - start,
-        )
-
-        self.logger.debug("Sorting Lotus entries by short inchikey")
-        start = time()
-        self.lotus_objects = sorted(self.lotus_objects, key=lambda x: x.short_inchikey)
-        self.logger.debug(
-            "Sorted Lotus entries by short inchikey in %.2f seconds", time() - start
-        )
-
     def enhance(self, spectrum_list: list[AnnotatedSpectrum], chunk_size: int = 1000) -> list[AnnotatedSpectrum]:
-        """Adds ISDB information to the analysis."""
+        """Adds MS2 information to the analysis."""
+
+        log_virtual_memory(self.logger, "MS2 enhance start")
+        # First call in a batch triggers the expensive LotusStore fetch + library linking.
+        self._ensure_lotus_objects()
 
         number_of_spectra = len(spectrum_list)
         self.logger.info(f"Running MS2 enrichment process on {number_of_spectra} spectra")
@@ -331,22 +224,23 @@ class Ms2Enhancer(Enhancer):
                     )
 
         # Debug: Sample 5 random spectra to show annotation statistics
-        import random
-        sample_size = min(5, len(spectrum_list))
-        sampled_spectra = random.sample(spectrum_list, k=sample_size)
-        for spectrum in sampled_spectra:
-            n_annotations = len(spectrum.ms2_annotations) if spectrum.ms2_annotations else 0
-            self.logger.debug(f"Spectrum {spectrum.feature_id}: {n_annotations} MS2 annotations")
-            if n_annotations > 0:
-                # Show first 3 annotations as sample
-                for i, annotation in enumerate(spectrum.ms2_annotations[:3]):
-                    self.logger.debug(
-                        f"  Annotation {i+1}: source={annotation.source}, "
-                        f"queried_against={annotation.queried_against}, "
-                        f"scores={annotation.scores}, "
-                        f"n_lotus_entries={len(annotation.lotus_entries) if annotation.lotus_entries else 0}"
-                    )
+        # import random
+        # sample_size = min(5, len(spectrum_list))
+        # sampled_spectra = random.sample(spectrum_list, k=sample_size)
+        # for spectrum in sampled_spectra:
+        #     n_annotations = len(spectrum.ms2_annotations) if spectrum.ms2_annotations else 0
+        #     self.logger.debug(f"Spectrum {spectrum.feature_id}: {n_annotations} MS2 annotations")
+        #     if n_annotations > 0:
+        #         # Show first 3 annotations as sample
+        #         for i, annotation in enumerate(spectrum.ms2_annotations[:3]):
+        #             self.logger.debug(
+        #                 f"  Annotation {i+1}: source={annotation.source}, "
+        #                 f"queried_against={annotation.queried_against}, "
+        #                 f"scores={annotation.scores}, "
+        #                 f"n_lotus_entries={len(annotation.lotus_entries) if annotation.lotus_entries else 0}"
+        #             )
 
+        log_virtual_memory(self.logger, "MS2 enhance end")
         # TODO: Decide if analysis should be modified in place or if we should return a new enriched analysis object
         return spectrum_list
 
@@ -371,7 +265,14 @@ if __name__ == "__main__":
     )
     logger.info(f"Loading enhancer from file")
     start = time()
-    enhancer = Ms2Enhancer(configuration=config.ms_config, logger=logger, db_loader=DBLoader(configuration=config.ms_config, logger=logger))
+    db_loader = DBLoader(configuration=config.ms_config, logger=logger)
+    lotus_store = LotusStore(
+        duckdb_path=config.ms_config.downloader_params.duckdb_path, logger=logger,
+    )
+    enhancer = Ms2Enhancer(
+        configuration=config.ms_config, logger=logger,
+        db_loader=db_loader, lotus_store=lotus_store,
+    )
     logger.info(f"Enhancer loaded in {time() - start:.2f} seconds")
     start = time()
     enhancer.enhance(analysis.spectra)

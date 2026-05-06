@@ -31,20 +31,37 @@ SHARED_FIELD = "general_params"
 # --- Default workspace layout ----------------------------------------------
 # The database directory is fixed for now. The input directory can be changed
 # from the sidebar at runtime and is persisted in session state.
-WORKSPACE_DIR = Path("gui_workspace")
-DEFAULT_INPUT_DIR = WORKSPACE_DIR / "input"
-DEFAULT_BATCH_DIR = WORKSPACE_DIR / "batch_input"
-DATABASE_DIR = WORKSPACE_DIR / "databases"
-DEFAULT_CONFIG_PATH = WORKSPACE_DIR / "gui_config.yaml"
+WORKSPACE_DIR: Path = Path("gui_workspace")
+DEFAULT_INPUT_DIR: Path = WORKSPACE_DIR / "input"
+DEFAULT_BATCH_DIR: Path = WORKSPACE_DIR / "batch_input"
+DATABASE_DIR: Path = WORKSPACE_DIR / "databases"
+DEFAULT_CONFIG_PATH: Path = WORKSPACE_DIR / "gui_config.yaml"
 
+
+# Remove the noisy watchdog inotify_buffer logs
+logging.getLogger("watchdog.observers.inotify_buffer").setLevel(logging.WARNING)   
 
 def _ensure_workspace() -> None:
+    """
+    Ensure the default workspace directories exist. 
+    If they don't, create them. 
+    """
     DEFAULT_INPUT_DIR.mkdir(parents=True, exist_ok=True)
     DEFAULT_BATCH_DIR.mkdir(parents=True, exist_ok=True)
     DATABASE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _list_input_files(input_dir: Path, suffixes: tuple[str, ...]) -> list[str]:
+    """
+    List files in the input directory that match the given suffixes, sorted alphabetically.
+
+    Args:
+        input_dir: The directory to scan for input files.
+        suffixes: A tuple of file suffixes to filter by (e.g., (".mgf", ".mzml")).
+    
+    Returns:
+        A sorted list of matching file names. If the input directory does not exist, returns an empty list.
+    """
     if not input_dir.exists():
         return []
     return sorted(
@@ -55,6 +72,11 @@ def _list_input_files(input_dir: Path, suffixes: tuple[str, ...]) -> list[str]:
 
 
 def _init_state() -> None:
+    """
+    Initialize the Streamlit session state with default values for form state, 
+    selected blocks, log buffer, last results, and input directories.
+    Do not forget to modify this function if you add new state variables that need defaults.
+    """
     if "form_state" not in st.session_state:
         st.session_state.form_state = {}
     if "selected_blocks" not in st.session_state:
@@ -78,11 +100,17 @@ def _init_state() -> None:
 
 
 def _load_config_into_state(path: Path) -> None:
+    """
+    Load a unified YAML config from the given path and populate the session state form_state and general_params.
+    """
     data = config_io.load_unified_yaml(path)
     shared = None
     for block in BLOCKS:
+        # For blocks with no config_cls, we skip loading since they have no parameters to populate.
         if block.config_cls is None:
             continue
+        # 
+
         section = config_io.get_section(data, block.id)
         if shared is None and isinstance(section.get(SHARED_FIELD), dict):
             shared = section[SHARED_FIELD]
@@ -93,7 +121,7 @@ def _load_config_into_state(path: Path) -> None:
 
 
 def _render_sidebar() -> tuple[list[str], dict]:
-    st.sidebar.header("ENPKG pipeline")
+    st.sidebar.header("MS2KG pipelin")
 
     st.sidebar.subheader("Config file")
     config_path_str = st.sidebar.text_input(
@@ -171,12 +199,19 @@ def _render_single_sidebar() -> dict:
     spectra = st.sidebar.selectbox("Spectra", spectra_files or ["(none found)"])
     metadata = st.sidebar.selectbox("Metadata", metadata_files or ["(none found)"])
     quant = st.sidebar.selectbox("Quant table", quant_files or ["(none found)"])
-    return {
-        "input_dir": input_dir,
-        "spectra": spectra if spectra_files else None,
-        "metadata": metadata if metadata_files else None,
-        "quant": quant if quant_files else None,
-    }
+    selectboxes_states = {
+            "input_dir": input_dir,
+            "spectra": spectra if spectra_files else None,
+            "metadata": metadata if metadata_files else None,
+            "quant": quant if quant_files else None,
+        }
+    
+    if "sirius" in st.session_state.selected_blocks:
+        sirius_files = [f for f in spectra_files if "_sirius" in f.lower() and f.lower().endswith(".mgf")]
+        sirius_spectra = st.sidebar.selectbox("Spectra for Sirius", sirius_files or ["(none found)"], key="sirius_spectra")
+        selectboxes_states["sirius_spectra"] = sirius_spectra
+    
+    return selectboxes_states
 
 
 def _render_batch_sidebar() -> dict:
@@ -296,14 +331,22 @@ def _inject_shared_params(raw: dict[str, dict], shared: dict) -> dict[str, dict]
     return merged
 
 
-def _validate(selected: list[str], raw: dict[str, dict]):
+def _build_configs_from_raw(selected: list[str], raw: dict[str, dict]):
+    """
+    Instantiate Pydantic config objects from the raw form dicts 
+    and return them in a dict, or return the validation error if any.
+    """
     try:
         return config_io.build_configs(selected, raw), None
     except ValidationError as exc:
         return None, exc
 
 
-def _render_validation_preview(configs: dict, error):
+def __check_and_display_if_valid(configs: dict, error):
+    """
+    Display if the current configs that have been built from the
+    raw form states are valid or if there are any errors on build.
+    """
     st.subheader("Validated configuration")
     if error is not None:
         st.error("Configuration is invalid:")
@@ -341,6 +384,13 @@ def _render_execution(result) -> None:
 
 
 def _render_batch_execution(batch: BatchResult) -> None:
+    """
+    Render the batch execution results, including a summary 
+    of succeeded/failed experiments and details for each experiment.
+
+    Args:
+        batch: The BatchResult object containing the results of the batch execution.
+    """
     st.subheader("Batch execution")
     if batch is None:
         st.caption("Run the pipeline to see logs and results here.")
@@ -389,6 +439,7 @@ def _render_analysis_metrics(analysis) -> None:
 
 
 def main() -> None:
+
     st.set_page_config(page_title="ENPKG pipeline", layout="wide")
     _ensure_workspace()
     _init_state()
@@ -399,21 +450,21 @@ def main() -> None:
     # When the sidebar spectra selection changes, pre-populate the Sirius path field
     # (doesn't feel great this, maybe will change later). Only applies in single-run mode;
     # batch mode rewrites Sirius paths per-experiment inside the runner.
-    if not batch_mode:
-        _spectra = sidebar.get("spectra")
-        _input_dir = sidebar.get("input_dir")
-        if "sirius" in selected and _spectra and _input_dir is not None:
-            spectra_full = str(_input_dir / _spectra)
-            if spectra_full != st.session_state.get("_prev_sirius_spectra"):
-                st.session_state["_prev_sirius_spectra"] = spectra_full
-                st.session_state["sirius.sirius_params.path_to_input_spectra"] = spectra_full
+    # if not batch_mode:
+    #     _spectra = sidebar.get("spectra")
+    #     _input_dir = sidebar.get("input_dir")
+        # if "sirius" in selected and _spectra and _input_dir is not None:
+        #     spectra_full = str(_input_dir / _spectra)
+        #     if spectra_full != st.session_state.get("_prev_sirius_spectra"):
+        #         st.session_state["_prev_sirius_spectra"] = spectra_full
+        #         st.session_state["sirius.sirius_params.path_to_input_spectra"] = spectra_full
 
     st.title("ENPKG pipeline configuration")
     shared_params = _render_general_params()
     raw = _render_forms(selected)
     raw = _inject_shared_params(raw, shared_params)
-    configs, error = _validate(selected, raw)
-    _render_validation_preview(configs or {}, error)
+    configs, error = _build_configs_from_raw(selected, raw)
+    __check_and_display_if_valid(configs or {}, error)
 
     if sidebar["save_clicked"]:
         if error is not None:
@@ -478,6 +529,16 @@ def _run_single_mode(selected, configs, shared_params, sidebar) -> None:
 
 
 def _run_batch_mode(selected, configs, shared_params, sidebar) -> None:
+    """
+    Run the batch pipeline on every experiment discovered under the selected 
+    batch parent folder, using the shared metadata and the configs built from the form states.
+    
+    Args:
+        selected: List of selected block IDs to run.
+        configs: Dict of instantiated config objects for each block, built from the form states.
+        shared_params: Dict of shared general parameters to inject into each block's config.
+        sidebar: Dict of sidebar state values, including batch directory, discovered experiments, and metadata path
+    """
     experiments = sidebar.get("batch_experiments") or []
     if sidebar.get("batch_metadata") is None:
         st.error(

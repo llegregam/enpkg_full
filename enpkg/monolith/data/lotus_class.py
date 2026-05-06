@@ -1,15 +1,21 @@
 """Data class representing the key information of a LOTUS entry."""
 
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 from dataclasses import dataclass
 import numpy as np
 from enpkg.monolith.data.otl_class import Match
 
 MAXIMAL_TAXONOMICAL_SCORE: float = 8.0
 
-@dataclass
+@dataclass(slots=True)
 class Lotus:
-    """Data class representing the key information of a LOTUS entry."""
+    """Data class representing the key information of a LOTUS entry.
+
+    ``slots=True`` strips the per-instance ``__dict__`` (~30% memory cut
+    over the full LOTUS list, which is materialised in memory by MS2).
+    Safe because no consumer attaches dynamic attributes to Lotus instances
+    after the LotusStore refactor.
+    """
 
     structure_wikidata: str
     structure_inchikey: str
@@ -52,82 +58,64 @@ class Lotus:
     manual_validation: bool
 
     @classmethod
-    def setup_lotus_columns(cls, columns: list[str]):
-        """Set up the columns of the LOTUS DataFrame."""
-        cls._columns = {column: i for i, column in enumerate(columns)}
-
-    @classmethod
-    def from_polars_row(
+    def from_row(
         cls,
+        columns: Mapping[str, int],
         series: list[Any],
         pathways: np.ndarray,
         superclasses: np.ndarray,
         classes: np.ndarray,
     ) -> "Lotus":
-        """Create a Lotus object from a parsed Polars row."""
+        """Create a Lotus object from a parsed row using an explicit column index map.
 
-        # We normalize the NaN values to None
-        # Using native None checks since Polars converts missing to None in lists usually, but we fallback to np.isnan for floats
-        series = [None if (value is None or (isinstance(value, float) and np.isnan(value))) else value for value in series]
+        The column map is passed in per-call so that multiple Lotus-producing
+        stores can coexist without sharing class-level state.
+        """
+        series = [
+            None if (value is None or (isinstance(value, float) and np.isnan(value))) else value
+            for value in series
+        ]
 
         return cls(
-            structure_wikidata=series[Lotus._columns["structure_wikidata"]],
-            structure_inchikey=series[Lotus._columns["structure_inchikey"]],
-            structure_inchi=series[Lotus._columns["structure_inchi"]],
-            structure_smiles=series[Lotus._columns["structure_smiles"]],
-            structure_molecular_formula=series[
-                Lotus._columns["structure_molecular_formula"]
-            ],
-            structure_exact_mass=series[Lotus._columns["structure_exact_mass"]],
-            structure_xlogp=series[Lotus._columns["structure_xlogp"]],
-            structure_smiles_2d=series[Lotus._columns["structure_smiles_2D"]],
-            structure_cid=series[Lotus._columns["structure_cid"]],
-            structure_name_iupac=series[Lotus._columns["structure_nameIupac"]],
-            structure_name_traditional=series[
-                Lotus._columns["structure_nameTraditional"]
-            ],
+            structure_wikidata=series[columns["structure_wikidata"]],
+            structure_inchikey=series[columns["structure_inchikey"]],
+            structure_inchi=series[columns["structure_inchi"]],
+            structure_smiles=series[columns["structure_smiles"]],
+            structure_molecular_formula=series[columns["structure_molecular_formula"]],
+            structure_exact_mass=series[columns["structure_exact_mass"]],
+            structure_xlogp=series[columns["structure_xlogp"]],
+            structure_smiles_2d=series[columns["structure_smiles_2D"]],
+            structure_cid=series[columns["structure_cid"]],
+            structure_name_iupac=series[columns["structure_nameIupac"]],
+            structure_name_traditional=series[columns["structure_nameTraditional"]],
             structure_taxonomy_hammer_pathways=pathways,
             structure_taxonomy_hammer_superclasses=superclasses,
             structure_taxonomy_hammer_classes=classes,
-            structure_stereocenters_total=series[
-                Lotus._columns["structure_stereocenters_total"]
-            ],
-            structure_stereocenters_unspecified=series[
-                Lotus._columns["structure_stereocenters_unspecified"]
-            ],
-            structure_taxonomy_classyfire_chemontid=series[
-                Lotus._columns["structure_taxonomy_classyfire_chemontid"]
-            ],
-            structure_taxonomy_classyfire_01kingdom=series[
-                Lotus._columns["structure_taxonomy_classyfire_01kingdom"]
-            ],
-            structure_taxonomy_classyfire_02superclass=series[
-                Lotus._columns["structure_taxonomy_classyfire_02superclass"]
-            ],
-            structure_taxonomy_classyfire_03class=series[
-                Lotus._columns["structure_taxonomy_classyfire_03class"]
-            ],
-            structure_taxonomy_classyfire_04directparent=series[
-                Lotus._columns["structure_taxonomy_classyfire_04directparent"]
-            ],
-            organism_wikidata=series[Lotus._columns["organism_wikidata"]],
-            organism_name=series[Lotus._columns["organism_name"]],
-            organism_taxonomy_gbifid=series[Lotus._columns["organism_taxonomy_gbifid"]],
-            organism_taxonomy_ncbiid=series[Lotus._columns["organism_taxonomy_ncbiid"]],
-            organism_taxonomy_ottid=series[Lotus._columns["organism_taxonomy_ottid"]],
-            domain=series[Lotus._columns["organism_taxonomy_01domain"]],
-            kingdom=series[Lotus._columns["organism_taxonomy_02kingdom"]],
-            phylum=series[Lotus._columns["organism_taxonomy_03phylum"]],
-            klass=series[Lotus._columns["organism_taxonomy_04class"]],
-            order=series[Lotus._columns["organism_taxonomy_05order"]],
-            family=series[Lotus._columns["organism_taxonomy_06family"]],
-            tribe=series[Lotus._columns["organism_taxonomy_07tribe"]],
-            genus=series[Lotus._columns["organism_taxonomy_08genus"]],
-            species=series[Lotus._columns["organism_taxonomy_09species"]],
-            varietas=series[Lotus._columns["organism_taxonomy_10varietas"]],
-            reference_wikidata=series[Lotus._columns["reference_wikidata"]],
-            reference_doi=series[Lotus._columns["reference_doi"]],
-            manual_validation=series[Lotus._columns["manual_validation"]],
+            structure_stereocenters_total=series[columns["structure_stereocenters_total"]],
+            structure_stereocenters_unspecified=series[columns["structure_stereocenters_unspecified"]],
+            structure_taxonomy_classyfire_chemontid=series[columns["structure_taxonomy_classyfire_chemontid"]],
+            structure_taxonomy_classyfire_01kingdom=series[columns["structure_taxonomy_classyfire_01kingdom"]],
+            structure_taxonomy_classyfire_02superclass=series[columns["structure_taxonomy_classyfire_02superclass"]],
+            structure_taxonomy_classyfire_03class=series[columns["structure_taxonomy_classyfire_03class"]],
+            structure_taxonomy_classyfire_04directparent=series[columns["structure_taxonomy_classyfire_04directparent"]],
+            organism_wikidata=series[columns["organism_wikidata"]],
+            organism_name=series[columns["organism_name"]],
+            organism_taxonomy_gbifid=series[columns["organism_taxonomy_gbifid"]],
+            organism_taxonomy_ncbiid=series[columns["organism_taxonomy_ncbiid"]],
+            organism_taxonomy_ottid=series[columns["organism_taxonomy_ottid"]],
+            domain=series[columns["organism_taxonomy_01domain"]],
+            kingdom=series[columns["organism_taxonomy_02kingdom"]],
+            phylum=series[columns["organism_taxonomy_03phylum"]],
+            klass=series[columns["organism_taxonomy_04class"]],
+            order=series[columns["organism_taxonomy_05order"]],
+            family=series[columns["organism_taxonomy_06family"]],
+            tribe=series[columns["organism_taxonomy_07tribe"]],
+            genus=series[columns["organism_taxonomy_08genus"]],
+            species=series[columns["organism_taxonomy_09species"]],
+            varietas=series[columns["organism_taxonomy_10varietas"]],
+            reference_wikidata=series[columns["reference_wikidata"]],
+            reference_doi=series[columns["reference_doi"]],
+            manual_validation=series[columns["manual_validation"]],
         )
 
     def __hash__(self) -> int:
