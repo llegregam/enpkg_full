@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Any
 from unittest.mock import patch, MagicMock
 
@@ -114,20 +115,38 @@ class TestSiriusEnhancer:
         
         # Check actual Sirius run call
         run_args, _ = mock_run.call_args_list[1]
-        
+
+        db_list = (
+            "public_spectra_2506,METACYC,BloodExposome,CHEBI,COCONUT,FooDB,"
+            "GNPS,HMDB,HSDB,KEGG,KNAPSACK,LOTUS,LIPIDMAPS,MACONDA,MESH,MiMeDB,NORMAN,PLANTCYC,"
+            "PUBCHEMANNOTATIONBIO,PUBCHEMANNOTATIONDRUG,PUBCHEMANNOTATIONFOOD,"
+            "PUBCHEMANNOTATIONSAFETYANDTOXIC,SUPERNATURAL,TeroMol,YMDB"
+        )
+        sample_stem = network_and_taxa_enhanced_analysis.metadata.sample_filename_pos.split(".")[0]
         expected_run_args = [
             "/mock/path/to/sirius",
             "--input", "/mock/input.mgf",
-            "-o", f"/mock/out/{network_and_taxa_enhanced_analysis.metadata.sample_filename_pos.split('.')[0]}",
-            "formula",
-            "fingerprint",
-            "canopus",
-            "structure",
-            "--database",
-            "pubchem",
+            "-o", os.path.join("/mock/out", sample_stem),
+            "config",
+            "--AlgorithmProfile=orbitrap",
+            "--MS2MassDeviation.allowedMassDeviation=5.0ppm",
+            f"--SpectralSearchDB={db_list}",
+            "--AdductSettings.fallback=[[M+H]+,[M+Na]+,[M+K]+]",
+            "--FormulaSettings.enforced=H,C,N,O,P",
+            "--IdentitySearchSettings.precursorDeviation=20.0ppm",
+            "--FormulaSearchSettings.performBottomUpAboveMz=0",
+            "--ExpansiveSearchConfidenceMode.confidenceScoreSimilarityMode=EXACT",
+            "--FormulaSearchDB=",
+            f"--StructureSearchDB={db_list}",
+            "--SpectralSearchLog=0",
+            "spectra-search",
+            "formulas",
+            "fingerprints",
+            "classes",
+            "structures",
             "write-summaries",
-            "--zip-output"
+            "--output", "/mock/out/summaries/",
         ]
-        
+
         assert run_args[0] == expected_run_args
 

@@ -64,7 +64,7 @@ class TestMs2Enhancer:
         assert ms2_enhancer is not None, "Ms2Enhancer should not be None."
         # Lotus objects are now built lazily on first enhance() call, not at __init__.
         assert ms2_enhancer.lotus_objects is None, "Ms2Enhancer lotus_objects should be None before enhance()."
-        assert ms2_enhancer.name() == "ISDB Enhancer", "Ms2Enhancer name property should match."
+        assert ms2_enhancer.name() == "MS2 Enhancer", "Ms2Enhancer name property should match."
 
     def test_enhance_spectra(self, ms2_enhancer: Ms2Enhancer, analysis: Any, logger: logging.Logger) -> None:
         """Test the MS2 spectrum enrichment.
