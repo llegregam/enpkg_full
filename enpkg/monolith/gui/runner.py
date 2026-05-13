@@ -24,6 +24,32 @@ from enpkg.monolith.loaders.lotus_store import LotusStore
 LOG_DIR = Path("gui_workspace") / "logs"
 
 
+@dataclass(frozen=True)
+class AnalysisSummary:
+    """Cheap-to-keep digest of an Analysis used by the GUI after the full
+    Analysis object has been freed.
+
+    Populated from a fully-enhanced Analysis just before ``result.analysis``
+    is dropped at the end of a batch experiment so the post-batch GUI panel
+    can still show counts without retaining the multi-GB Analysis tree.
+    """
+
+    run_name: str
+    n_spectra: int
+    n_ott_matches: int
+    n_network_nodes: int
+
+    @classmethod
+    def from_analysis(cls, analysis: Analysis) -> "AnalysisSummary":
+        network = getattr(analysis, "molecular_network", None)
+        return cls(
+            run_name=analysis.run_name,
+            n_spectra=len(analysis.spectra),
+            n_ott_matches=len(getattr(analysis, "ott_matches", []) or []),
+            n_network_nodes=len(network.nodes) if network is not None else 0,
+        )
+
+
 @dataclass
 class RunResult:
     analysis: Optional[Analysis] = None
@@ -32,6 +58,9 @@ class RunResult:
     error: Optional[str] = None
     log_file: Optional[Path] = None
     summary_file: Optional[Path] = None
+    # Populated by the batch runner once `analysis` has been pickled and
+    # freed; the GUI prefers `analysis` when present, falls back here.
+    summary: Optional[AnalysisSummary] = None
 
 
 class QueueLogHandler(logging.Handler):

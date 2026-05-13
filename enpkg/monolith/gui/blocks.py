@@ -94,7 +94,7 @@ def _log_taxonomical(logger: logging.Logger, analysis: Analysis) -> None:
         return
     best = ott[0]
     logger.info("Best match : %s (OTT %d, score %.3f)",
-                best.taxon.name, best.ott_id, best.score)
+                best.taxon.name, best.open_tree_taxon_id, best.score)
     if best.lineage is not None:
         # Walk the standard taxonomic ranks and collect non-None values.
         ranks = []

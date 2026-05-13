@@ -21,7 +21,6 @@ import numpy as np
 import polars as pl
 from matchms import Spectrum
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
