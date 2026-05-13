@@ -13,7 +13,7 @@ class Taxon:
         is_suppressed (bool): Indicates whether the taxon is suppressed.
         is_suppressed_from_synth (bool): Indicates whether the taxon is suppressed from synthesis.
         name (str): The scientific name of the taxon.
-        ott_id (int): The Open Tree Taxonomy (OTT) identifier for the taxon.
+        open_tree_taxon_id (int): The Open Tree Taxonomy (OTT) identifier for the taxon.
         rank (str): The taxonomic rank of the taxon (e.g., species, genus).
         source (str): The source of the taxon information.
         synonyms (list[str]): A list of synonyms for the taxon.
@@ -26,7 +26,7 @@ class Taxon:
     is_suppressed: bool
     is_suppressed_from_synth: bool
     name: str
-    ott_id: int
+    open_tree_taxon_id: int
     rank: str
     source: str
     synonyms: list[str]
@@ -40,8 +40,8 @@ class Taxon:
             wikidata, WikidataOTTQuery
         ), "wikidata must be an instance of WikidataOTTQuery"
         assert (
-            wikidata.ott == self.ott_id
-        ), f"OTT ID mismatch between taxon ({self.ott_id}) and Wikidata information ({wikidata.ott})"
+            wikidata.ott == self.open_tree_taxon_id
+        ), f"OTT ID mismatch between taxon ({self.open_tree_taxon_id}) and Wikidata information ({wikidata.ott})"
         self.wikidata = wikidata
 
     @staticmethod
@@ -64,7 +64,10 @@ class Taxon:
                 is_suppressed=data["is_suppressed"],
                 is_suppressed_from_synth=data["is_suppressed_from_synth"],
                 name=data["name"],
-                ott_id=int(data["ott_id"]),
+                # Note: data["ott_id"] is the OpenTree REST API JSON field name
+                # (external contract — must NOT be renamed). Only the Python
+                # attribute on our side is open_tree_taxon_id.
+                open_tree_taxon_id=int(data["ott_id"]),
                 rank=data["rank"],
                 source=data["source"],
                 synonyms=data.get("synonyms", []),
@@ -187,9 +190,9 @@ class Match:
         return self._taxonomical_rank("species")
 
     @property
-    def ott_id(self) -> int:
-        """Returns the OTT ID of the taxon."""
-        return self.taxon.ott_id
+    def open_tree_taxon_id(self) -> int:
+        """Returns the Open Tree Taxonomy (OTT) ID of the taxon."""
+        return self.taxon.open_tree_taxon_id
 
     def set_wikidata(self, wikidata: WikidataOTTQuery) -> None:
         """Sets the Wikidata information for the match."""
