@@ -131,7 +131,7 @@ def main():
             assert len(analysis.ott_matches) > 0, "Taxonomical enrichment should have added OTT matches."
             for match in analysis.ott_matches:
                 assert isinstance(match, Match), "OTT matches should be instances of Match class."
-                logger.info(f"OTT Match: {match.taxon.name} (OTT ID: {match.ott_id})")
+                logger.info(f"OTT Match: {match.taxon.name} (OTT ID: {match.open_tree_taxon_id})")
                 logger.info(
                     f"Lineage: Domain={match.domain}\n"
                     f"Kingdom={match.kingdom}\n"

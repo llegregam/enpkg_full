@@ -24,7 +24,7 @@ class NetworkEnhancer(Enhancer):
 
     def enhance(self, analysis: Analysis) -> nx.Graph:
         """Adds molecular graph to the analysis."""
-
+    
         similarities = calculate_scores(
             analysis.spectra,
             analysis.spectra,

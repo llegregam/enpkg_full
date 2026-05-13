@@ -22,7 +22,6 @@ from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig, SpectralMatchParams
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import Lotus
-from enpkg.monolith.utils.memlog import log_virtual_memory
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.database_manager import DatabaseManager
 from enpkg.monolith.loaders.lotus_store import LotusStore
@@ -76,7 +75,6 @@ class Ms2Enhancer(Enhancer):
             raise ValueError("Expected all spectra in spectral_db to have 'compound_name' metadata for short inchikey matching")
 
         self.logger.info("MS2 Enhancer initialized successfully")
-        log_virtual_memory(self.logger, "MS2 init done")
 
     def _ensure_lotus_objects(self) -> None:
         """Build the sorted Lotus list and link library spectra on first use.
@@ -97,9 +95,6 @@ class Ms2Enhancer(Enhancer):
             "Built %d Lotus objects in %.2f seconds",
             len(self.lotus_objects), time() - start,
         )
-        log_virtual_memory(
-            self.logger, f"MS2 lotus_objects built (N={len(self.lotus_objects)})"
-        )
 
         self.logger.info("Adding Lotus entries to spectral database")
         start = time()
@@ -107,7 +102,6 @@ class Ms2Enhancer(Enhancer):
         self.logger.debug(
             "Added Lotus entries to spectral database in %.2f seconds", time() - start
         )
-        log_virtual_memory(self.logger, "MS2 lotus linked")
 
     def name(self) -> str:
         """Returns the name of the enhancer."""
@@ -141,30 +135,48 @@ class Ms2Enhancer(Enhancer):
         self.logger.debug(f"Linked lotus to spectra in {time() - start:.2f} seconds")
 
     def enhance(self, spectrum_list: list[AnnotatedSpectrum], chunk_size: int = 1000) -> list[AnnotatedSpectrum]:
-        """Adds MS2 information to the analysis."""
+        """Add MS2 chemical annotations to each spectrum via two-stage matching.
 
-        log_virtual_memory(self.logger, "MS2 enhance start")
+        Stage 1 — ``precursor_filter`` (PrecursorMzMatch): cheap pre-filter run
+        in batch via ``calculate_scores``. For every (reference, query) pair it
+        only checks whether the precursor m/z agree within ``parent_mz_tol``;
+        no MS/MS comparison happens here.
+
+        Stage 2 — ``cosine_similarity`` (CosineGreedy or CosineHungarian): the
+        actual MS/MS cosine, computed via ``.pair()`` only on pairs that
+        survived stage 1. This is the dominant cost.
+
+        Spectra are processed in chunks of ``chunk_size`` references against
+        the full library so memory stays bounded.
+
+        Annotations passing both ``min_score`` and ``min_peaks`` are appended
+        in place to ``spectrum.ms2_annotations`` along with the matched
+        library spectrum's ``lotus_entries``.
+        """
+
         # First call in a batch triggers the expensive LotusStore fetch + library linking.
         self._ensure_lotus_objects()
 
         number_of_spectra = len(spectrum_list)
         self.logger.info(f"Running MS2 enrichment process on {number_of_spectra} spectra")
-        similarity_score = PrecursorMzMatch(
+        # Stage-1 filter: cheap precursor m/z agreement test (returns bool per pair).
+        precursor_filter = PrecursorMzMatch(
             tolerance=self.configuration.spectral_match_params.parent_mz_tol,
             tolerance_type="Dalton",
         )
+        # Stage-2 scorer: actual MS/MS cosine, only run on pairs that passed stage 1.
         match self.configuration.spectral_match_params.method:
             case "cosine_greedy":
-                similarity_function = CosineGreedy(
+                cosine_similarity = CosineGreedy(
                     tolerance=self.configuration.spectral_match_params.msms_mz_tol
                 )
             case "cosine_hungarian":
-                similarity_function = CosineHungarian(
+                cosine_similarity = CosineHungarian(
                     tolerance=self.configuration.spectral_match_params.msms_mz_tol
                     # TODO: Consider adding mz_power and intensity_power parameters
                 )
         self.logger.debug(
-            f"similarity_score: {similarity_score}\n{self.configuration.spectral_match_params.method}: {similarity_function}"
+            f"precursor_filter: {precursor_filter}\n{self.configuration.spectral_match_params.method}: {cosine_similarity}"
         )
 
         for min_range in trange(
@@ -179,28 +191,29 @@ class Ms2Enhancer(Enhancer):
                 min_range : min_range + chunk_size
             ]
 
-            # We start by matching the precursor m/z of the spectra in the analysis against the 
-        # precursor m/z of the spectra in the database with a specific parent_tol  (e.g., 0.01 Da).
-            cosine_similarities_with_database: matchms.Scores = calculate_scores(
+            # Stage 1: filter (ref, query) pairs by precursor m/z within parent_tol.
+            # The Scores object holds precursor matches, NOT cosine scores —
+            # the cosine is computed below in stage 2 on the survivors only.
+            precursor_matches: matchms.Scores = calculate_scores(
                 references=spectra_chunk,
                 queries=self.db_loader.spectral_db,
-                similarity_function=similarity_score,
+                similarity_function=precursor_filter,
             )
-            
-            # Reference indices are the indices of the spectra in the input data (i.e., the spectra in the analysis)
-            reference_indices: np.ndarray = cosine_similarities_with_database.scores[:, :][0]
 
-            # Query indices are the indices of the spectra in the database. 
-            query_indices: np.ndarray = cosine_similarities_with_database.scores[:, :][1]
-            
-            # Get the cosine similarity scores of all matches between reference and query spectra 
+            # Reference indices are the indices of the spectra in the input data (i.e., the spectra in the analysis)
+            reference_indices: np.ndarray = precursor_matches.scores[:, :][0]
+
+            # Query indices are the indices of the spectra in the database.
+            query_indices: np.ndarray = precursor_matches.scores[:, :][1]
+
+            # Stage 2: compute cosine on each precursor-matched pair.
             for ref_idx, query_idx in tzip(
                 reference_indices,
                 query_indices,
                 desc="Processing chunk similarities",
                 leave=False,
             ):
-                msms_score, n_matches = similarity_function.pair(
+                msms_score, n_matches = cosine_similarity.pair(
                     spectra_chunk[ref_idx], self.db_loader.spectral_db[query_idx]
                 )[()] # Numpy indexing to extract a "scalar" (here a tuple (score, n_matches)) value from a 0-dim array
                 if (
@@ -240,7 +253,6 @@ class Ms2Enhancer(Enhancer):
         #                 f"n_lotus_entries={len(annotation.lotus_entries) if annotation.lotus_entries else 0}"
         #             )
 
-        log_virtual_memory(self.logger, "MS2 enhance end")
         # TODO: Decide if analysis should be modified in place or if we should return a new enriched analysis object
         return spectrum_list
 

@@ -1,5 +1,6 @@
 """Loader utilities for creating Analysis objects from files."""
 
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +10,8 @@ from matchms.importing import load_from_mgf, load_from_mzml, load_from_mzxml
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.sample_metadata import SampleMetadata
 from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisLoader:
@@ -71,25 +74,88 @@ class AnalysisLoader:
         if intensity_col is None:
             raise ValueError("No column containing 'Peak height' or 'Peak area' found in quantification table")
         
-        # We need to check if the spectral identifier is the same as the one in the quantification table
+        # Build a single {row_id: (mz, rt, intensity)} dict so each spectrum is an
+        # O(1) lookup instead of three quant_table.filter() materialisations
+        # (3 × N polars frame builds was the dominant cost on large quant tables).
+        # Handle null RT values (from ignore_errors=True) by replacing with NaN.
+        quant_lookup: dict[int, tuple[float, float, float]] = {
+            int(row[0]): (float(row[1]), float(row[2]) if row[2] is not None else float("nan"), float(row[3]))
+            for row in quant_table.select(
+                ["row ID", "row m/z", "row retention time", intensity_col]
+            ).iter_rows()
+        }
+
+        def _build_annotated(spectrum) -> AnnotatedSpectrum:
+            feature_id = int(spectrum.get("feature_id"))
+            try:
+                mz, rt, intensity = quant_lookup[feature_id]
+            except KeyError:
+                raise ValueError(
+                    f"feature_id {feature_id} from spectra file not found in "
+                    f"quantification table 'row ID' column"
+                ) from None
+            return AnnotatedSpectrum(
+                spectrum=spectrum,
+                mass_over_charge=mz,
+                retention_time=rt,
+                intensity=intensity,
+            )
+
         return Analysis(
             run_name=run_name,
-            spectra=tuple(AnnotatedSpectrum(
-                spectrum=spectrum,
-                mass_over_charge=quant_table.filter(pl.col("row ID") == int(spectrum.get("feature_id")))["row m/z"][0],
-                retention_time=quant_table.filter(pl.col("row ID") == int(spectrum.get("feature_id")))["row retention time"][0],
-                intensity=quant_table.filter(pl.col("row ID") == int(spectrum.get("feature_id")))[intensity_col][0],)
-                for spectrum in spectra
-            ),  
+            spectra=tuple(_build_annotated(s) for s in spectra),
             metadata=metadata,
             ionization_mode=ionization_mode,
         )
 
+    @staticmethod
+    def _sniff_separator(path: Path) -> str:
+        """Detect the column separator from the first non-empty line of a CSV/TSV file.
+
+        Picks whichever of comma / semicolon / tab appears most often in the
+        header row. Raises if none are present, so a malformed file fails loudly
+        instead of degrading to a single-column read where every "column" name is
+        the entire header glued together.
+        """
+        with path.open("r", encoding="utf-8") as f:
+            first_line = ""
+            for line in f:
+                if line.strip():
+                    first_line = line
+                    break
+        if not first_line:
+            raise ValueError(f"Quantification table {path} is empty")
+        counts = {sep: first_line.count(sep) for sep in (",", ";", "\t")}
+        sep, count = max(counts.items(), key=lambda kv: kv[1])
+        if count == 0:
+            raise ValueError(
+                f"Could not detect a column separator in {path}: header line "
+                f"contains no commas, semicolons, or tabs."
+            )
+        return sep
+
     @classmethod
     def _load_quantification_table(cls, path: Path) -> pl.DataFrame:
-        """Load quantification table from file."""
+        """Load quantification table from file with auto-detected separator."""
+        separator = cls._sniff_separator(path)
+        try:
+            quant_table = pl.read_csv(path, separator=separator)
+        except pl.exceptions.ComputeError as exc:
+            logger.warning(
+                "Quantification table parse error (likely corrupted values): %s. "
+                "Re-reading with ignore_errors=True; invalid values will become null.",
+                exc,
+            )
+            quant_table = pl.read_csv(path, separator=separator, ignore_errors=True)
 
-        quant_table = pl.read_csv(path, try_parse_dates=True)
+        required = ("row ID", "row m/z", "row retention time")
+        missing = [c for c in required if c not in quant_table.columns]
+        if missing:
+            raise ValueError(
+                f"Quantification table {path} is missing required column(s) "
+                f"{missing}. Detected separator: {separator!r}. "
+                f"Columns found: {quant_table.columns}"
+            )
         return quant_table
     
     @classmethod
@@ -114,10 +180,9 @@ class AnalysisLoader:
         run_name: str
     ) -> SampleMetadata:
         """Load and filter metadata for the given run."""
-        metadata_df = pl.read_csv(path, try_parse_dates=True, separator="\t" if path.suffix == ".txt" or path.suffix == ".tsv" else ",")
+        metadata_df = pl.read_csv(path, try_parse_dates=True, separator=cls._sniff_separator(path))
         column_name = f"sample_filename_{ionization_mode}"
-        print(f"Metadata df: {metadata_df}")
-        
+
         for raw_ext in cls.RAW_EXTENSIONS:
             filtered = metadata_df.filter(pl.col(column_name) == (run_name + raw_ext))
             if not filtered.is_empty():

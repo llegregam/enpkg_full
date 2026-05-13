@@ -38,7 +38,7 @@ class TestTaxaEnhancer:
         # Verify the structure of the returned objects
         first_match = matches[0]
         assert isinstance(first_match, Match), "Elements of returned list should be Match instances."
-        assert hasattr(first_match, "ott_id"), "Match object should have 'ott_id'."
+        assert hasattr(first_match, "open_tree_taxon_id"), "Match object should have 'open_tree_taxon_id'."
         
         # Ensure lineage and wikidata attributes exist (even if None, depending on API response)
         assert first_match.lineage is not None, "Match object should have lineage set."

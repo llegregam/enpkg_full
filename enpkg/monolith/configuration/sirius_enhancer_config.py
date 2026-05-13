@@ -17,7 +17,8 @@ class SiriusParams(BaseModel):
         description="Additional command-line arguments to pass to Sirius."
     )
     path_to_input_spectra: str = Field(
-        description="Path to the input spectra file."
+        default="",
+        description="Path to the input spectra file. Provided by the sidebar in single mode; auto-discovered per experiment in batch mode."
     )
     recompute: bool = Field(
         default=False,

@@ -23,7 +23,7 @@ from enpkg.monolith.gui.batch_runner import (
 )
 from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS, MS_SHARED_KEY
 from enpkg.monolith.gui.form_builder import render_model
-from enpkg.monolith.gui.runner import run_pipeline
+from enpkg.monolith.gui.runner import AnalysisSummary, run_pipeline
 
 SHARED_FIELD = "general_params"
 
@@ -38,8 +38,17 @@ DATABASE_DIR: Path = WORKSPACE_DIR / "databases"
 DEFAULT_CONFIG_PATH: Path = WORKSPACE_DIR / "gui_config.yaml"
 
 
-# Remove the noisy watchdog inotify_buffer logs
-logging.getLogger("watchdog.observers.inotify_buffer").setLevel(logging.WARNING)   
+# Root logging config: pipe format matching make_loggers() so console output
+# is visually consistent across bootstrap and per-experiment stages. INFO by
+# default; was DEBUG previously because database_manager called basicConfig at
+# import time, which has now been removed.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+)
+logging.getLogger("watchdog.observers.inotify_buffer").setLevel(logging.WARNING)
+logging.getLogger("numba").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 def _ensure_workspace() -> None:
     """
@@ -95,8 +104,6 @@ def _init_state() -> None:
         st.session_state.batch_dir = str(DEFAULT_BATCH_DIR)
     if "batch_mode" not in st.session_state:
         st.session_state.batch_mode = False
-    if "_prev_sirius_spectra" not in st.session_state:
-        st.session_state["_prev_sirius_spectra"] = None
 
 
 def _load_config_into_state(path: Path) -> None:
@@ -206,10 +213,10 @@ def _render_single_sidebar() -> dict:
             "quant": quant if quant_files else None,
         }
     
-    if "sirius" in st.session_state.selected_blocks:
+    if st.session_state.selected_blocks.get("sirius"):
         sirius_files = [f for f in spectra_files if "_sirius" in f.lower() and f.lower().endswith(".mgf")]
         sirius_spectra = st.sidebar.selectbox("Spectra for Sirius", sirius_files or ["(none found)"], key="sirius_spectra")
-        selectboxes_states["sirius_spectra"] = sirius_spectra
+        selectboxes_states["sirius_spectra"] = sirius_spectra if sirius_files else None
     
     return selectboxes_states
 
@@ -307,11 +314,14 @@ def _render_forms(selected: list[str]) -> dict[str, dict]:
                     st.info(f"{block.label} has no configurable parameters.")
                     continue
                 current = st.session_state.form_state.get(tid) or {}
+                exclude = {SHARED_FIELD}
+                if tid == "sirius":
+                    exclude.add("sirius_params.path_to_input_spectra")
                 values = render_model(
                     block.config_cls,
                     current,
                     key_prefix=tid,
-                    exclude_fields={SHARED_FIELD},
+                    exclude_fields=exclude,
                 )
                 st.session_state.form_state[tid] = values
                 raw[tid] = values
@@ -380,7 +390,7 @@ def _render_execution(result) -> None:
     if st.session_state.log_buffer:
         with st.expander("Run logs", expanded=False):
             st.code("\n".join(st.session_state.log_buffer), language="text")
-    _render_analysis_metrics(result.analysis)
+    _render_analysis_metrics(result)
 
 
 def _render_batch_execution(batch: BatchResult) -> None:
@@ -425,17 +435,29 @@ def _render_batch_execution(batch: BatchResult) -> None:
                 st.caption(f"Runtime log: `{r.log_file}`")
             if r.summary_file:
                 st.caption(f"Summary log: `{r.summary_file}`")
-            _render_analysis_metrics(r.analysis)
+            _render_analysis_metrics(r)
 
 
-def _render_analysis_metrics(analysis) -> None:
-    if analysis is None:
+def _render_analysis_metrics(result) -> None:
+    """Show spectra / OTT / network counts for a finished experiment.
+
+    Prefers the live ``result.analysis`` when present; falls back to
+    ``result.summary`` (populated by the batch runner after the Analysis
+    has been pickled and freed).
+    """
+    if result is None:
         return
+    analysis = getattr(result, "analysis", None)
+    if analysis is not None:
+        summary = AnalysisSummary.from_analysis(analysis)
+    else:
+        summary = getattr(result, "summary", None)
+        if summary is None:
+            return
     cols = st.columns(3)
-    cols[0].metric("Spectra", len(analysis.spectra))
-    cols[1].metric("OTT matches", len(getattr(analysis, "ott_matches", []) or []))
-    network = getattr(analysis, "molecular_network", None)
-    cols[2].metric("Network nodes", len(network.nodes) if network is not None else 0)
+    cols[0].metric("Spectra", summary.n_spectra)
+    cols[1].metric("OTT matches", summary.n_ott_matches)
+    cols[2].metric("Network nodes", summary.n_network_nodes)
 
 
 def main() -> None:
@@ -446,18 +468,6 @@ def main() -> None:
 
     selected, sidebar = _render_sidebar()
     batch_mode = st.session_state.batch_mode
-
-    # When the sidebar spectra selection changes, pre-populate the Sirius path field
-    # (doesn't feel great this, maybe will change later). Only applies in single-run mode;
-    # batch mode rewrites Sirius paths per-experiment inside the runner.
-    # if not batch_mode:
-    #     _spectra = sidebar.get("spectra")
-    #     _input_dir = sidebar.get("input_dir")
-        # if "sirius" in selected and _spectra and _input_dir is not None:
-        #     spectra_full = str(_input_dir / _spectra)
-        #     if spectra_full != st.session_state.get("_prev_sirius_spectra"):
-        #         st.session_state["_prev_sirius_spectra"] = spectra_full
-        #         st.session_state["sirius.sirius_params.path_to_input_spectra"] = spectra_full
 
     st.title("ENPKG pipeline configuration")
     shared_params = _render_general_params()
@@ -489,6 +499,8 @@ def main() -> None:
             st.error(
                 f"Place spectra, metadata, and quant files in {sidebar['input_dir']} and pick them in the sidebar."
             )
+        elif "sirius" in selected and not sidebar.get("sirius_spectra"):
+            st.error("Sirius is selected but no input spectra file was picked in the sidebar.")
         else:
             _run_single_mode(selected, configs or {}, shared_params, sidebar)
             run_just_finished = True
@@ -508,6 +520,10 @@ def main() -> None:
 def _run_single_mode(selected, configs, shared_params, sidebar) -> None:
     log_q: "queue.Queue[str]" = queue.Queue()
     input_dir = sidebar["input_dir"]
+    if "sirius" in selected:
+        configs["sirius"].sirius_params.path_to_input_spectra = str(
+            input_dir / sidebar["sirius_spectra"]
+        )
     with st.status("Running pipeline…", expanded=True) as status:
         result = run_pipeline(
             selected_ids=selected,
@@ -551,6 +567,7 @@ def _run_batch_mode(selected, configs, shared_params, sidebar) -> None:
             f"No experiment subfolders with spectra + quant found under {sidebar.get('batch_dir')}."
         )
         return
+    # Create queue to store the logs
     log_q: "queue.Queue[str]" = queue.Queue()
     with st.status(f"Running batch ({len(experiments)} experiments)…", expanded=True) as status:
         batch = run_batch(

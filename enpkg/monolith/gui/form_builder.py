@@ -53,11 +53,17 @@ def render_model(
     for field_name, field_info in model_cls.model_fields.items():
         if field_name in exclude_fields:
             continue
+        nested_exclude = {
+            e[len(field_name) + 1:]
+            for e in exclude_fields
+            if e.startswith(f"{field_name}.")
+        }
         out[field_name] = _render_field(
             field_name,
             field_info,
             current.get(field_name),
             f"{key_prefix}.{field_name}",
+            nested_exclude=nested_exclude or None,
         )
     return out
 
@@ -112,6 +118,7 @@ def _render_field(
     field_info: FieldInfo,
     current_value: Any,
     key: str,
+    nested_exclude: set[str] | None = None,
 ) -> Any:
     """
     Render a Streamlit widget for a single Pydantic field.
@@ -152,7 +159,7 @@ def _render_field(
             nested_current = current_value if isinstance(current_value, dict) else (
                 default if isinstance(default, dict) else {}
             )
-            return render_model(annotation, nested_current, key)
+            return render_model(annotation, nested_current, key, exclude_fields=nested_exclude)
 
     origin = get_origin(annotation)
     if origin in (list, tuple):

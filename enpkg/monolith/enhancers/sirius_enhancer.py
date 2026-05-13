@@ -3,8 +3,10 @@
 import subprocess
 import os
 from logging import Logger
+from pathlib import Path
 from tabnanny import check
 from typing import Optional
+from datetime import datetime
 
 # from PySirius import AccountCredentials
 from dotenv import load_dotenv
@@ -116,44 +118,26 @@ class SiriusEnhancer(Enhancer):
             raise RuntimeError("An unexpected error occured while trying to log in to Sirius. Traceback: " + str(e))
         else:
             self._logger.info("Sirius login successful.")
-
-    # def login(self):
-    #     """
-    #      Logs into Sirius using the provided login information.
-    #     """
-    #     self._logger.info("Logging into Sirius.")
-    #     self._logger.info(f"Using Sirius password: {'*' * len(self.config.sirius_params.sirius_password_env) if self.config.sirius_params.sirius_password_env else None}")
-    #     check = self._run_sirius(
-    #         [
-    #             self.config.sirius_params.path_to_sirius,
-    #             "login",
-    #             "--user", os.environ.get("SIRIUS_USER", self.config.sirius_params.sirius_user_env),
-    #             "--password-env",
-    #             "SIRIUS_PASSWORD",
-    #         ]
-    #     )
-
-    #     if check.returncode != 0:
-    #         raise RuntimeError("Sirius failed to login.")
-    #     self._logger.info("Sirius login successful.")
         
     def name(self) -> str:
         """Returns the name of the enhancer."""
         return "Sirius Enhancer"
     
     def enhance(self, analysis: Analysis) -> Analysis:
-
-        
         self.login()
         self._logger.info("Running Sirius enhancement.")
-        # TODO: need better identifiers for the samples. 
+
+        # TODO: need better identifiers for the samples.
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
         if self.config.general_params.polarity == "pos":
-            output_path = os.path.join(self.config.sirius_params.output_directory, analysis.metadata.sample_filename_pos.split(".")[0])
+            output_path = str(Path(self.config.sirius_params.output_directory).resolve() / stamp / analysis.metadata.sample_filename_pos.split(".")[0])
         elif self.config.general_params.polarity == "neg":
-            output_path = os.path.join(self.config.sirius_params.output_directory, analysis.metadata.sample_filename_neg.split(".")[0])
+            output_path = str(Path(self.config.sirius_params.output_directory).resolve() / stamp / analysis.metadata.sample_filename_neg.split(".")[0])
         else:
             raise ValueError(f"Invalid polarity: {self.config.general_params.polarity}. Must be 'pos' or 'neg'.")
         
+        Path(output_path).mkdir(parents=True, exist_ok=True)
         db_list = (
             "public_spectra_2506,METACYC,BloodExposome,CHEBI,COCONUT,FooDB,"
             "GNPS,HMDB,HSDB,KEGG,KNAPSACK,LOTUS,LIPIDMAPS,MACONDA,MESH,MiMeDB,NORMAN,PLANTCYC,"
@@ -162,9 +146,10 @@ class SiriusEnhancer(Enhancer):
         )
         identity_search_precursor_deviation = 20.0  # in ppm
         ms2_mass_deviation = 5.0  # in ppm
+        n_candidates = 20
 
         sirius_args = [
-            "--input", self.config.sirius_params.path_to_input_spectra,
+            "--input", str(Path(self.config.sirius_params.path_to_input_spectra).resolve()),
             "-o", output_path,
             # Configuration options must be passed via the `config` subcommand;
             # they are not top-level CLI options.
@@ -173,6 +158,7 @@ class SiriusEnhancer(Enhancer):
             f"--MS2MassDeviation.allowedMassDeviation={ms2_mass_deviation}ppm",
             f"--SpectralSearchDB={db_list}",
             "--AdductSettings.fallback=[[M+H]+,[M+Na]+,[M+K]+]",
+            f"--NumberOfCandidates={n_candidates}"
             "--FormulaSettings.enforced=H,C,N,O,P",
             f"--IdentitySearchSettings.precursorDeviation={identity_search_precursor_deviation}ppm",
             "--FormulaSearchSettings.performBottomUpAboveMz=0",

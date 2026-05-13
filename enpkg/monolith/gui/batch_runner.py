@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 import pickle
 import queue
-import tracemalloc
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +33,7 @@ from typing import Any, Optional
 from enpkg.monolith.dev_utils import log_memory_snapshot
 from enpkg.monolith.gui.runner import (
     LOG_DIR,
+    AnalysisSummary,
     RunResult,
     _run_analysis,
     build_shared_steps,
@@ -40,6 +41,50 @@ from enpkg.monolith.gui.runner import (
 )
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.pipeline.sirius_enhancement_step import SiriusEnhancementStep
+
+# Memory profiling is opt-in. A single log_memory_snapshot() costs roughly
+# 1-3 minutes on the prod heap (gc.collect + gc.get_objects iteration +
+# tracemalloc.take_snapshot over a multi-GB allocation table), so START+END
+# snapshots per experiment used to add ~3 min/exp to batch wall-time. They
+# stay off by default; set ENPKG_MEMORY_PROFILE=1 to re-enable without
+# editing code.
+#
+# How to enable (set the env var BEFORE launching the GUI / runner):
+#
+#   PowerShell (current session):
+#       $env:ENPKG_MEMORY_PROFILE = "1"
+#       streamlit run enpkg/monolith/gui/app.py
+#
+#   PowerShell (persist for current user, takes effect in NEW shells):
+#       [Environment]::SetEnvironmentVariable("ENPKG_MEMORY_PROFILE", "1", "User")
+#
+#   cmd.exe (current session):
+#       set ENPKG_MEMORY_PROFILE=1
+#
+#   bash / zsh:
+#       export ENPKG_MEMORY_PROFILE=1
+#
+# How to disable (must happen BEFORE the next launch of the process; the
+# value is read once at module import):
+#
+#   PowerShell (current session):
+#       Remove-Item Env:ENPKG_MEMORY_PROFILE
+#   PowerShell (clear the persisted user-level value):
+#       [Environment]::SetEnvironmentVariable("ENPKG_MEMORY_PROFILE", $null, "User")
+#   cmd.exe:
+#       set ENPKG_MEMORY_PROFILE=
+#   bash / zsh:
+#       unset ENPKG_MEMORY_PROFILE
+_PROFILE_MEMORY = os.environ.get("ENPKG_MEMORY_PROFILE") == "1"
+if _PROFILE_MEMORY:
+    import tracemalloc
+    tracemalloc.start()
+
+
+def _maybe_memory_snapshot(logger: logging.Logger, label: str) -> None:
+    """Log a memory snapshot iff ENPKG_MEMORY_PROFILE=1; no-op otherwise."""
+    if _PROFILE_MEMORY:
+        log_memory_snapshot(logger, label)
 
 # File-extension conventions — kept aligned with the single-run sidebar scan
 # in ``app.py`` so users get the same behaviour between single and batch modes.
@@ -172,7 +217,7 @@ def _sirius_config_for(run_name: str, sirius_spectra_path: Path, shared_cfg: Any
     cfg = copy.deepcopy(shared_cfg)
     cfg.sirius_params.path_to_input_spectra = str(sirius_spectra_path)
     cfg.sirius_params.output_directory = str(
-        Path(shared_cfg.sirius_params.output_directory) / run_name
+        Path(shared_cfg.sirius_params.output_directory).resolve() / run_name
     )
     return cfg
 
@@ -236,8 +281,39 @@ def run_batch(
 
     sirius_shared_cfg = configs.get("sirius") if "sirius" in selected_ids else None
 
-    # Start tracing memory allocations for the batch
-    tracemalloc.start()
+    # --- Validate Sirius executable if selected ---------------------------
+    if sirius_shared_cfg is not None:
+        sirius_invalid_reason: Optional[str] = None
+        sirius_path_raw = (
+            (sirius_shared_cfg.sirius_params.path_to_sirius or "").strip()
+            or os.environ.get("PATH_TO_SIRIUS", "")
+        )
+        if not sirius_path_raw:
+            sirius_invalid_reason = (
+                "No Sirius executable path configured. Set it in the GUI or via PATH_TO_SIRIUS environment variable."
+            )
+        else:
+            try:
+                sirius_path = Path(sirius_path_raw).expanduser().resolve()
+                if not sirius_path.exists():
+                    sirius_invalid_reason = (
+                        f"Sirius executable not found at {sirius_path}. "
+                        f"Please set PATH_TO_SIRIUS environment variable or configure it in SiriusEnhancerConfig."
+                    )
+                elif not os.access(sirius_path, os.X_OK):
+                    sirius_invalid_reason = (
+                        f"Sirius executable at {sirius_path} exists but is not executable. "
+                        f"Please check file permissions."
+                    )
+                else:
+                    bootstrap_logger.info("Sirius executable validated: %s", sirius_path)
+            except Exception as exc:
+                sirius_invalid_reason = f"Sirius path resolution failed: {exc}"
+        if sirius_invalid_reason is not None:
+            bootstrap_logger.error(sirius_invalid_reason)
+            selected_ids.remove("sirius")
+            sirius_shared_cfg = None
+            bootstrap_logger.info("Sirius step removed from batch; continuing with remaining steps.")
 
     # --- Iterate experiments ---------------------------------------------
     for exp in experiments:
@@ -253,7 +329,7 @@ def run_batch(
         batch.results.append(result)
 
         logger.info("=== [%s] Starting ===", exp.run_name)
-        log_memory_snapshot(logger, f"{exp.run_name}_START")
+        _maybe_memory_snapshot(logger, f"{exp.run_name}_START")
         try:
             analysis = AnalysisLoader.from_files(
                 path_to_spectra=str(exp.spectra_path),
@@ -270,8 +346,7 @@ def run_batch(
         steps = dict(shared_steps)
         if sirius_shared_cfg is not None:
             # Sirius requires its own dedicated input file (`<stem>_sirius<suffix>`)
-            # in the experiment subfolder; surface a clear error when it's
-            # missing rather than silently feeding it the regular spectra file.
+            # in the experiment subfolder; surface a clear error when it's missing
             if exp.sirius_spectra_path is None:
                 msg = (
                     f"Sirius block is selected but no '_sirius' spectra file was found "
@@ -286,8 +361,7 @@ def run_batch(
                     exp.run_name, exp.sirius_spectra_path, sirius_shared_cfg,
                 )
                 steps["sirius"] = SiriusEnhancementStep(config=sirius_cfg, logger=logger)
-                if not Path(sirius_cfg.sirius_params.output_directory).is_dir():
-                    Path(sirius_cfg.sirius_params.output_directory).mkdir(parents=True, exist_ok=True)
+                Path(sirius_cfg.sirius_params.output_directory).mkdir(parents=True, exist_ok=True)
                 logger.info("[%s] Built Sirius step with input %s and output dir %s",
                     exp.run_name,
                     sirius_cfg.sirius_params.path_to_input_spectra,
@@ -304,16 +378,24 @@ def run_batch(
         # later for inspection / downstream tooling without re-running the
         # whole pipeline. Best-effort: a pickle failure is logged but does not
         # mark the experiment as failed.
+        #
+        # Once the pickle is on disk, drop the in-memory Analysis so the
+        # next experiment doesn't carry forward a multi-GB tree on
+        # batch.results[i-1] (the GUI's batch panel falls back to
+        # result.summary for display). On pickle failure we keep
+        # result.analysis intact so the user can still inspect it.
         if result.analysis is not None:
+            result.summary = AnalysisSummary.from_analysis(result.analysis)
             analysis_pkl = exp_dir / "analysis.pkl"
             try:
                 with open(analysis_pkl, "wb") as f:
                     pickle.dump(result.analysis, f, protocol=pickle.HIGHEST_PROTOCOL)
                 logger.info("[%s] Wrote analysis pickle: %s", exp.run_name, analysis_pkl)
+                result.analysis = None
             except Exception:
                 logger.exception("[%s] Failed to write analysis pickle to %s", exp.run_name, analysis_pkl)
 
-        log_memory_snapshot(logger, f"{exp.run_name}_END")
+        _maybe_memory_snapshot(logger, f"{exp.run_name}_END")
         logger.info("=== [%s] Finished ===", exp.run_name)
 
     _write_batch_summary(batch)
