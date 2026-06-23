@@ -16,6 +16,14 @@ from enpkg.monolith.configuration.sirius_enhancer_config import SiriusEnhancerCo
 from enpkg.monolith.data.analysis import Analysis
 
 
+class SiriusResults:
+    """Class to represent the results of a Sirius run."""
+
+    @classmethod
+    def from_path(cls, path: str) -> "SiriusResults":
+        """Parses the Sirius results from the given path and returns a SiriusResults object."""
+        pass
+
 class SiriusLoginInfo:
     """Class to handle the initialization of the Sirius login information."""
 
@@ -100,6 +108,10 @@ class SiriusEnhancer(Enhancer):
             env=os.environ.copy(),
             shell=False,
         )
+    
+    def _get_results(self, output_path: str) -> SiriusResults:
+        """Parses the results from the Sirius output directory and returns them as a SiriusResults object."""
+        pass
 
     def login(self) -> None:
 
@@ -131,22 +143,28 @@ class SiriusEnhancer(Enhancer):
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         if self.config.general_params.polarity == "pos":
-            output_path = str(Path(self.config.sirius_params.output_directory).resolve() / stamp / analysis.metadata.sample_filename_pos.split(".")[0])
+            sample_name = analysis.metadata.sample_filename_pos.split(".")[0]
         elif self.config.general_params.polarity == "neg":
-            output_path = str(Path(self.config.sirius_params.output_directory).resolve() / stamp / analysis.metadata.sample_filename_neg.split(".")[0])
+            sample_name = analysis.metadata.sample_filename_neg.split(".")[0]
         else:
             raise ValueError(f"Invalid polarity: {self.config.general_params.polarity}. Must be 'pos' or 'neg'.")
-        
-        Path(output_path).mkdir(parents=True, exist_ok=True)
+
+        # SIRIUS 6 stores each project as a single `.sirius` file (a Nitrite database),
+        # not a directory like SIRIUS 5 did. Create only the parent folder and point
+        # `-o` at the file
+        project_dir = Path(self.config.sirius_params.output_directory).resolve() / stamp
+        project_dir.mkdir(parents=True, exist_ok=True)
+        output_path = str(project_dir / f"{sample_name}.sirius")
         db_list = (
             "public_spectra_2506,METACYC,BloodExposome,CHEBI,COCONUT,FooDB,"
             "GNPS,HMDB,HSDB,KEGG,KNAPSACK,LOTUS,LIPIDMAPS,MACONDA,MESH,MiMeDB,NORMAN,PLANTCYC,"
             "PUBCHEMANNOTATIONBIO,PUBCHEMANNOTATIONDRUG,PUBCHEMANNOTATIONFOOD,"
             "PUBCHEMANNOTATIONSAFETYANDTOXIC,SUPERNATURAL,TeroMol,YMDB"
         )
-        identity_search_precursor_deviation = 20.0  # in ppm
-        ms2_mass_deviation = 5.0  # in ppm
-        n_candidates = 20
+        identity_search_precursor_deviation = self.config.sirius_params.identity_search_precursor_deviation  # in ppm
+        ms2_mass_deviation = self.config.sirius_params.ms2_mass_deviation  # in ppm
+        n_candidates = top_k_sirius = self.config.sirius_params.top_k_sirius if hasattr(self.config.sirius_params, "top_k_sirius") and self.config.sirius_params.top_k_sirius is not None else -1
+        
 
         sirius_args = [
             "--input", str(Path(self.config.sirius_params.path_to_input_spectra).resolve()),
@@ -158,7 +176,7 @@ class SiriusEnhancer(Enhancer):
             f"--MS2MassDeviation.allowedMassDeviation={ms2_mass_deviation}ppm",
             f"--SpectralSearchDB={db_list}",
             "--AdductSettings.fallback=[[M+H]+,[M+Na]+,[M+K]+]",
-            f"--NumberOfCandidates={n_candidates}"
+            f"--NumberOfCandidates={n_candidates}",
             "--FormulaSettings.enforced=H,C,N,O,P",
             f"--IdentitySearchSettings.precursorDeviation={identity_search_precursor_deviation}ppm",
             "--FormulaSearchSettings.performBottomUpAboveMz=0",
@@ -173,16 +191,18 @@ class SiriusEnhancer(Enhancer):
             "classes",
             "structures",
             "write-summaries",
-            "--output", self.config.sirius_params.output_directory + "/summaries/"
+            "--output", self.config.sirius_params.output_directory + "/summaries/",
+            f"--top-k-summary={top_k_sirius}"
         ]
 
         if self.config.sirius_params.recompute:
-            sirius_args.append("--recompute")
+            sirius_args.insert(4, "--recompute")
         # if hasattr(self.config.sirius_params, "zip_output") and self.config.sirius_params.zip_output:
         #     sirius_args.append("--zip-output")
         
             
         self._run_sirius(sirius_args)
+        results = self._get_results(output_path)
         return analysis
     
 if __name__ == "__main__":
