@@ -3,7 +3,6 @@
 from typing import Optional, Self, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from matchms import Spectrum
 import networkx as nx
 
 from enpkg.monolith.exceptions import EnrichmentError
