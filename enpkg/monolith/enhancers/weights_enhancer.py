@@ -93,15 +93,15 @@ class WeightsEnhancer(Enhancer):
                 taxonomical_similarities, spectrum.ms1_annotations
             ):
                 pathway_features[i] += (
-                    taxonomical_similarity * adduct.get_hammer_pathway_scores()
+                    taxonomical_similarity * adduct.get_pathway_scores()
                 )
 
                 superclass_features[i] += (
-                    taxonomical_similarity * adduct.get_hammer_superclass_scores()
+                    taxonomical_similarity * adduct.get_superclass_scores()
                 )
 
                 class_features[i] += (
-                    taxonomical_similarity * adduct.get_hammer_class_scores()
+                    taxonomical_similarity * adduct.get_class_scores()
                 )
         return pathway_features, superclass_features, class_features
     
@@ -132,9 +132,9 @@ class WeightsEnhancer(Enhancer):
 
             chemical_similarities: np.ndarray = np.fromiter(
                 (
-                    annotation.scores["cosine_similarity"].get("value")
+                    annotation.score
                     for annotation in spectrum.ms2_annotations
-                    if annotation.has_lotus_entries()
+                    if annotation.has_organisms()
                 ),
                 dtype=np.float32,
             )
@@ -144,7 +144,7 @@ class WeightsEnhancer(Enhancer):
                     (
                         annotation.maximal_normalized_taxonomical_similarity(best_ott_match)
                         for annotation in spectrum.ms2_annotations
-                        if annotation.has_lotus_entries()
+                        if annotation.has_organisms()
                     ),
                     dtype=np.float32,
                 )
@@ -152,13 +152,13 @@ class WeightsEnhancer(Enhancer):
                 taxonomical_similarities: np.ndarray = np.ones(
                     chemical_similarities.size, dtype=np.float32
                 )
-            
+
             combined_similarities: np.ndarray = (chemical_similarities * taxonomical_similarities)
             total_combined_similarities = np.sum(combined_similarities)
             self.logger.debug(
-                f"Spectrum {i}: chemical similarities = {chemical_similarities},\n" /
-                f"Taxonomical similarities = {taxonomical_similarities},\n" /
-                f"Combined similarities = {combined_similarities},\n" /
+                f"Spectrum {i}: chemical similarities = {chemical_similarities},\n"
+                f"Taxonomical similarities = {taxonomical_similarities},\n"
+                f"Combined similarities = {combined_similarities},\n"
                 f"Total combined similarities = {total_combined_similarities}"
             )
 
@@ -169,21 +169,23 @@ class WeightsEnhancer(Enhancer):
             for ms2_annotation, combined_similarity in zip(
                 (
                     annotation for annotation in spectrum.ms2_annotations
-                    if annotation.has_lotus_entries()
+                    if annotation.has_organisms()
                 ),
                 combined_similarities,
             ):
                 pathway_features[i] += (
-                    combined_similarity * ms2_annotation.get_hammer_pathway_scores()
+                    combined_similarity * ms2_annotation.get_pathway_scores()
                 )
 
                 superclass_features[i] += (
-                    combined_similarity * ms2_annotation.get_hammer_superclass_scores()
+                    combined_similarity * ms2_annotation.get_superclass_scores()
                 )
 
                 class_features[i] += (
-                    combined_similarity * ms2_annotation.get_hammer_class_scores()
+                    combined_similarity * ms2_annotation.get_class_scores()
                 )
+
+        return pathway_features, superclass_features, class_features
     
     def enhance(self, analysis: Analysis) -> Analysis:
         """Adds taxonomical and chemical weights to the annotations and reranks them."""
@@ -236,5 +238,48 @@ class WeightsEnhancer(Enhancer):
             spectrum.ms1_superclass_scores = propagated_superclass[i]
             spectrum.ms1_class_scores = propagated_class[i]
 
-        # TODO: Think about modifying analysis in place vs returning a new one. 
+        # MS2 (ISDB) reweighting: same taxonomy x chemical -> NPC features -> LPA
+        # flow as MS1, ported from the old ISDBEnricher.enrich() tail.
+        ms2_pathway_features, ms2_superclass_features, ms2_class_features = (
+            self.compute_ms2_classifications(analysis)
+        )
+
+        ms2_loading_bar = tqdm(
+            desc="Computing MS2 LPA scores",
+            dynamic_ncols=True,
+            leave=False,
+            total=3,
+        )
+
+        ms2_propagated_pathway = label_propagation_algorithm(
+            graph=analysis.molecular_network,
+            node_names=analysis.feature_ids,
+            features=ms2_pathway_features,
+            normalize=False,
+        )
+        ms2_loading_bar.update(1)
+
+        ms2_propagated_superclass = label_propagation_algorithm(
+            graph=analysis.molecular_network,
+            node_names=analysis.feature_ids,
+            features=ms2_superclass_features,
+            normalize=False,
+        )
+        ms2_loading_bar.update(1)
+
+        ms2_propagated_class = label_propagation_algorithm(
+            graph=analysis.molecular_network,
+            node_names=analysis.feature_ids,
+            features=ms2_class_features,
+            normalize=False,
+        )
+        ms2_loading_bar.update(1)
+        ms2_loading_bar.close()
+
+        for i, spectrum in enumerate(analysis.spectra):
+            spectrum.ms2_pathway_scores = ms2_propagated_pathway[i]
+            spectrum.ms2_superclass_scores = ms2_propagated_superclass[i]
+            spectrum.ms2_class_scores = ms2_propagated_class[i]
+
+        # TODO: Think about modifying analysis in place vs returning a new one.
         return analysis
