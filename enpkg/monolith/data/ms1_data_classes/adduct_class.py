@@ -125,14 +125,14 @@ class ChemicalAdduct(BaseModel):
             for lotus in self.lotus
         )
 
-    def get_hammer_pathway_scores(self) -> np.ndarray:
-        """Return the pathway scores for the adduct."""
+    def get_pathway_scores(self) -> np.ndarray:
+        """Return the NPC pathway scores for the adduct."""
         return self.lotus[0].structure_taxonomy_hammer_pathways
 
-    def get_hammer_superclass_scores(self) -> np.ndarray:
-        """Return the superclass scores for the adduct."""
+    def get_superclass_scores(self) -> np.ndarray:
+        """Return the NPC superclass scores for the adduct."""
         return self.lotus[0].structure_taxonomy_hammer_superclasses
 
-    def get_hammer_class_scores(self) -> np.ndarray:
-        """Return the class scores for the adduct."""
+    def get_class_scores(self) -> np.ndarray:
+        """Return the NPC class scores for the adduct."""
         return self.lotus[0].structure_taxonomy_hammer_classes
