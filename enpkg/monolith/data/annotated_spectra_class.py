@@ -46,6 +46,9 @@ class AnnotatedSpectrum(Spectrum):
         self._ms1_pathway_scores: Optional[np.ndarray] = None
         self._ms1_superclass_scores: Optional[np.ndarray] = None
         self._ms1_class_scores: Optional[np.ndarray] = None
+        self._ms2_pathway_scores: Optional[np.ndarray] = None
+        self._ms2_superclass_scores: Optional[np.ndarray] = None
+        self._ms2_class_scores: Optional[np.ndarray] = None
 
     # SPECTRUM PROPERTIES
     @property
@@ -63,36 +66,66 @@ class AnnotatedSpectrum(Spectrum):
         """Return the feature ID of the spectrum"""
         return int(self.get("feature_id"))
     
-    # NPC/HAMMER SCORES
+    # NPC CLASSIFICATION SCORES (propagated)
     @property
     def ms1_pathway_scores(self) -> Optional[np.ndarray]:
-        """Return the MS1 propagated NPC pathway annotations"""
-        return self._ms1_hammer_pathway_scores
+        """Return the MS1 propagated NPC pathway scores"""
+        return self._ms1_pathway_scores
 
     @property
     def ms1_superclass_scores(self) -> Optional[np.ndarray]:
-        """Return the MS1 propagated NPC superclass annotations"""
-        return self._ms1_hammer_superclass_scores
+        """Return the MS1 propagated NPC superclass scores"""
+        return self._ms1_superclass_scores
 
     @property
     def ms1_class_scores(self) -> Optional[np.ndarray]:
-        """Return the MS1 propagated NPC class annotations"""
-        return self._ms1_hammer_class_scores
+        """Return the MS1 propagated NPC class scores"""
+        return self._ms1_class_scores
 
     @ms1_pathway_scores.setter
     def ms1_pathway_scores(self, pathway_scores: np.ndarray):
-        """Set the MS1 propagated NPC pathway annotations"""
-        self._ms1_hammer_pathway_scores = pathway_scores
+        """Set the MS1 propagated NPC pathway scores"""
+        self._ms1_pathway_scores = pathway_scores
 
     @ms1_superclass_scores.setter
     def ms1_superclass_scores(self, superclass_scores: np.ndarray):
-        """Set the MS1 propagated NPC superclass annotations"""
-        self._ms1_hammer_superclass_scores = superclass_scores
+        """Set the MS1 propagated NPC superclass scores"""
+        self._ms1_superclass_scores = superclass_scores
 
     @ms1_class_scores.setter
     def ms1_class_scores(self, class_scores: np.ndarray):
-        """Set the MS1 propagated NPC class annotations"""
-        self._ms1_hammer_class_scores = class_scores
+        """Set the MS1 propagated NPC class scores"""
+        self._ms1_class_scores = class_scores
+
+    @property
+    def ms2_pathway_scores(self) -> Optional[np.ndarray]:
+        """Return the MS2 propagated NPC pathway scores"""
+        return self._ms2_pathway_scores
+
+    @property
+    def ms2_superclass_scores(self) -> Optional[np.ndarray]:
+        """Return the MS2 propagated NPC superclass scores"""
+        return self._ms2_superclass_scores
+
+    @property
+    def ms2_class_scores(self) -> Optional[np.ndarray]:
+        """Return the MS2 propagated NPC class scores"""
+        return self._ms2_class_scores
+
+    @ms2_pathway_scores.setter
+    def ms2_pathway_scores(self, pathway_scores: np.ndarray):
+        """Set the MS2 propagated NPC pathway scores"""
+        self._ms2_pathway_scores = pathway_scores
+
+    @ms2_superclass_scores.setter
+    def ms2_superclass_scores(self, superclass_scores: np.ndarray):
+        """Set the MS2 propagated NPC superclass scores"""
+        self._ms2_superclass_scores = superclass_scores
+
+    @ms2_class_scores.setter
+    def ms2_class_scores(self, class_scores: np.ndarray):
+        """Set the MS2 propagated NPC class scores"""
+        self._ms2_class_scores = class_scores
 
     # ANNOTATIONS
     @property
@@ -132,7 +165,7 @@ class AnnotatedSpectrum(Spectrum):
     #     self._sirius_annotations.append(annotation)
 
     def get_top_k_lotus_annotation(self, k: int = 1) -> Optional[list[Lotus]]:
-        """Returns the top k best LOTUS annotation from the MS1 and ISDB MS2 annotations.
+        """Returns the top k best LOTUS annotations from the MS1 adduct annotations.
 
 
         Parameters
@@ -151,39 +184,24 @@ class AnnotatedSpectrum(Spectrum):
 
         annotations: Dict[Lotus, float] = {}
 
-        for annotation in self._ms2_annotations:
-            if annotation.lotus is None:
-                continue
-            for lotus in annotation.lotus:
-                pathway_score = np.mean(
-                    lotus.structure_taxonomy_hammer_pathways
-                    * self._isdb_hammer_pathway_scores
-                )
-                superclass_score = np.mean(
-                    lotus.structure_taxonomy_hammer_superclasses
-                    * self._isdb_hammer_superclass_scores
-                )
-                class_score = np.mean(
-                    lotus.structure_taxonomy_hammer_classes
-                    * self._isdb_hammer_class_scores
-                )
-
-                combined_score = pathway_score * superclass_score * class_score
-                annotations[lotus] = annotations.get(lotus, 0) + combined_score
-
+        # NOTE: under the slimmed MS2 model, MS2 annotations no longer carry
+        # Lotus objects (only short_inchikey + organisms), so they cannot
+        # contribute Lotus entries to this helper. Only MS1 adducts (which still
+        # hold Lotus) feed it. This method is currently unused; revisit if a
+        # Lotus-free MS2 top-k is needed.
         for annotation in self._ms1_annotations:
             for lotus in annotation.lotus:
                 pathway_score = np.mean(
                     lotus.structure_taxonomy_hammer_pathways
-                    * self._ms1_hammer_pathway_scores
+                    * self._ms1_pathway_scores
                 )
                 superclass_score = np.mean(
                     lotus.structure_taxonomy_hammer_superclasses
-                    * self._ms1_hammer_superclass_scores
+                    * self._ms1_superclass_scores
                 )
                 class_score = np.mean(
                     lotus.structure_taxonomy_hammer_classes
-                    * self._ms1_hammer_class_scores
+                    * self._ms1_class_scores
                 )
 
                 combined_score: float = pathway_score * superclass_score * class_score
@@ -191,179 +209,47 @@ class AnnotatedSpectrum(Spectrum):
 
         return sorted(annotations, key=annotations.get, reverse=True)[:k]
 
-    # def best_chemical_annotation(
-    #     self,
-    #     match: Optional[Match],
-    #     ms1_importance_score: float = 0.5,
-    #     isdb_importance_score: float = 0.5,
-    # ) -> Optional[Tuple[Lotus, float, str]]:
-    #     """Returns the best Chemical Annotation from the set of MS2 annotations.
+    def get_top_k_ms2_structures(self, k: int = 1) -> Optional[list[str]]:
+        """Returns the top-k matched structures (short InChIKeys) from the MS2
+        annotations, ranked by how well each structure's NPC classification
+        aligns with this spectrum's MS2-propagated class scores.
 
-    #     Parameters
-    #     ----------
-    #     match : Optional[Match]
-    #         The match object containing the best open tree of life match
-    #         given the expected sample taxonomy. In some cases, spectra may
-    #         come from unknown sources that  prevent us to retrieve the OTL match.
-    #         In such cases, we ignore the taxonomical reponderation step.
-    #     """
-    #     assert ms1_importance_score + isdb_importance_score == 1
+        MS2 analogue of ``get_top_k_lotus_annotation``. The slimmed MS2
+        annotation no longer carries Lotus objects, so structures are identified
+        by short InChIKey rather than returned as Lotus instances.
 
-    #     if not self.has_isdb_annotations() and not self.has_ms1_annotations():
-    #         return None
+        Requires the MS2 propagated scores (set by the WeightsEnhancer). Returns
+        None if there are no MS2 annotations or those scores are not yet set.
 
-    #     pathway_scores = np.zeros_like(self._isdb_hammer_pathway_scores)
-    #     superclass_scores = np.zeros_like(self._isdb_hammer_superclass_scores)
-    #     class_scores = np.zeros_like(self._isdb_hammer_class_scores)
+        Parameters
+        ----------
+        k : int
+            The number of top structures to return.
+        """
+        if not self.has_ms2_annotations():
+            return None
+        if (
+            self._ms2_pathway_scores is None
+            or self._ms2_superclass_scores is None
+            or self._ms2_class_scores is None
+        ):
+            return None
 
-    #     if self._isdb_hammer_pathway_scores.sum() > 0:
-    #         assert self._isdb_hammer_superclass_scores.sum() > 0
-    #         assert self._isdb_hammer_class_scores.sum() > 0
-    #         pathway_scores += isdb_importance_score * self._isdb_hammer_pathway_scores
-    #         superclass_scores += (
-    #             isdb_importance_score * self._isdb_hammer_superclass_scores
-    #         )
-    #         class_scores += isdb_importance_score * self._isdb_hammer_class_scores
-    #     else:
-    #         isdb_importance_score = 0
+        scores: Dict[str, float] = {}
+        for annotation in self._ms2_annotations:
+            pathway_score = np.mean(
+                annotation.get_pathway_scores() * self._ms2_pathway_scores
+            )
+            superclass_score = np.mean(
+                annotation.get_superclass_scores() * self._ms2_superclass_scores
+            )
+            class_score = np.mean(
+                annotation.get_class_scores() * self._ms2_class_scores
+            )
 
-    #     if self._ms1_hammer_pathway_scores.sum() > 0:
-    #         assert self._ms1_hammer_superclass_scores.sum() > 0
-    #         assert self._ms1_hammer_class_scores.sum() > 0
-    #         pathway_scores += ms1_importance_score * self._ms1_hammer_pathway_scores
-    #         superclass_scores += (
-    #             ms1_importance_score * self._ms1_hammer_superclass_scores
-    #         )
-    #         class_scores += ms1_importance_score * self._ms1_hammer_class_scores
-    #     else:
-    #         ms1_importance_score = 0
+            combined_score: float = pathway_score * superclass_score * class_score
+            scores[annotation.short_inchikey] = (
+                scores.get(annotation.short_inchikey, 0) + combined_score
+            )
 
-    #     # We adjust the scores in case one of the two scores is zero
-    #     pathway_scores /= isdb_importance_score + ms1_importance_score
-    #     superclass_scores /= isdb_importance_score + ms1_importance_score
-    #     class_scores /= isdb_importance_score + ms1_importance_score
-
-    #     isdb_annotations: list[Tuple[ISDBChemicalAnnotation, Lotus, float]] = []
-
-    #     for annotation in self._ms2_annotations:
-    #         if not annotation.has_lotus_annotations():
-    #             continue
-    #         # # Next, we store the KL divergence score for the pathways scores
-    #         entropy_score: float = (
-    #             entropy(
-    #                 annotation.get_hammer_pathway_scores(),
-    #                 pathway_scores,
-    #             )
-    #             * entropy(
-    #                 annotation.get_hammer_superclass_scores(),
-    #                 superclass_scores,
-    #             )
-    #             * entropy(
-    #                 annotation.get_hammer_class_scores(),
-    #                 class_scores,
-    #             )
-    #         )
-    #         entropy_score=1.0
-    #         for lotus_annotation in annotation.lotus_annotations():
-    #             # Next, we store the taxonomical reponderation score
-    #             if match is not None:
-    #                 taxonomical_similarity: float = (
-    #                     lotus_annotation.normalized_taxonomical_similarity_with_otl_match(
-    #                         match
-    #                     )
-    #                 )
-    #             else:
-    #                 taxonomical_similarity: float = 0.0
-
-    #             isdb_annotations.append(
-    #                 (
-    #                     annotation,
-    #                     lotus_annotation,
-    #                     taxonomical_similarity / entropy_score,
-    #                 )
-    #             )
-
-    #     ms1_annotations: list[Tuple[Lotus, float]] = []
-
-    #     for annotation in self._ms1_annotations:
-    #         # Next, we store the KL divergence score for the pathways scores
-    #         entropy_score: float = (
-    #             entropy(
-    #                 annotation.get_hammer_pathway_scores(),
-    #                 pathway_scores,
-    #             )
-    #             * entropy(
-    #                 annotation.get_hammer_superclass_scores(),
-    #                 superclass_scores,
-    #             )
-    #             * entropy(
-    #                 annotation.get_hammer_class_scores(),
-    #                 class_scores,
-    #             )
-    #         )
-    #         entropy_score=1.0
-    #         for lotus_annotation in annotation.lotus:
-    #             # Next, we store the taxonomical reponderation score
-    #             if match is not None:
-    #                 taxonomical_similarity: float = (
-    #                     lotus_annotation.normalized_taxonomical_similarity_with_otl_match(
-    #                         match
-    #                     )
-    #                 )
-    #             else:
-    #                 taxonomical_similarity: float = 0.0
-
-    #             ms1_annotations.append(
-    #                 (
-    #                     lotus_annotation,
-    #                     taxonomical_similarity / entropy_score,
-    #                 )
-    #             )
-
-    #     # We rank first the isdb annotations, which include in their sorting
-    #     # procedure also the cosine similarity. After that, we strictly compare
-    #     # the MS1 annotations with the ISDB annotations using the combination of
-    #     # taxonomical similarity and entropy.
-
-    #     if len(isdb_annotations) > 0:
-    #         most_similar_isdb_annotation: Tuple[
-    #             ISDBChemicalAnnotation, Lotus, float
-    #         ] = max(isdb_annotations, key=lambda x: x[2] * x[0].cosine_similarity)
-    #         most_similar_isdb_annotation: Tuple[Optional[Lotus], float] = (
-    #             most_similar_isdb_annotation[1],
-    #             most_similar_isdb_annotation[2],
-    #         )
-    #     else:
-    #         most_similar_isdb_annotation: Tuple[Optional[Lotus], float] = (
-    #             None,
-    #             -np.inf,
-    #         )
-
-    #     if len(ms1_annotations) > 0:
-    #         most_similar_ms1_annotation: Tuple[Optional[Lotus], float] = max(
-    #             ms1_annotations, key=lambda x: x[1]
-    #         )
-    #     else:
-    #         most_similar_ms1_annotation: Tuple[Optional[Lotus], float] = (None, -np.inf)
-
-    #     if most_similar_isdb_annotation[1] > most_similar_ms1_annotation[1]:
-    #         return most_similar_isdb_annotation[0], most_similar_isdb_annotation[1], "ISDB"
-    #     return most_similar_ms1_annotation[0], most_similar_ms1_annotation[1], "MS1"
-
-    # def into_dict(self, match: Optional[Match]) -> Dict[str, Any]:
-    #     """Returns the main features of the spectrum as a dictionary."""
-    #     annotation_candidate: Optional[Tuple[Lotus, float]] = (
-    #         self.best_chemical_annotation(match)
-    #     )
-
-        annotation_metadata = {}
-        if annotation_candidate is not None:
-            annotation, score, label = annotation_candidate
-            annotation_metadata = annotation.to_dict()
-            annotation_metadata["annotation_score"] = score
-            annotation_metadata["source"] = label
-
-        return {
-            "feature_id": self.feature_id,
-            **annotation_metadata,
-        }
+        return sorted(scores, key=scores.get, reverse=True)[:k]
