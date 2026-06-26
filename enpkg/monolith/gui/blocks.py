@@ -41,6 +41,7 @@ from enpkg.monolith.configuration.network_enhancer_config import NetworkEnhancer
 from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
 from enpkg.monolith.configuration.sirius_enhancer_config import SiriusEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
+from enpkg.monolith.gui.log_utils import has_nonzero_scores
 from enpkg.monolith.pipeline.base_pipeline_step import PipelineStep
 from enpkg.monolith.pipeline.molecular_networking_step import MolecularNetworkingStep
 from enpkg.monolith.pipeline.ms1_enhancement_step import MS1EnhancementStep
@@ -166,14 +167,104 @@ def _log_sirius(logger: logging.Logger, analysis: Analysis) -> None:
     logger.info("    Sirius step completed (annotation summary not yet available)")
 
 
+# Number of example reranked spectra to show per level (MS1 / MS2) in the
+# weights log summary.
+_WEIGHTS_MAX_EXAMPLES = 3
+
+
 def _log_weights(logger: logging.Logger, analysis: Analysis) -> None:
     """Summarise the reranking / reweighting step.
 
-    Stub: the weights step modifies annotation scores in-place rather than
-    adding a new field to ``Analysis``.  Expand this once final-score fields
-    or a ranked-results list is exposed on the data model.
+    The weights step does not add a field to ``Analysis``; it writes propagated
+    NPC pathway/superclass/class score vectors onto each spectrum
+    (``ms1_*_scores`` / ``ms2_*_scores``) and exposes the reranked candidates
+    through ``AnnotatedSpectrum.get_top_k_lotus_annotation`` (MS1) and
+    ``get_top_k_ms2_structures`` (MS2).
+
+    For each level this logs how many spectra were reweighted and shows a few
+    example reranked top hits.  MS2 candidates carry their original
+    spectral-match score, so the MS2 examples contrast the spectral-best
+    structure with the NPC-reranked best and count how many spectra had their
+    top pick changed by reranking.  MS1 adducts have no comparable pre-score,
+    so the MS1 examples just show the top reranked LOTUS hit.
     """
-    logger.info("    Reranking step completed (score summary not yet available)")
+    spectra = analysis.spectra
+
+    ms1_scored = [s for s in spectra if has_nonzero_scores(s.ms1_pathway_scores)]
+    ms2_scored = [s for s in spectra if has_nonzero_scores(s.ms2_pathway_scores)]
+
+    if not ms1_scored and not ms2_scored:
+        logger.info(
+            "    (no propagated scores found - reranking did not populate any spectra)"
+        )
+        return
+
+    # ---- MS1 reranking ----
+    ms1_candidates = [s for s in spectra if s.has_ms1_annotations()]
+    logger.info("    %-34s : %d", "MS1 spectra with annotations", len(ms1_candidates))
+    logger.info("    %-34s : %d / %d", "MS1 spectra reweighted (LPA)",
+                len(ms1_scored), len(spectra))
+
+    shown = 0
+    for spectrum in ms1_candidates:
+        if shown >= _WEIGHTS_MAX_EXAMPLES:
+            break
+        try:
+            top = spectrum.get_top_k_lotus_annotation(1)
+        except Exception as exc:  # a summary must never crash the run
+            logger.debug("MS1 rerank example failed for feature %s: %s",
+                         spectrum.feature_id, exc)
+            continue
+        if not top:
+            continue
+        lotus = top[0]
+        name = (lotus.structure_name_traditional
+                or lotus.structure_name_iupac
+                or "(unnamed)")
+        logger.info("      feature %s -> %s [%s] (%s)",
+                    spectrum.feature_id, name, lotus.short_inchikey,
+                    lotus.organism_name)
+        shown += 1
+    if ms1_candidates and shown == 0:
+        logger.info("      (no MS1 candidates could be reranked)")
+
+    # ---- MS2 reranking ----
+    ms2_candidates = [s for s in spectra if s.has_ms2_annotations()]
+    logger.info("    %-34s : %d", "MS2 spectra with annotations", len(ms2_candidates))
+    logger.info("    %-34s : %d / %d", "MS2 spectra reweighted (LPA)",
+                len(ms2_scored), len(spectra))
+
+    n_changed = 0
+    examples: list[tuple] = []
+    for spectrum in ms2_candidates:
+        try:
+            reranked = spectrum.get_top_k_ms2_structures(1)
+        except Exception as exc:  # a summary must never crash the run
+            logger.debug("MS2 rerank example failed for feature %s: %s",
+                         spectrum.feature_id, exc)
+            continue
+        if not reranked:
+            continue
+        spectral_best = max(spectrum.ms2_annotations, key=lambda a: a.score)
+        changed = reranked[0] != spectral_best.short_inchikey
+        if changed:
+            n_changed += 1
+        if len(examples) < _WEIGHTS_MAX_EXAMPLES:
+            examples.append((
+                spectrum.feature_id,
+                spectral_best.short_inchikey,
+                spectral_best.score,
+                reranked[0],
+                "  [changed]" if changed else "",
+            ))
+
+    logger.info("    %-34s : %d / %d", "MS2 spectra whose top pick changed",
+                n_changed, len(ms2_candidates))
+    for fid, spectral_ik, score, reranked_ik, flag in examples:
+        logger.info("      feature %s: spectral-best %s (score %.3f) -> reranked-best %s%s",
+                    fid, spectral_ik, score, reranked_ik, flag)
+    if ms2_candidates and not examples:
+        logger.info("      (no MS2 candidates could be reranked)")
 
 
 # ---------------------------------------------------------------------------
