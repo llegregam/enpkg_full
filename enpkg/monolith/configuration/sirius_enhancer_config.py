@@ -1,9 +1,10 @@
 """Configuration for Sirius."""
 
+
 from pydantic import BaseModel, Field
 
 from enpkg.monolith.configuration.config import EnhancerConfig
-from typing import Optional
+
 
 class SiriusParams(BaseModel):
     """Parameters for the Sirius Enhancer."""
