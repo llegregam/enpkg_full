@@ -10,14 +10,13 @@ from logging import Logger
 from time import time
 from typing import Iterator, Optional
 
-import polars as pl
 import numpy as np
+import polars as pl
 from tqdm.auto import tqdm
 
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.exceptions import DBLoaderError
 from enpkg.monolith.loaders.database_manager import DatabaseManager
-
 
 # _LIST_COLUMNS = ("pathways", "superclasses", "classes")
 
