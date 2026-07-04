@@ -2,6 +2,7 @@
 import logging
 from time import time
 from typing import Any
+
 import networkx as nx
 import pytest
 
@@ -51,9 +52,10 @@ class TestNetworkEnhancer:
         assert original_spectra_count > 0, "No spectra loaded for testing."
 
         start = time()
-        graph = network_enhancer.enhance(analysis)
+        enriched = network_enhancer.enhance(analysis)
+        graph = enriched.molecular_network
         logger.info(f"Generated network with {len(graph.nodes)} nodes and {len(graph.edges)} edges in {time() - start:.2f} seconds")
 
-        assert isinstance(graph, nx.Graph), "Enhance should return a networkx Graph."
+        assert isinstance(graph, nx.Graph), "Enhance should attach a networkx Graph as molecular_network."
         assert len(graph.nodes) == feature_count, "The number of nodes should match the number of feature_ids."
 

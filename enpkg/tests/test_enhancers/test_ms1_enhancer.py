@@ -62,7 +62,7 @@ class TestMS1Enhancer:
 
     def test_initialize_lotus_objects(self, lotus_objects: List[Any], logger: logging.Logger) -> None:
         """Test that LOTUS objects are properly initialized.
-        
+
         Args:
             lotus_objects: Cache-loaded or computed LOTUS object list.
             logger: A logger instance.
@@ -73,7 +73,7 @@ class TestMS1Enhancer:
 
     def test_initialize_adducts(self, ms1_enhancer: MS1Enhancer, lotus_objects: List[Any], logger: logging.Logger) -> None:
         """Test that adducts are properly initialized dynamically based on LOTUS formulas.
-        
+
         Args:
             ms1_enhancer: Unconfigured MS1 enhancer instance.
             lotus_objects: Source list of LOTUS objects.
@@ -82,7 +82,7 @@ class TestMS1Enhancer:
         start = time()
         adducts = ms1_enhancer.initialize_adducts(lotus_objects)
         logger.info(f"Created {len(adducts)} adducts in {time() - start:.2f} seconds")
-        
+
         assert adducts is not None, "Adducts should not be None."
         assert len(adducts) > 0, "Should generate at least one valid adduct."
         assert all(adduct is not None for adduct in adducts), "No generated adduct should be None."
@@ -90,21 +90,22 @@ class TestMS1Enhancer:
 
     def test_enhance_analysis(self, ms1_enhancer: MS1Enhancer, lotus_objects: List[Any], analysis: Any) -> None:
         """Test the full enrichment pipeline for ms1 spectra.
-        
+
         Args:
             ms1_enhancer: Tested enhancer instance.
             lotus_objects: Tested LOTUS objects cache.
             analysis: Parsed analysis dataset containing parsed and grouped spectra.
         """
-        ms1_enhancer._adducts = ms1_enhancer.initialize_adducts(lotus_objects)
-        enhanced_spectra = ms1_enhancer.enhance(analysis.spectra)
+        # enhance() rebuilds its own adducts and returns the (in-place enriched)
+        # Analysis under the uniform enhancer contract.
+        enriched = ms1_enhancer.enhance(analysis)
 
-        assert enhanced_spectra is not None, "A valid list of enhanced spectra must be returned."
-        assert len(enhanced_spectra) == len(analysis.spectra), "The number of enhanced spectra should strictly match the initial count."
+        assert enriched is not None, "A valid Analysis must be returned."
+        assert len(enriched.spectra) == len(analysis.spectra), "The number of spectra should strictly match the initial count."
 
     def test_initialize_adducts_empty_list(self, ms1_enhancer: MS1Enhancer) -> None:
         """Test bounds behavior when attempting to initialize empty subsets.
-        
+
         Args:
             ms1_enhancer: Enhancer processing edge case.
         """

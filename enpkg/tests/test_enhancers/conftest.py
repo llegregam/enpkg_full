@@ -1,14 +1,14 @@
+import logging
 import os
 from pathlib import Path
 
-import logging
 import pytest
 from dotenv import load_dotenv
 
 from enpkg.monolith.configuration.MSEnhancer_config import (
     DownloaderParams,
-    MSEnhancerConfig,
     GeneralParams,
+    MSEnhancerConfig,
     Paths,
     Urls,
 )
@@ -17,14 +17,19 @@ from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
 from enpkg.monolith.enhancers.network_enhancer import NetworkEnhancer
 from enpkg.monolith.enhancers.taxa_enhancer import TaxaEnhancer
 
+
 def pytest_configure():
     numba_logger = logging.getLogger('numba')
     numba_logger.setLevel(logging.WARNING)  # or logging.ERROR to suppress even more
 
 load_dotenv()
 
-if "PROJECT_ROOT" in os.environ:
-    PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"])
+# Honour PROJECT_ROOT only when it points at an existing directory; otherwise
+# fall back to the repository-relative path. This keeps the suite runnable when
+# a machine's .env carries a PROJECT_ROOT copied from another host.
+_env_root = os.environ.get("PROJECT_ROOT")
+if _env_root and Path(_env_root).is_dir():
+    PROJECT_ROOT = Path(_env_root)
 else:
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
 

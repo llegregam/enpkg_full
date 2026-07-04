@@ -1,9 +1,11 @@
-import pytest
-import numpy as np
 from unittest.mock import MagicMock
 
-from enpkg.monolith.data.lotus_class import Lotus, MAXIMAL_TAXONOMICAL_SCORE
-from enpkg.monolith.data.otl_class import Match, Taxon
+import numpy as np
+import pytest
+
+from enpkg.monolith.data.lotus_class import MAXIMAL_TAXONOMICAL_SCORE, Lotus
+from enpkg.monolith.data.otl_class import Match
+
 
 @pytest.fixture
 def sample_columns():
@@ -109,7 +111,7 @@ def test_eq_other_type(columns_map, lotus_data_full):
     series, pathways, superclasses, classes = lotus_data_full
     lotus = Lotus.from_row(columns_map, series, pathways, superclasses, classes)
     assert lotus != "a string"
-    assert lotus != None
+    assert lotus != None  # noqa: E711 — deliberately exercises Lotus.__eq__ against None
 
 
 def test_repr(columns_map, lotus_data_full):
