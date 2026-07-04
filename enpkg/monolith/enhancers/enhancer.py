@@ -1,6 +1,7 @@
 """Submodule defining the enhancer interface."""
 
 from abc import ABC, abstractmethod
+
 from enpkg.monolith.data.analysis import Analysis
 
 
@@ -16,4 +17,4 @@ class Enhancer(ABC):
     def name(self) -> str:
         """Returns the name of the enhancer."""
         pass
-    
+

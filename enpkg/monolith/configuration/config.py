@@ -2,10 +2,9 @@
 Abstract configuration class for the enhancers.
 """
 from abc import ABC
-from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
 import yaml
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GeneralParams(BaseModel):
@@ -15,13 +14,13 @@ class GeneralParams(BaseModel):
         default=False,
         description="Whether to recompute results even if they already exist"
     )
-    
+
     polarity: str = Field(
         default="pos",
         pattern="^(pos|neg)$",
         description="Ionization mode polarity ('pos' or 'neg')"
     )
-    
+
 
 class EnhancerConfig(BaseModel, ABC):
     """Interface for building enhancer configurations."""
@@ -43,7 +42,7 @@ class EnhancerConfig(BaseModel, ABC):
             config_dict = yaml.safe_load(f)
         # Use model_validate to leverage Pydantic's parsing logic
         return cls.model_validate(config_dict)
-    
+
     @classmethod
     def from_dict(cls, config_dict: dict):
         return cls.model_validate(config_dict)

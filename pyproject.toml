@@ -41,12 +41,39 @@ pyarrow = "^23.0.1"
 pytest = "^7.4.4"
 lz4 = "^4.4.5"
 joblib = "^1.5.3"
+ruff = "^0.15"
+pre-commit = "^4.0"
 
 [tool.poetry.group.gui]
 optional = true
 
 [tool.poetry.group.gui.dependencies]
 streamlit = "^1.37"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["docs/vocab"]
+
+[tool.ruff.lint]
+# F = pyflakes (unused imports/names), I = import sorting, B = bugbear,
+# E/W = pycodestyle. E501 (line length) is left to judgement. `UP` (pyupgrade)
+# is intentionally omitted for now to avoid a large annotation-style churn.
+select = ["F", "I", "E", "W", "B"]
+ignore = [
+    "E501",  # long lines (many descriptive strings / SQL); not worth churn
+    "E741",  # ambiguous names like `l` appear in the math kernels
+    "B008",  # calls in arg defaults — pydantic Field(...) is idiomatic here
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Package __init__ files intentionally re-export names.
+"**/__init__.py" = ["F401"]
+# The label-propagation numba kernel favours explicit numeric style.
+"enpkg/monolith/utils/label_propagation_algorithm.py" = ["E", "W", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["enpkg"]
 
 [build-system]
 requires = ["poetry-core"]

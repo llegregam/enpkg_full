@@ -1,12 +1,10 @@
 """Get cleaned GNPS spectral data from Zenodo."""
 
-from downloaders import BaseDownloader
-import pandas as pd
-
 import os
-import numpy as np
-from matchms.importing import load_from_mgf
 
+import numpy as np
+from downloaders import BaseDownloader
+from matchms.importing import load_from_mgf
 
 GNPS_CLEANED_SPECTRA_URL = (
     "https://zenodo.org/records/11566051/files/cleaned_gnps_library.mgf?download=1"

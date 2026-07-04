@@ -1,12 +1,11 @@
-import logging
 
 import pytest
 
 from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
-from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.enhancers.weights_enhancer import WeightsEnhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-from enpkg.monolith.data.analysis import Analysis
+from enpkg.monolith.loaders.lotus_store import LotusStore
 from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
 
 
@@ -48,9 +47,9 @@ def weights_enhancer(reweighting_config, logger, lotus_store) -> WeightsEnhancer
 class TestWeightsEnhancer:
 
     def test_weights_enhancer(self, weights_enhancer, taxa_enhanced_analysis):
-        """Test that the WeightsEnhancer initializes correctly with a given configuration 
+        """Test that the WeightsEnhancer initializes correctly with a given configuration
         and logger, and successfully weights the analysis spectral annotations."""
-        
+
         # Verify basic initialization properties
         assert weights_enhancer.name() == "Weights Enhancer"
         assert isinstance(weights_enhancer.configuration, ReweightingConfig)
@@ -58,9 +57,9 @@ class TestWeightsEnhancer:
 
         # Verify that enhance updates the analysis object in place and appropriately sets features
         final_enhanced_analysis = weights_enhancer.enhance(taxa_enhanced_analysis)
-        
+
         assert final_enhanced_analysis is not None
-        
+
         # Verify that scores have been propagated to the spectra
         at_least_one_spectrum_has_scores = False
         for spectrum in final_enhanced_analysis.spectra:
@@ -69,5 +68,5 @@ class TestWeightsEnhancer:
                 assert hasattr(spectrum, 'ms1_superclass_scores')
                 assert hasattr(spectrum, 'ms1_class_scores')
                 break
-                
+
         assert at_least_one_spectrum_has_scores, "Expected MS1 classification scores to be computed and added to at least one spectrum"

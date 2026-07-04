@@ -8,7 +8,7 @@ bundles everything the GUI needs to know about a block:
 - dependency list (which other blocks must also be selected)
 - **log_summary function** (for the post-run report in the log file)
 
-Shared EnhancerConfig classes (e.g. MSEnhancerConfig for both MS1 and MS2) 
+Shared EnhancerConfig classes (e.g. MSEnhancerConfig for both MS1 and MS2)
 are supported by declaring a shared key and listing the associated blocks in
 a constant at the bottom of this file.
 
@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Type
+from typing import Any, Callable, Optional, Type
 
 import networkx as nx
 from pydantic import BaseModel
@@ -41,38 +41,108 @@ from enpkg.monolith.configuration.network_enhancer_config import NetworkEnhancer
 from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
 from enpkg.monolith.configuration.sirius_enhancer_config import SiriusEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
-from enpkg.monolith.pipeline.base_pipeline_step import PipelineStep
-from enpkg.monolith.pipeline.molecular_networking_step import MolecularNetworkingStep
-from enpkg.monolith.pipeline.ms1_enhancement_step import MS1EnhancementStep
-from enpkg.monolith.pipeline.ms2_enhancement_step import MS2EnrichmentStep
-from enpkg.monolith.pipeline.sirius_enhancement_step import SiriusEnhancementStep
-from enpkg.monolith.pipeline.taxonomical_enhancement_step import TaxonomicalEnhancementStep
-from enpkg.monolith.pipeline.weights_enhancement_step import WeightsEnhancementStep
+from enpkg.monolith.enhancers.enhancer import Enhancer
+from enpkg.monolith.enhancers.ms1_enhancer import MS1Enhancer
+from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
+from enpkg.monolith.enhancers.network_enhancer import NetworkEnhancer
+from enpkg.monolith.enhancers.sirius_enhancer import SiriusEnhancer
+from enpkg.monolith.enhancers.taxa_enhancer import TaxaEnhancer
+from enpkg.monolith.enhancers.weights_enhancer import WeightsEnhancer
+from enpkg.monolith.gui.log_utils import has_nonzero_scores
+from enpkg.monolith.loaders.database_loader import DBLoader
+from enpkg.monolith.loaders.lotus_store import LotusStore
 
 # Callable signature for every block's post-run log summary.
 # Each function receives the shared logger and the final Analysis, and should
 # log the relevant metrics at INFO level.
-# So SummaryFn is shorthand for "any function that accepts a Logger 
-# and Analysis and returns None." 
+# So SummaryFn is shorthand for "any function that accepts a Logger
+# and Analysis and returns None."
 SummaryFn = Callable[[logging.Logger, Analysis], None]
+
+
+@dataclass(frozen=True)
+class BuildContext:
+    """Shared resources a block's enhancer may need, injected by the runner.
+
+    A block only reads the fields it needs (e.g. taxonomical/networking use
+    none of them). ``db_loader`` and ``lotus_store`` are built once per run and
+    reused across blocks.
+    """
+
+    logger: logging.Logger
+    db_loader: Optional[DBLoader] = None
+    lotus_store: Optional[LotusStore] = None
+
+
+# A block's enhancer factory: ``(validated_config, BuildContext) -> Enhancer``.
+BuildFn = Callable[[Any, BuildContext], Enhancer]
+# A block's applicability guard: ``(Analysis) -> bool``.
+CanRunFn = Callable[[Analysis], bool]
 
 
 @dataclass(frozen=True)
 class BlockSpec:
     """Immutable descriptor for a single pipeline block.
 
-    Every field except ``description`` and ``depends_on`` is required.  The
+    The registry is the single source of truth: instead of a bespoke
+    ``PipelineStep`` subclass, each block carries ``build_enhancer`` (how to
+    construct its enhancer from the run's shared resources) and ``can_run`` (the
+    applicability guard). The runner wraps these into a uniform step. The
     ``log_summary`` callable is invoked after a successful run to append a
     per-block section to the run log.
     """
 
     id: str
     label: str
-    step_cls: Type[PipelineStep]
+    build_enhancer: BuildFn
+    can_run: CanRunFn
     config_cls: Optional[Type[BaseModel]]
     log_summary: SummaryFn
     description: str = ""
     depends_on: tuple[str, ...] = field(default_factory=tuple)
+
+
+# ---------------------------------------------------------------------------
+# Enhancer factories + applicability guards
+#
+# Each enhancer honours the uniform ``enhance(analysis) -> Analysis`` contract,
+# so a block is fully described by (how to build its enhancer, when it can run).
+# ---------------------------------------------------------------------------
+
+def _build_taxonomical(config: Any, ctx: BuildContext) -> Enhancer:
+    return TaxaEnhancer()
+
+
+def _build_network(config: Any, ctx: BuildContext) -> Enhancer:
+    return NetworkEnhancer(configuration=config)
+
+
+def _build_ms1(config: Any, ctx: BuildContext) -> Enhancer:
+    return MS1Enhancer(config, ctx.logger, ctx.lotus_store)
+
+
+def _build_ms2(config: Any, ctx: BuildContext) -> Enhancer:
+    return Ms2Enhancer(config, ctx.logger, ctx.db_loader, ctx.lotus_store)
+
+
+def _build_sirius(config: Any, ctx: BuildContext) -> Enhancer:
+    return SiriusEnhancer(config, ctx.logger)
+
+
+def _build_weights(config: Any, ctx: BuildContext) -> Enhancer:
+    return WeightsEnhancer(config, ctx.logger, ctx.lotus_store)
+
+
+def _has_spectra(analysis: Analysis) -> bool:
+    return len(analysis.spectra) > 0
+
+
+def _has_source_taxon(analysis: Analysis) -> bool:
+    return analysis.has_source_taxon
+
+
+def _has_spectra_and_network(analysis: Analysis) -> bool:
+    return len(analysis.spectra) > 0 and analysis.molecular_network is not None
 
 
 # ---------------------------------------------------------------------------
@@ -166,14 +236,104 @@ def _log_sirius(logger: logging.Logger, analysis: Analysis) -> None:
     logger.info("    Sirius step completed (annotation summary not yet available)")
 
 
+# Number of example reranked spectra to show per level (MS1 / MS2) in the
+# weights log summary.
+_WEIGHTS_MAX_EXAMPLES = 3
+
+
 def _log_weights(logger: logging.Logger, analysis: Analysis) -> None:
     """Summarise the reranking / reweighting step.
 
-    Stub: the weights step modifies annotation scores in-place rather than
-    adding a new field to ``Analysis``.  Expand this once final-score fields
-    or a ranked-results list is exposed on the data model.
+    The weights step does not add a field to ``Analysis``; it writes propagated
+    NPC pathway/superclass/class score vectors onto each spectrum
+    (``ms1_*_scores`` / ``ms2_*_scores``) and exposes the reranked candidates
+    through ``AnnotatedSpectrum.get_top_k_lotus_annotation`` (MS1) and
+    ``get_top_k_ms2_structures`` (MS2).
+
+    For each level this logs how many spectra were reweighted and shows a few
+    example reranked top hits.  MS2 candidates carry their original
+    spectral-match score, so the MS2 examples contrast the spectral-best
+    structure with the NPC-reranked best and count how many spectra had their
+    top pick changed by reranking.  MS1 adducts have no comparable pre-score,
+    so the MS1 examples just show the top reranked LOTUS hit.
     """
-    logger.info("    Reranking step completed (score summary not yet available)")
+    spectra = analysis.spectra
+
+    ms1_scored = [s for s in spectra if has_nonzero_scores(s.ms1_pathway_scores)]
+    ms2_scored = [s for s in spectra if has_nonzero_scores(s.ms2_pathway_scores)]
+
+    if not ms1_scored and not ms2_scored:
+        logger.info(
+            "    (no propagated scores found - reranking did not populate any spectra)"
+        )
+        return
+
+    # ---- MS1 reranking ----
+    ms1_candidates = [s for s in spectra if s.has_ms1_annotations()]
+    logger.info("    %-34s : %d", "MS1 spectra with annotations", len(ms1_candidates))
+    logger.info("    %-34s : %d / %d", "MS1 spectra reweighted (LPA)",
+                len(ms1_scored), len(spectra))
+
+    shown = 0
+    for spectrum in ms1_candidates:
+        if shown >= _WEIGHTS_MAX_EXAMPLES:
+            break
+        try:
+            top = spectrum.get_top_k_lotus_annotation(1)
+        except Exception as exc:  # a summary must never crash the run
+            logger.debug("MS1 rerank example failed for feature %s: %s",
+                         spectrum.feature_id, exc)
+            continue
+        if not top:
+            continue
+        lotus = top[0]
+        name = (lotus.structure_name_traditional
+                or lotus.structure_name_iupac
+                or "(unnamed)")
+        logger.info("      feature %s -> %s [%s] (%s)",
+                    spectrum.feature_id, name, lotus.short_inchikey,
+                    lotus.organism_name)
+        shown += 1
+    if ms1_candidates and shown == 0:
+        logger.info("      (no MS1 candidates could be reranked)")
+
+    # ---- MS2 reranking ----
+    ms2_candidates = [s for s in spectra if s.has_ms2_annotations()]
+    logger.info("    %-34s : %d", "MS2 spectra with annotations", len(ms2_candidates))
+    logger.info("    %-34s : %d / %d", "MS2 spectra reweighted (LPA)",
+                len(ms2_scored), len(spectra))
+
+    n_changed = 0
+    examples: list[tuple] = []
+    for spectrum in ms2_candidates:
+        try:
+            reranked = spectrum.get_top_k_ms2_structures(1)
+        except Exception as exc:  # a summary must never crash the run
+            logger.debug("MS2 rerank example failed for feature %s: %s",
+                         spectrum.feature_id, exc)
+            continue
+        if not reranked:
+            continue
+        spectral_best = max(spectrum.ms2_annotations, key=lambda a: a.score)
+        changed = reranked[0] != spectral_best.short_inchikey
+        if changed:
+            n_changed += 1
+        if len(examples) < _WEIGHTS_MAX_EXAMPLES:
+            examples.append((
+                spectrum.feature_id,
+                spectral_best.short_inchikey,
+                spectral_best.score,
+                reranked[0],
+                "  [changed]" if changed else "",
+            ))
+
+    logger.info("    %-34s : %d / %d", "MS2 spectra whose top pick changed",
+                n_changed, len(ms2_candidates))
+    for fid, spectral_ik, score, reranked_ik, flag in examples:
+        logger.info("      feature %s: spectral-best %s (score %.3f) -> reranked-best %s%s",
+                    fid, spectral_ik, score, reranked_ik, flag)
+    if ms2_candidates and not examples:
+        logger.info("      (no MS2 candidates could be reranked)")
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +347,8 @@ BLOCKS: list[BlockSpec] = [
     BlockSpec(
         id="taxonomical",
         label="Taxonomical enrichment",
-        step_cls=TaxonomicalEnhancementStep,
+        build_enhancer=_build_taxonomical,
+        can_run=_has_source_taxon,
         config_cls=None,
         log_summary=_log_taxonomical,
         description="Fetches Open Tree of Life matches for the source organism. Requires source_taxon in metadata.",
@@ -195,7 +356,8 @@ BLOCKS: list[BlockSpec] = [
     BlockSpec(
         id="network",
         label="Molecular networking",
-        step_cls=MolecularNetworkingStep,
+        build_enhancer=_build_network,
+        can_run=_has_spectra,
         config_cls=NetworkEnhancerConfig,
         log_summary=_log_network,
         description="Builds a spectral similarity network from MS/MS spectra.",
@@ -203,7 +365,8 @@ BLOCKS: list[BlockSpec] = [
     BlockSpec(
         id="ms1",
         label="MS1 enhancement",
-        step_cls=MS1EnhancementStep,
+        build_enhancer=_build_ms1,
+        can_run=_has_spectra,
         config_cls=MSEnhancerConfig, # Shared with MS2
         log_summary=_log_ms1,
         description="Matches MS1 precursor m/z against adduct libraries. Shares config with MS2.",
@@ -211,7 +374,8 @@ BLOCKS: list[BlockSpec] = [
     BlockSpec(
         id="ms2",
         label="MS2 enhancement",
-        step_cls=MS2EnrichmentStep,
+        build_enhancer=_build_ms2,
+        can_run=_has_spectra,
         config_cls=MSEnhancerConfig, # Shared with MS1
         log_summary=_log_ms2,
         description="Matches MS/MS spectra against spectral databases (ISDB).",
@@ -219,7 +383,8 @@ BLOCKS: list[BlockSpec] = [
     BlockSpec(
         id="sirius",
         label="Sirius",
-        step_cls=SiriusEnhancementStep,
+        build_enhancer=_build_sirius,
+        can_run=_has_spectra,
         config_cls=SiriusEnhancerConfig,
         log_summary=_log_sirius,
         description="Runs Sirius for structure identification.",
@@ -227,7 +392,8 @@ BLOCKS: list[BlockSpec] = [
     BlockSpec(
         id="weights",
         label="Weights / reranking",
-        step_cls=WeightsEnhancementStep,
+        build_enhancer=_build_weights,
+        can_run=_has_spectra_and_network,
         config_cls=ReweightingConfig,
         log_summary=_log_weights,
         description="Reranks annotations using taxonomic and chemical consistency. Requires the molecular network.",
@@ -237,8 +403,8 @@ BLOCKS: list[BlockSpec] = [
 
 BLOCKS_BY_ID: dict[str, BlockSpec] = {b.id: b for b in BLOCKS}
 
-# Blocks that share a single EnhancerConfig instance in the unified YAML should be declared here. 
-# The runner and config I/O will treat these blocks as a group, loading their config from the shared 
+# Blocks that share a single EnhancerConfig instance in the unified YAML should be declared here.
+# The runner and config I/O will treat these blocks as a group, loading their config from the shared
 # key and ensuring they are selected/deselected together in the UI.
 
 # MS shared config

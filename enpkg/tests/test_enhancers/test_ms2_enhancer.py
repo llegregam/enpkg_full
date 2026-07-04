@@ -2,7 +2,7 @@
 
 import logging
 from time import time
-from typing import Any, List
+from typing import Any
 
 import pytest
 
@@ -68,7 +68,7 @@ class TestMs2Enhancer:
 
     def test_enhance_spectra(self, ms2_enhancer: Ms2Enhancer, analysis: Any, logger: logging.Logger) -> None:
         """Test the MS2 spectrum enrichment.
-        
+
         Args:
             ms2_enhancer: The fully populated Ms2Enhancer instance.
             analysis: Main analysis dataset loaded from project test directory.
@@ -76,11 +76,11 @@ class TestMs2Enhancer:
         """
         assert analysis.spectra is not None, "Analysis should have spectra to pass to MS2 enhancer."
         original_spectra_count = len(analysis.spectra)
-        
+
         start = time()
-        enhanced_spectra = ms2_enhancer.enhance(analysis.spectra, chunk_size=1000)
-        logger.info(f"Enhanced {len(enhanced_spectra)} MS2 spectra in {time() - start:.2f} seconds")
-        
-        assert enhanced_spectra is not None, "A valid list of enhanced spectra must be returned."
-        assert len(enhanced_spectra) == original_spectra_count, "The same number of spectra must be returned."
+        enriched = ms2_enhancer.enhance(analysis, chunk_size=1000)
+        logger.info(f"Enhanced {len(enriched.spectra)} MS2 spectra in {time() - start:.2f} seconds")
+
+        assert enriched is not None, "A valid Analysis must be returned."
+        assert len(enriched.spectra) == original_spectra_count, "The same number of spectra must be returned."
 

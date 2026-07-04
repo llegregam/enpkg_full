@@ -1,12 +1,22 @@
-from pydantic import BaseModel, Field, model_validator
 from typing import Self
 
-from enpkg.monolith.configuration.MSEnhancer_config import DownloaderParams
+from pydantic import BaseModel, Field, model_validator
+
 from enpkg.monolith.configuration.config import EnhancerConfig
+from enpkg.monolith.configuration.MSEnhancer_config import DownloaderParams
 
 
 class ReweightingParams(BaseModel):
-    """Parameters for result reweighting and scoring."""
+    """Parameters for result reweighting and scoring.
+
+    RESERVED — not yet consumed. The WeightsEnhancer currently produces the
+    propagated NPC score vectors (taxonomy weight × label propagation, both
+    hard-coded), and the RDF serializer ranks candidates by NPC alignment. The
+    configurable blend below (msms/taxo/chemo weights, min-score thresholds,
+    top-N) is the planned final-ranking feature and has no effect until that
+    ranking is wired (see docs/REFACTORING_PLAN.md B-08). Tuning these values
+    will not change results yet.
+    """
 
     top_to_output: int = Field(
         default=5,
@@ -59,12 +69,12 @@ class ReweightingParams(BaseModel):
 
 class ReweightingConfig(EnhancerConfig):
     """Configuration for the Weights Enhancer."""
-        
+
     reweighting_params: ReweightingParams = Field(
         default_factory=ReweightingParams,
         description="Parameters for score reweighting"
     )
-    
+
     downloader_params: DownloaderParams = Field(
         default_factory=DownloaderParams,
         description="Parameters for controlling database downloading behavior"

@@ -1,7 +1,9 @@
 """Pipeline runner for the GUI.
 
-Mirrors the orchestration in ``enpkg/monolith/pipeline/test.py`` but is driven
-by the set of blocks selected in the GUI. A ``logging.Handler`` pushes log
+Drives the pipeline from the set of blocks selected in the GUI: each block from
+the [blocks.py](blocks.py) registry is bound to its config and the run's shared
+resources, then executed in canonical order via the uniform
+``enhance(analysis) -> Analysis`` contract. A ``logging.Handler`` pushes log
 records onto a queue that the Streamlit app can drain into the UI.
 """
 from __future__ import annotations
@@ -16,10 +18,11 @@ from typing import Any, Optional
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.exceptions import DBLoaderError
-from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID
+from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID, BlockSpec, BuildContext
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.rdf import serialize_to_turtle
 
 LOG_DIR = Path("gui_workspace") / "logs"
 
@@ -226,7 +229,21 @@ def run_pipeline(
         result.error = f"Step construction failed: {exc}"
         return result
 
-    return _run_analysis(analysis, selected_ids, steps, logger, summary_logger, result)
+    result = _run_analysis(analysis, selected_ids, steps, logger, summary_logger, result)
+
+    # Best-effort RDF/Turtle export next to the run log (mirrors the batch runner).
+    if result.analysis is not None and result.error is None and result.log_file is not None:
+        ttl_path = result.log_file.with_suffix(".ttl")
+        try:
+            serialize_to_turtle(
+                result.analysis, str(ttl_path),
+                include_network="network" in result.executed,
+            )
+            logger.info("Wrote RDF graph: %s", ttl_path)
+        except Exception:
+            logger.exception("Failed to write RDF graph to %s", ttl_path)
+
+    return result
 
 
 def build_shared_steps(
@@ -427,37 +444,46 @@ def _apply_download_dir(ms_config: MSEnhancerConfig, database_dir: Path) -> None
     ms_config.downloader_params.download_dir = str(database_dir)
 
 
+class _BoundBlock:
+    """A registry block bound to its validated config and the run's resources.
+
+    Presents the ``can_run`` / ``process`` surface the runner expects, building
+    the block's enhancer lazily in ``process`` (construction stays cheap and
+    dependency-free). Replaces the former per-block ``PipelineStep`` subclasses:
+    every enhancer honours ``enhance(analysis) -> Analysis``, so one wrapper
+    serves all blocks and the dependency wiring lives in the ``blocks`` registry.
+    """
+
+    __slots__ = ("_spec", "_config", "_ctx")
+
+    def __init__(self, spec: BlockSpec, config: Any, ctx: BuildContext) -> None:
+        self._spec = spec
+        self._config = config
+        self._ctx = ctx
+
+    def name(self) -> str:
+        return self._spec.id
+
+    def can_run(self, analysis: Analysis) -> bool:
+        return self._spec.can_run(analysis)
+
+    def process(self, analysis: Analysis) -> Analysis:
+        return self._spec.build_enhancer(self._config, self._ctx).enhance(analysis)
+
+
 def _build_step(
     block_id: str,
     config: Any,
     logger: logging.Logger,
     db_loader: Optional[DBLoader],
     lotus_store: Optional[LotusStore],
-) -> Any:
-    block = BLOCKS_BY_ID[block_id]
-    cls = block.step_cls
-    logger.debug("Building step for block_id=%s, step_class=%s", block_id, cls.__name__)
+) -> _BoundBlock:
+    """Bind a registry block to its config and shared resources.
 
-    if block_id == "taxonomical":
-        logger.debug("Instantiating Taxonomical step with no parameters")
-        return cls()
-    if block_id == "network":
-        logger.debug("Instantiating Network step with config")
-        return cls(config)
-    if block_id == "ms1":
-        # MS1 only needs the LotusStore for mass-windowed Lotus access.
-        logger.debug("Instantiating MS1 step with config and lotus_store")
-        return cls(config=config, logger=logger, lotus_store=lotus_store)
-    if block_id == "ms2":
-        logger.debug("Instantiating MS2 step with config, db_loader and lotus_store")
-        return cls(
-            config=config, logger=logger,
-            db_loader=db_loader, lotus_store=lotus_store,
-        )
-    if block_id == "sirius":
-        logger.debug("Instantiating Sirius step with config and logger")
-        return cls(config=config, logger=logger)
-    if block_id == "weights":
-        logger.debug("Instantiating Weights step with config, logger, and lotus_store")
-        return cls(config=config, logger=logger, lotus_store=lotus_store)
-    raise ValueError(f"Unknown block id: {block_id}")
+    All dependency wiring now lives in each ``BlockSpec.build_enhancer`` (see
+    ``gui/blocks.py``); the runner just supplies the shared ``BuildContext``.
+    """
+    spec = BLOCKS_BY_ID[block_id]
+    logger.debug("Binding block %s", block_id)
+    ctx = BuildContext(logger=logger, db_loader=db_loader, lotus_store=lotus_store)
+    return _BoundBlock(spec, config, ctx)

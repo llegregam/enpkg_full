@@ -52,8 +52,8 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 def _ensure_workspace() -> None:
     """
-    Ensure the default workspace directories exist. 
-    If they don't, create them. 
+    Ensure the default workspace directories exist.
+    If they don't, create them.
     """
     DEFAULT_INPUT_DIR.mkdir(parents=True, exist_ok=True)
     DEFAULT_BATCH_DIR.mkdir(parents=True, exist_ok=True)
@@ -67,7 +67,7 @@ def _list_input_files(input_dir: Path, suffixes: tuple[str, ...]) -> list[str]:
     Args:
         input_dir: The directory to scan for input files.
         suffixes: A tuple of file suffixes to filter by (e.g., (".mgf", ".mzml")).
-    
+
     Returns:
         A sorted list of matching file names. If the input directory does not exist, returns an empty list.
     """
@@ -82,7 +82,7 @@ def _list_input_files(input_dir: Path, suffixes: tuple[str, ...]) -> list[str]:
 
 def _init_state() -> None:
     """
-    Initialize the Streamlit session state with default values for form state, 
+    Initialize the Streamlit session state with default values for form state,
     selected blocks, log buffer, last results, and input directories.
     Do not forget to modify this function if you add new state variables that need defaults.
     """
@@ -116,7 +116,7 @@ def _load_config_into_state(path: Path) -> None:
         # For blocks with no config_cls, we skip loading since they have no parameters to populate.
         if block.config_cls is None:
             continue
-        # 
+        #
 
         section = config_io.get_section(data, block.id)
         if shared is None and isinstance(section.get(SHARED_FIELD), dict):
@@ -212,12 +212,12 @@ def _render_single_sidebar() -> dict:
             "metadata": metadata if metadata_files else None,
             "quant": quant if quant_files else None,
         }
-    
+
     if st.session_state.selected_blocks.get("sirius"):
         sirius_files = [f for f in spectra_files if "_sirius" in f.lower() and f.lower().endswith(".mgf")]
         sirius_spectra = st.sidebar.selectbox("Spectra for Sirius", sirius_files or ["(none found)"], key="sirius_spectra")
         selectboxes_states["sirius_spectra"] = sirius_spectra if sirius_files else None
-    
+
     return selectboxes_states
 
 
@@ -292,7 +292,7 @@ def _render_forms(selected: list[str]) -> dict[str, dict]:
 
     tabs = st.tabs(labels)
     raw: dict[str, dict] = {}
-    for tab, tid in zip(tabs, tab_ids):
+    for tab, tid in zip(tabs, tab_ids, strict=False):
         with tab:
             if tid == MS_SHARED_KEY:
                 block = BLOCKS_BY_ID["ms1"]
@@ -343,7 +343,7 @@ def _inject_shared_params(raw: dict[str, dict], shared: dict) -> dict[str, dict]
 
 def _build_configs_from_raw(selected: list[str], raw: dict[str, dict]):
     """
-    Instantiate Pydantic config objects from the raw form dicts 
+    Instantiate Pydantic config objects from the raw form dicts
     and return them in a dict, or return the validation error if any.
     """
     try:
@@ -395,7 +395,7 @@ def _render_execution(result) -> None:
 
 def _render_batch_execution(batch: BatchResult) -> None:
     """
-    Render the batch execution results, including a summary 
+    Render the batch execution results, including a summary
     of succeeded/failed experiments and details for each experiment.
 
     Args:
@@ -546,9 +546,9 @@ def _run_single_mode(selected, configs, shared_params, sidebar) -> None:
 
 def _run_batch_mode(selected, configs, shared_params, sidebar) -> None:
     """
-    Run the batch pipeline on every experiment discovered under the selected 
+    Run the batch pipeline on every experiment discovered under the selected
     batch parent folder, using the shared metadata and the configs built from the form states.
-    
+
     Args:
         selected: List of selected block IDs to run.
         configs: Dict of instantiated config objects for each block, built from the form states.

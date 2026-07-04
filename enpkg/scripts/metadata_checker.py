@@ -1,7 +1,7 @@
 """Script to check which entries of the Taxonomical information scoring paper benchmark set are in LOTUS"""
 
-from downloaders import BaseDownloader
 import pandas as pd
+from downloaders import BaseDownloader
 
 BENCHMARK_DATASET_URL = "https://osf.io/download/ye4gx/"
 

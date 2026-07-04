@@ -1,11 +1,18 @@
 """Data class representing the key information of a LOTUS entry."""
 
-from typing import Any, Dict, Mapping
 from dataclasses import dataclass
-import numpy as np
-from enpkg.monolith.data.otl_class import Match
+from typing import Any, Dict, Mapping
 
-MAXIMAL_TAXONOMICAL_SCORE: float = 8.0
+import numpy as np
+
+from enpkg.monolith.data.otl_class import Match
+from enpkg.monolith.data.taxonomy import (
+    MAXIMAL_TAXONOMICAL_SCORE,
+    normalized_rank_similarity,
+    rank_similarity,
+)
+
+__all__ = ["Lotus", "MAXIMAL_TAXONOMICAL_SCORE"]
 
 @dataclass(slots=True)
 class Lotus:
@@ -124,7 +131,7 @@ class Lotus:
             self.structure_inchikey,
             self.organism_taxonomy_ottid
         ))
-    
+
     def __repr__(self) -> str:
         """Return a string representation of the LOTUS entry."""
         return (
@@ -146,7 +153,7 @@ class Lotus:
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns the principal informations of the LOTUS entry as a dictionary.
-        
+
         Implementative details
         ----------------------
         We solely maintain the features that can be represented
@@ -198,51 +205,14 @@ class Lotus:
 
 
     def taxonomical_similarity_with_otl_match(self, match: Match) -> float:
-        """Calculate the taxonomical similarity with an OTL match.
+        """Rank-ladder taxonomical similarity with an OTL match.
 
-        Implementative details
-        ----------------------
-        The taxonomical similarity is calculated as the number of shared taxonomic ranks
-        between the LOTUS organism and the OTL match organism. The ranks are ordered from
-        domain to species, and the similarity is calculated as the number of ranks that
-        are the same between the two organisms.
+        Score is the most-specific shared taxonomic rank: 8 = species, 7 = genus,
+        ... 1 = domain, 0 = nothing shared. See
+        :func:`enpkg.monolith.data.taxonomy.rank_similarity`.
         """
-        if self.species == match.species:
-            return 8.0
-
-        if self.genus == match.genus:
-            return 7.0
-
-        if self.family == match.family:
-            return 6.0
-
-        if self.order == match.order:
-            return 5.0
-
-        if self.klass == match.klass:
-            return 4.0
-
-        if self.phylum == match.phylum:
-            return 3.0
-
-        if self.kingdom == match.kingdom:
-            return 2.0
-
-        if self.domain == match.domain:
-            return 1.0
-
-        return 0.0
+        return rank_similarity(self, match)
 
     def normalized_taxonomical_similarity_with_otl_match(self, match: Match) -> float:
-        """Calculate the normalized taxonomical similarity with an OTL match.
-
-        Implementative details
-        ----------------------
-        The normalized taxonomical similarity is calculated as the taxonomical similarity
-        divided by the maximum possible similarity (8).
-        """
-        match_score = self.taxonomical_similarity_with_otl_match(match)
-        assert (
-            match_score <= MAXIMAL_TAXONOMICAL_SCORE
-        ), f"Expected a maximal score of {MAXIMAL_TAXONOMICAL_SCORE}, got {match_score}."
-        return match_score / MAXIMAL_TAXONOMICAL_SCORE
+        """:meth:`taxonomical_similarity_with_otl_match` normalised to ``[0, 1]``."""
+        return normalized_rank_similarity(self, match)

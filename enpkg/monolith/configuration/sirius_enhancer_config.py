@@ -1,9 +1,10 @@
 """Configuration for Sirius."""
 
+
 from pydantic import BaseModel, Field
 
 from enpkg.monolith.configuration.config import EnhancerConfig
-from typing import Optional
+
 
 class SiriusParams(BaseModel):
     """Parameters for the Sirius Enhancer."""
@@ -28,6 +29,20 @@ class SiriusParams(BaseModel):
         default="sirius_output",
         description="Directory where Sirius outputs will be stored."
     )
+    top_k_sirius: int = Field(
+        default=10,
+        description="Number of top Sirius candidates to export in summary."
+    )
+
+    identity_search_precursor_deviation: float = Field(
+        default=20.0,
+        description="Precursor deviation for identity search in ppm."
+    )
+    ms2_mass_deviation: float = Field(
+        default=5.0,
+        description="MS2 mass deviation in ppm."
+    )
+
     # zip_output: bool = Field(
     #     default=True,
     #     description="Whether to zip the output directory after processing."

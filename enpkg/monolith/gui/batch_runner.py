@@ -35,12 +35,13 @@ from enpkg.monolith.gui.runner import (
     LOG_DIR,
     AnalysisSummary,
     RunResult,
+    _build_step,
     _run_analysis,
     build_shared_steps,
     make_loggers,
 )
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-from enpkg.monolith.pipeline.sirius_enhancement_step import SiriusEnhancementStep
+from enpkg.monolith.rdf import serialize_to_turtle
 
 # Memory profiling is opt-in. A single log_memory_snapshot() costs roughly
 # 1-3 minutes on the prod heap (gc.collect + gc.get_objects iteration +
@@ -343,6 +344,16 @@ def run_batch(
             result.error = f"Analysis loading failed: {exc}"
             continue
 
+        # QC/blank exclusion (parity with the legacy sample_type gate): only skips
+        # rows the metadata explicitly marks as non-sample; an absent sample_type
+        # column leaves is_sample() True, so ordinary datasets are unaffected.
+        if not analysis.metadata.is_sample():
+            logger.info(
+                "[%s] Skipping: sample_type=%r is not a biological sample",
+                exp.run_name, analysis.metadata.sample_type,
+            )
+            continue
+
         steps = dict(shared_steps)
         if sirius_shared_cfg is not None:
             # Sirius requires its own dedicated input file (`<stem>_sirius<suffix>`)
@@ -360,7 +371,9 @@ def run_batch(
                 sirius_cfg = _sirius_config_for(
                     exp.run_name, exp.sirius_spectra_path, sirius_shared_cfg,
                 )
-                steps["sirius"] = SiriusEnhancementStep(config=sirius_cfg, logger=logger)
+                # Sirius is bound per-experiment (its config carries per-run paths);
+                # it needs neither DBLoader nor LotusStore.
+                steps["sirius"] = _build_step("sirius", sirius_cfg, logger, None, None)
                 Path(sirius_cfg.sirius_params.output_directory).mkdir(parents=True, exist_ok=True)
                 logger.info("[%s] Built Sirius step with input %s and output dir %s",
                     exp.run_name,
@@ -386,6 +399,24 @@ def run_batch(
         # result.analysis intact so the user can still inspect it.
         if result.analysis is not None:
             result.summary = AnalysisSummary.from_analysis(result.analysis)
+
+            # Export the per-experiment knowledge graph as Turtle (best-effort,
+            # like the pickle below). The network layer is only emitted when the
+            # networking block actually ran. Done before the pickle drops the
+            # in-memory Analysis.
+            ttl_path = exp_dir / f"{exp.run_name}.ttl"
+            try:
+                serialize_to_turtle(
+                    result.analysis,
+                    str(ttl_path),
+                    include_network="network" in result.executed,
+                )
+                logger.info("[%s] Wrote RDF graph: %s", exp.run_name, ttl_path)
+            except Exception:
+                logger.exception(
+                    "[%s] Failed to write RDF graph to %s", exp.run_name, ttl_path
+                )
+
             analysis_pkl = exp_dir / "analysis.pkl"
             try:
                 with open(analysis_pkl, "wb") as f:

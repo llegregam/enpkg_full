@@ -1,13 +1,14 @@
-import os
 import logging
-from tqdm import tqdm
-from typing import Dict, Set
+import os
 from collections import Counter, defaultdict
+from typing import Dict, Set
+
 import matplotlib.pyplot as plt
 import pandas as pd
-from matchms.importing import load_from_mgf
-from matchms.exporting import save_as_mgf
 from downloaders import BaseDownloader
+from matchms.exporting import save_as_mgf
+from matchms.importing import load_from_mgf
+from tqdm import tqdm
 
 # Setup logging for better visibility into the script's execution
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,7 +20,7 @@ DOWNLOAD_DIR = "monolith/downloads"
 def download_files():
     """Downloads necessary files for processing."""
     downloader = BaseDownloader()
-    
+
     try:
         logging.info("Downloading cleaned GNPS library...")
         downloader.download(CLEANED_GNPS_LIBRARY_URL, os.path.join(DOWNLOAD_DIR, "cleaned_gnps_library.mgf"))
@@ -62,7 +63,7 @@ def plot_instrument_counts(spectrums: list):
 def filter_spectrums_by_inchikey(spectrums: list, valid_inchikeys: Set[str]) -> list:
     """Filters spectrums that have matching InChIKeys in the metadata."""
     logging.info("Filtering spectrums by InChIKey...")
-    filtered_spectrums = [spectrum for spectrum in tqdm(spectrums, desc="Filtering spectrums") 
+    filtered_spectrums = [spectrum for spectrum in tqdm(spectrums, desc="Filtering spectrums")
                           if spectrum.metadata.get('inchikey') in valid_inchikeys]
     logging.info(f"{len(filtered_spectrums)} spectrums found with matching InChIKey.")
     return filtered_spectrums
@@ -80,12 +81,12 @@ def filter_by_instrument_priority(spectrums: list, instrument_rank: Dict[str, in
         inchikey = spectrum.metadata.get('inchikey')
         if inchikey:
             spectra_by_inchikey[inchikey].append(spectrum)
-    
+
     final_spectrums = []
     for spectra in tqdm(spectra_by_inchikey.values(), desc="Selecting spectra by instrument priority"):
         best_spectrum = min(spectra, key=lambda s: get_instrument_rank(s, instrument_rank, instrument_priority))
         final_spectrums.append(best_spectrum)
-    
+
     logging.info(f"{len(final_spectrums)} spectrums selected after filtering by instrument priority.")
     return final_spectrums
 
@@ -97,7 +98,7 @@ def count_unique_inchikeys(spectrums: list) -> int:
 def main():
     # Download necessary files
     download_files()
-    
+
     # Load spectrums from file
     mgf_path = os.path.join(DOWNLOAD_DIR, "cleaned_gnps_library.mgf")
     spectrums = load_spectrums(mgf_path)
@@ -106,29 +107,29 @@ def main():
     instrument_counts = plot_instrument_counts(spectrums)
     instrument_priority = [instrument for instrument, _ in instrument_counts.most_common()]
     instrument_rank = {instrument: rank for rank, instrument in enumerate(instrument_priority)}
-    
+
     # Load LOTUS metadata
     logging.info("Loading LOTUS metadata...")
     lotus_metadata = pd.read_csv(os.path.join(DOWNLOAD_DIR, "taxo_db_metadata.csv.gz"), low_memory=False)
     valid_inchikeys = set(lotus_metadata['structure_inchikey'].dropna().unique())
     logging.info(f"{len(valid_inchikeys)} unique InChIKeys found in LOTUS metadata.")
-    
+
     # Filter spectrums by InChIKey
     filtered_spectrums = filter_spectrums_by_inchikey(spectrums, valid_inchikeys)
-    
+
     # Retain only the highest-priority spectrum per InChIKey
     final_filtered_spectrums = filter_by_instrument_priority(filtered_spectrums, instrument_rank, instrument_priority)
 
     # Save the final filtered spectrums
     logging.info(f"Saving final filtered spectrums to {os.path.join(DOWNLOAD_DIR, 'final_filtered_spectrums.mgf')}...")
     save_as_mgf(final_filtered_spectrums, os.path.join(DOWNLOAD_DIR, "final_filtered_spectrums.mgf"))
-    
+
     logging.info(f"Processing complete: {len(final_filtered_spectrums)} unique spectrums returned after filtering.")
-    
+
     # Check for duplicates
     assert count_unique_inchikeys(final_filtered_spectrums) == len(final_filtered_spectrums), \
         "Duplicate InChIKeys found in the final_filtered_spectrums."
-    
+
     logging.info("Final check: No duplicate InChIKeys detected.")
 
 if __name__ == "__main__":

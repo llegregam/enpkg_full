@@ -8,14 +8,14 @@ Taxonomical compound access lives in LotusStore, and the CSV / pickle fallbacks
 have been dropped in favour of the DuckDB-only path.
 """
 
-from typing import NamedTuple
-from pathlib import Path
-from urllib.parse import urlparse, unquote
 from logging import Logger
+from pathlib import Path
 from time import time
+from typing import NamedTuple
+from urllib.parse import unquote, urlparse
 
-from matchms import Spectrum
 from downloaders import BaseDownloader
+from matchms import Spectrum
 
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.exceptions import DBLoaderError
@@ -56,19 +56,19 @@ class DBLoader:
             self._collect_downloads()
             if self.downloads:
                 self._download_databases()
-        
+
         # Always reconcile paths (handles both fresh downloads and pre-existing files)
         self._reconcile_extracted_paths()
 
     def _validate_redownload_fields(self) -> None:
         """Validate that redownload_if_exists contains only valid URL field names."""
-        
+
         redownload = self.configuration.downloader_params.redownload_if_exists
-        
+
         # If it's a boolean, no validation needed
         if isinstance(redownload, bool):
             return
-        
+
         # If it's a list, validate each field name
         if isinstance(redownload, list):
             invalid_fields = [field for field in redownload if field not in VALID_URL_FIELDS]
@@ -80,12 +80,12 @@ class DBLoader:
 
     def _collect_downloads(self) -> None:
         """Match URLs to their corresponding local paths.
-        
+
         If download_dir is specified, paths are auto-derived from URLs.
         Otherwise, uses explicitly defined paths from configuration.
         """
         download_dir = self.configuration.downloader_params.download_dir
-        
+
         for field_name, url in self.configuration.downloader_params.urls.items():
             if download_dir is not None:
                 # Derive path from URL filename + download_dir
@@ -103,7 +103,7 @@ class DBLoader:
                     self.logger.warning(
                         f"No local path defined for URL '{field_name}' and no download_dir set; skipping"
                     )
-    
+
     def _derive_path_from_url(self, url: str, download_dir: str) -> str:
         """Extract filename from URL and combine with download directory.
 
@@ -111,7 +111,7 @@ class DBLoader:
         Raises DBLoaderError if the URL doesn't contain a valid filename.
         """
         if not url or not url.strip():
-            raise DBLoaderError(f"URL cannot be empty")
+            raise DBLoaderError("URL cannot be empty")
 
         parsed = urlparse(url)
         # Get the path component and extract filename
@@ -142,13 +142,13 @@ class DBLoader:
                 p = Path(download.local_path)
                 redownload = self.configuration.downloader_params.redownload_if_exists
                 should_redownload = (
-                    redownload is True or 
+                    redownload is True or
                     (isinstance(redownload, list) and download.field_name in redownload)
                 )
-                
+
                 # Check if file exists (either compressed or extracted version)
                 file_exists = p.is_file() or self._extracted_file_exists(p)
-                
+
                 if file_exists and not should_redownload:
                     self.logger.info(
                         f"Database at {download.local_path} already exists; skipping download"
@@ -156,17 +156,17 @@ class DBLoader:
                 else:
                     downloader.download(download.url, download.local_path)
                     self.logger.info(f"Downloaded database from {download.url} to {download.local_path}")
-                    
+
             except Exception as e:
                 self.logger.error(
                     f"Failed to download database from {download.url} to {download.local_path}: {str(e)}"
                 )
-        
+
         self.logger.info("Databases downloaded successfully")
-    
+
     def _extracted_file_exists(self, file_path: Path) -> bool:
         """Check if an extracted version of the file exists.
-        
+
         For compressed files like .csv.gz, checks if .csv exists.
         """
         for ext in ['.gz', '.zip', '.bz2', '.xz']:
@@ -178,23 +178,23 @@ class DBLoader:
 
     def _reconcile_extracted_paths(self) -> None:
         """Reconcile paths after BaseDownloader extraction.
-        
+
         BaseDownloader automatically extracts compressed files:
         - Downloads `file.csv.gz` to the specified path
         - Extracts to `file.csv` (without compression extension)
         - Creates `file.csv.gz.extracted` marker file
-        
+
         This method:
         1. Finds the actual extracted file (e.g., .csv.gz -> .csv)
         2. Updates configuration.paths to point to the extracted file
         3. Cleans up the '.extracted' marker files
-        
+
         Works both when URLs are provided (using self.downloads) and when only
         paths are provided (checking configuration.paths directly).
         """
         # Collect all paths to reconcile: from downloads list or directly from config paths
         paths_to_reconcile: list[tuple[str, str]] = []  # (field_name, local_path)
-        
+
         if self.downloads:
             paths_to_reconcile = [(d.field_name, d.local_path) for d in self.downloads]
         elif self.configuration.downloader_params.paths is not None:
@@ -202,14 +202,14 @@ class DBLoader:
                 local_path = getattr(self.configuration.downloader_params.paths, field_name, None)
                 if local_path is not None:
                     paths_to_reconcile.append((field_name, local_path))
-        
+
         reconciled_downloads: list[DownloadInfo] = []
-        
+
         for field_name, local_path in paths_to_reconcile:
             file_path = Path(local_path)
             extracted_marker = Path(f"{local_path}.extracted")
             actual_path = file_path
-            
+
             # BaseDownloader extracts .gz -> removes extension
             # Check if the compressed file was extracted to a file without the extension
             if not file_path.is_file():
@@ -222,7 +222,7 @@ class DBLoader:
                                 f"Found extracted file: {file_path} -> {actual_path}"
                             )
                             break
-            
+
             # Update configuration paths to point to actual file
             if actual_path != file_path:
                 if hasattr(self.configuration.downloader_params.paths, field_name):
@@ -230,7 +230,7 @@ class DBLoader:
                     self.logger.info(
                         f"Updated path for '{field_name}': {file_path} -> {actual_path}"
                     )
-            
+
             # Clean up the .extracted marker file if it exists
             if extracted_marker.is_file():
                 try:
@@ -238,7 +238,7 @@ class DBLoader:
                     self.logger.debug(f"Removed extraction marker: {extracted_marker}")
                 except OSError as e:
                     self.logger.warning(f"Could not remove marker file {extracted_marker}: {e}")
-            
+
             # Rebuild downloads list entry with actual path
             if self.downloads:
                 matching_download = next(
@@ -248,7 +248,7 @@ class DBLoader:
                     reconciled_downloads.append(
                         DownloadInfo(field_name, matching_download.url, str(actual_path))
                     )
-        
+
         if self.downloads:
             self.downloads = reconciled_downloads
 

@@ -2,8 +2,8 @@
 
 import networkx as nx
 import numpy as np
-from tqdm.auto import tqdm
 from numba import njit, prange
+from tqdm.auto import tqdm
 
 
 @njit(parallel=True)

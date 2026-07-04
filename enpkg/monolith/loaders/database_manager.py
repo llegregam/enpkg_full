@@ -146,6 +146,25 @@ _COMPOUND_COLUMNS = [
     "manual_validation",
 ]
 
+# Columns whose mixed-case names must be double-quoted in SQL to preserve case.
+_QUOTED_COMPOUND_COLUMNS = frozenset(
+    {"structure_smiles_2D", "structure_nameIupac", "structure_nameTraditional"}
+)
+
+# Shared compound SELECT, derived from _COMPOUND_COLUMNS so the projected order
+# can never drift from the column-index contract LotusStore relies on: compound
+# columns first (in _COMPOUND_COLUMNS order), then pathways/superclasses/classes.
+# Callers append their own ORDER BY / WHERE clause.
+_COMPOUND_SELECT = (
+    "SELECT "
+    + ", ".join(
+        f'c."{col}"' if col in _QUOTED_COMPOUND_COLUMNS else f"c.{col}"
+        for col in _COMPOUND_COLUMNS
+    )
+    + ", n.pathways, n.superclasses, n.classes "
+    + "FROM compounds c LEFT JOIN npc_classifications n USING (structure_smiles)"
+)
+
 
 class DatabaseManager:
     """
@@ -547,161 +566,29 @@ class DatabaseManager:
         )
 
     # ── Compound queries ───────────────────────────────────────────────────────
-
-    def get_all_compound_metadata(self) -> pl.DataFrame:
-        """
-        Return all compound metadata joined with npc_classifications as a Polars DataFrame.
-
-        The result includes structure, taxonomy, organism, reference, and NPC classification data.
-        """
-        logger.debug("Querying all compound metadata with NPC classifications")
-        t0 = time()
-        df = self._conn.execute("""
-            SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
-                   c.structure_smiles, c.structure_molecular_formula,
-                   c.structure_exact_mass, c.structure_xlogp,
-                   c."structure_smiles_2D", c.structure_cid,
-                   c."structure_nameIupac", c."structure_nameTraditional",
-                   c.structure_stereocenters_total,
-                   c.structure_stereocenters_unspecified,
-                   c.structure_taxonomy_classyfire_chemontid,
-                   c.structure_taxonomy_classyfire_01kingdom,
-                   c.structure_taxonomy_classyfire_02superclass,
-                   c.structure_taxonomy_classyfire_03class,
-                   c.structure_taxonomy_classyfire_04directparent,
-                   c.organism_wikidata, c.organism_name,
-                   c.organism_taxonomy_gbifid, c.organism_taxonomy_ncbiid,
-                   c.organism_taxonomy_ottid,
-                   c.organism_taxonomy_01domain, c.organism_taxonomy_02kingdom,
-                   c.organism_taxonomy_03phylum, c.organism_taxonomy_04class,
-                   c.organism_taxonomy_05order, c.organism_taxonomy_06family,
-                   c.organism_taxonomy_07tribe, c.organism_taxonomy_08genus,
-                   c.organism_taxonomy_09species, c.organism_taxonomy_10varietas,
-                   c.reference_wikidata, c.reference_doi, c.manual_validation,
-                   n.pathways, n.superclasses, n.classes
-            FROM compounds c
-            LEFT JOIN npc_classifications n USING (structure_smiles)
-        """).pl()
-        logger.debug("get_all_compound_metadata returned %d rows in %.2fs", len(df), time() - t0)
-        return df
+    # Both queries share _COMPOUND_SELECT (derived from _COMPOUND_COLUMNS) and
+    # only differ in the trailing ORDER BY / WHERE clause. The projected column
+    # order is the contract LotusStore uses to build Lotus objects by index.
 
     def get_compound_metadata_sorted_by_short_inchikey(self) -> pl.DataFrame:
-        """Like get_all_compound_metadata() but ordered by short_inchikey."""
+        """Return all compound metadata + NPC classifications, ordered by short_inchikey."""
         logger.debug("Querying compound metadata sorted by short_inchikey")
         t0 = time()
-        df = self._conn.execute("""
-            SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
-                   c.structure_smiles, c.structure_molecular_formula,
-                   c.structure_exact_mass, c.structure_xlogp,
-                   c."structure_smiles_2D", c.structure_cid,
-                   c."structure_nameIupac", c."structure_nameTraditional",
-                   c.structure_stereocenters_total,
-                   c.structure_stereocenters_unspecified,
-                   c.structure_taxonomy_classyfire_chemontid,
-                   c.structure_taxonomy_classyfire_01kingdom,
-                   c.structure_taxonomy_classyfire_02superclass,
-                   c.structure_taxonomy_classyfire_03class,
-                   c.structure_taxonomy_classyfire_04directparent,
-                   c.organism_wikidata, c.organism_name,
-                   c.organism_taxonomy_gbifid, c.organism_taxonomy_ncbiid,
-                   c.organism_taxonomy_ottid,
-                   c.organism_taxonomy_01domain, c.organism_taxonomy_02kingdom,
-                   c.organism_taxonomy_03phylum, c.organism_taxonomy_04class,
-                   c.organism_taxonomy_05order, c.organism_taxonomy_06family,
-                   c.organism_taxonomy_07tribe, c.organism_taxonomy_08genus,
-                   c.organism_taxonomy_09species, c.organism_taxonomy_10varietas,
-                   c.reference_wikidata, c.reference_doi, c.manual_validation,
-                   n.pathways, n.superclasses, n.classes
-            FROM compounds c
-            LEFT JOIN npc_classifications n USING (structure_smiles)
-            ORDER BY c.short_inchikey
-        """).pl()
+        df = self._conn.execute(_COMPOUND_SELECT + " ORDER BY c.short_inchikey").pl()
         logger.debug(
             "get_compound_metadata_sorted_by_short_inchikey returned %d rows in %.2fs",
             len(df), time() - t0,
         )
         return df
 
-    def get_compound_metadata_by_formulas(self, formulas: list[str]) -> pl.DataFrame:
-        """
-        Return compound metadata whose molecular formula is in the provided list,
-        joined with npc_classifications.
-
-        Parameters
-        ----------
-        formulas:
-            List of molecular formula strings (e.g., ['C10H12O3', 'C15H24']).
-        """
-        if not formulas:
-            logger.debug("get_compound_metadata_by_formulas called with empty list — returning empty DataFrame")
-            return pl.DataFrame()
-        logger.debug("Querying compound metadata for %d molecular formulas", len(formulas))
-        t0 = time()
-        placeholders = ", ".join("?" * len(formulas))
-        df = self._conn.execute(f"""
-            SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
-                   c.structure_smiles, c.structure_molecular_formula,
-                   c.structure_exact_mass, c.structure_xlogp,
-                   c."structure_smiles_2D", c.structure_cid,
-                   c."structure_nameIupac", c."structure_nameTraditional",
-                   c.structure_stereocenters_total,
-                   c.structure_stereocenters_unspecified,
-                   c.structure_taxonomy_classyfire_chemontid,
-                   c.structure_taxonomy_classyfire_01kingdom,
-                   c.structure_taxonomy_classyfire_02superclass,
-                   c.structure_taxonomy_classyfire_03class,
-                   c.structure_taxonomy_classyfire_04directparent,
-                   c.organism_wikidata, c.organism_name,
-                   c.organism_taxonomy_gbifid, c.organism_taxonomy_ncbiid,
-                   c.organism_taxonomy_ottid,
-                   c.organism_taxonomy_01domain, c.organism_taxonomy_02kingdom,
-                   c.organism_taxonomy_03phylum, c.organism_taxonomy_04class,
-                   c.organism_taxonomy_05order, c.organism_taxonomy_06family,
-                   c.organism_taxonomy_07tribe, c.organism_taxonomy_08genus,
-                   c.organism_taxonomy_09species, c.organism_taxonomy_10varietas,
-                   c.reference_wikidata, c.reference_doi, c.manual_validation,
-                   n.pathways, n.superclasses, n.classes
-            FROM compounds c
-            LEFT JOIN npc_classifications n USING (structure_smiles)
-            WHERE c.structure_molecular_formula IN ({placeholders})
-        """, formulas).pl()
-        logger.debug(
-            "get_compound_metadata_by_formulas returned %d rows for %d formulas in %.2fs",
-            len(df), len(formulas), time() - t0,
-        )
-        return df
-
     def get_compound_metadata_by_mass_range(self, low: float, high: float) -> pl.DataFrame:
-        """Return compound metadata with structure_exact_mass in [low, high], joined with npc_classifications."""
+        """Return compound metadata with structure_exact_mass in [low, high] (+ NPC classifications)."""
         logger.debug("Querying compound metadata with exact_mass in [%.4f, %.4f]", low, high)
         t0 = time()
-        df = self._conn.execute("""
-            SELECT c.structure_wikidata, c.structure_inchikey, c.structure_inchi,
-                   c.structure_smiles, c.structure_molecular_formula,
-                   c.structure_exact_mass, c.structure_xlogp,
-                   c."structure_smiles_2D", c.structure_cid,
-                   c."structure_nameIupac", c."structure_nameTraditional",
-                   c.structure_stereocenters_total,
-                   c.structure_stereocenters_unspecified,
-                   c.structure_taxonomy_classyfire_chemontid,
-                   c.structure_taxonomy_classyfire_01kingdom,
-                   c.structure_taxonomy_classyfire_02superclass,
-                   c.structure_taxonomy_classyfire_03class,
-                   c.structure_taxonomy_classyfire_04directparent,
-                   c.organism_wikidata, c.organism_name,
-                   c.organism_taxonomy_gbifid, c.organism_taxonomy_ncbiid,
-                   c.organism_taxonomy_ottid,
-                   c.organism_taxonomy_01domain, c.organism_taxonomy_02kingdom,
-                   c.organism_taxonomy_03phylum, c.organism_taxonomy_04class,
-                   c.organism_taxonomy_05order, c.organism_taxonomy_06family,
-                   c.organism_taxonomy_07tribe, c.organism_taxonomy_08genus,
-                   c.organism_taxonomy_09species, c.organism_taxonomy_10varietas,
-                   c.reference_wikidata, c.reference_doi, c.manual_validation,
-                   n.pathways, n.superclasses, n.classes
-            FROM compounds c
-            LEFT JOIN npc_classifications n USING (structure_smiles)
-            WHERE c.structure_exact_mass BETWEEN ? AND ?
-        """, [low, high]).pl()
+        df = self._conn.execute(
+            _COMPOUND_SELECT + " WHERE c.structure_exact_mass BETWEEN ? AND ?",
+            [low, high],
+        ).pl()
         logger.debug(
             "get_compound_metadata_by_mass_range returned %d rows in %.2fs", len(df), time() - t0
         )
@@ -721,32 +608,13 @@ class DatabaseManager:
         logger.info("Retrieved %d spectra (mode=%s) in %.2fs", len(spectra), mode, time() - t0)
         return spectra
 
-    def get_spectra_by_mass_range(
-        self, low: float, high: float, mode: str
-    ) -> list[Spectrum]:
-        """Return spectra with precursor_mz in [low, high] for the given mode."""
-        logger.debug(
-            "Querying spectral_library: precursor_mz in [%.4f, %.4f], mode=%s", low, high, mode
-        )
-        t0 = time()
-        rows = self._conn.execute(
-            "SELECT * FROM spectral_library WHERE precursor_mz BETWEEN ? AND ? AND mode = ?",
-            [low, high, mode],
-        ).fetchall()
-        cols = [d[0] for d in self._conn.description]
-        spectra = self._reconstruct_spectra(rows, cols)
-        logger.debug(
-            "get_spectra_by_mass_range returned %d spectra in %.2fs", len(spectra), time() - t0
-        )
-        return spectra
-
     def _reconstruct_spectra(
         self, rows: list[tuple], cols: list[str]
     ) -> list[Spectrum]:
         """Convert raw DuckDB rows into matchms.Spectrum objects."""
         spectra = []
         for row in rows:
-            r = dict(zip(cols, row))
+            r = dict(zip(cols, row, strict=False))
             mzs = np.array(r["mzs"], dtype=float)
             intensities = np.array(r["intensities"], dtype=float)
             metadata: dict = {"compound_name": r["compound_name"],

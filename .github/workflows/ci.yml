@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev --no-interaction --no-root
+
+      - name: Ruff lint
+        run: poetry run ruff check enpkg
+
+      - name: Unit tests (no integration)
+        # The integration suite (tests/test_enhancers) needs the multi-GB DuckDB
+        # database, network access and external tools, so it is skipped in CI.
+        run: poetry run pytest -m "not integration" -o log_cli=false

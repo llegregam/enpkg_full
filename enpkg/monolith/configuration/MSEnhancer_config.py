@@ -1,11 +1,11 @@
 """Configuration classes for ISDB enrichment."""
 
-from typing import Optional
-from enum import Enum
+from typing import Literal, Optional
+
 from pydantic import BaseModel, Field
 
-from enpkg.monolith.configuration.config import GeneralParams, EnhancerConfig
-    
+from enpkg.monolith.configuration.config import EnhancerConfig, GeneralParams
+
 
 class Urls(BaseModel):
     """URLs for remote data files."""
@@ -124,7 +124,9 @@ class SpectralMatchParams(BaseModel):
     parent_mz_tol: float = Field(
         default=0.01,
         gt=0,
-        description="Parent mass tolerance for spectral matching (in Da)"
+        description="Parent (precursor) m/z tolerance in Daltons. Governs both the "
+        "MS2 precursor pre-filter and the MS1 adduct mass window. Note: this is a "
+        "Dalton tolerance, unlike the legacy workflow's ppm MS1 tolerance."
     )
     msms_mz_tol: float = Field(
         default=0.01,
@@ -142,7 +144,7 @@ class SpectralMatchParams(BaseModel):
         ge=1,
         description="Minimum number of matching peaks required"
     )
-    method: str = Field(
+    method: Literal["cosine_greedy", "cosine_hungarian"] = Field(
         default="cosine_greedy",
         description="Spectral similarity method to use ('cosine_greedy' or 'cosine_hungarian')"
     )
@@ -170,10 +172,10 @@ class DownloaderParams(BaseModel):
         default=None,
         description="Path to persistent DuckDB file. If None, falls back to CSV/pickle loading."
     )
-    
+
 class MSEnhancerConfig(EnhancerConfig, BaseModel):
     """Configuration for MS Enhancers.
-    
+
     Combines all sub-configurations for spectral matching against
     the In-Silico DataBase with taxonomic and chemical reweighting.
     """
@@ -186,9 +188,9 @@ class MSEnhancerConfig(EnhancerConfig, BaseModel):
         default_factory=DownloaderParams,
         description="Parameters for controlling database downloading behavior"
     )
-    
+
     spectral_match_params: SpectralMatchParams = Field(
         default_factory=SpectralMatchParams,
         description="Parameters for spectral matching"
     )
-    
+

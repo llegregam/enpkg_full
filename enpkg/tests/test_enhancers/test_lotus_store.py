@@ -8,7 +8,6 @@ from enpkg.monolith.exceptions import DBLoaderError
 from enpkg.monolith.loaders.database_manager import DatabaseManager
 from enpkg.monolith.loaders.lotus_store import LotusStore
 
-
 # Compound columns in the order DatabaseManager._COMPOUND_COLUMNS / SELECT statements use.
 _COMPOUND_COLS = [
     "structure_wikidata", "structure_inchikey", "structure_inchi",

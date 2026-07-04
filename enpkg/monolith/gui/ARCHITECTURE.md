@@ -11,19 +11,20 @@ configs and pipeline steps.
 The GUI is a thin shell around the existing pipeline. It must not:
 
 - re-declare any configuration schema (all validation stays in Pydantic),
-- hard-code the list of pipeline steps (one registry, [blocks.py](blocks.py)),
-- duplicate orchestration logic ([runner.py](runner.py) mirrors the data flow
-  already proven by [enpkg/monolith/pipeline/test.py](../pipeline/test.py)).
+- hard-code the list of pipeline blocks (one registry, [blocks.py](blocks.py)),
+- duplicate orchestration logic (it all lives in [runner.py](runner.py)).
 
 Everything the user sees — the block checkboxes, the tabs, the form fields,
 the validated JSON preview, the runner — is derived from three sources of
 truth:
 
-1. `BLOCKS` in [blocks.py](blocks.py) — which pipeline steps exist.
-2. `model_cls.model_fields` on each Pydantic config — which fields that step
+1. `BLOCKS` in [blocks.py](blocks.py) — which pipeline blocks exist, and for
+   each one, how to build its `Enhancer` (`build_enhancer`) and when it applies
+   (`can_run`).
+2. `model_cls.model_fields` on each Pydantic config — which fields that block
    takes.
-3. Each `PipelineStep` subclass's `can_run` / `process` / constructor — how to
-   run the step.
+3. Each enhancer's uniform `enhance(analysis) -> Analysis` contract — how the
+   block transforms the analysis.
 
 ## 2. Module map
 
@@ -31,7 +32,7 @@ truth:
 enpkg/monolith/gui/
 ├── __init__.py
 ├── app.py            Streamlit entry point (layout, session state, glue)
-├── blocks.py         Pipeline-block registry (id → step, config, deps)
+├── blocks.py         Pipeline-block registry (id → enhancer builder, can_run, config, deps)
 ├── form_builder.py   Pydantic BaseModel → Streamlit widget tree
 ├── config_io.py      Unified YAML load/save + config instantiation
 └── runner.py         Pipeline execution, DBLoader sharing, log streaming
@@ -44,8 +45,13 @@ together:
 
 - `id` — short string key used in YAML, session state and widget keys;
 - `label` — human-readable name shown in sidebar and tabs;
-- `step_cls` — the `PipelineStep` subclass;
+- `build_enhancer` — `(config, BuildContext) -> Enhancer`: how to construct the
+  block's enhancer from the run's shared resources (logger, DBLoader,
+  LotusStore);
+- `can_run` — `(Analysis) -> bool`: the applicability guard (e.g. taxonomical
+  needs a source taxon; weights needs a molecular network);
 - `config_cls` — the Pydantic `EnhancerConfig` (or `None` for taxonomical);
+- `log_summary` — post-run report function (see the module docstring);
 - `description` — tooltip text;
 - `depends_on` — block ids that must also be selected (e.g. `weights` →
   `network`).
@@ -54,9 +60,12 @@ The list is **ordered** — it defines the canonical pipeline execution order.
 `BLOCKS_BY_ID` gives O(1) lookup. `MS_SHARED_BLOCKS`/`MS_SHARED_KEY` mark the
 MS1/MS2 pair that shares a single `MSEnhancerConfig`.
 
-Adding a new pipeline block to the GUI = adding one `BlockSpec` entry plus a
-tiny `_build_step` branch in [runner.py](runner.py) if the constructor shape
-is new.
+Because every enhancer honours the uniform `enhance(analysis) -> Analysis`
+contract, there is **no per-block step class** — the runner wraps
+`build_enhancer` + `can_run` into one generic step. Adding a new pipeline block
+is therefore *only* adding one `BlockSpec` entry (with a `build_enhancer`
+closure and a `can_run` predicate); no new step file and no `_build_step`
+branch are needed.
 
 ### 2.2 [form_builder.py](form_builder.py) — schema-driven forms
 
@@ -146,15 +155,17 @@ Steps:
    `weights` (all three need database access).
 4. Iterate `BLOCKS` in canonical order. For each selected block:
    - skip if any `depends_on` entry is not also selected,
-   - construct the step via `_build_step` (one small match over known
-     constructor shapes),
-   - skip if `step.can_run(analysis)` is False,
-   - call `step.process(analysis)` and replace the working `analysis`.
+   - bind the block to its config + shared resources via `_build_step` — a
+     generic `_BoundBlock` that wraps the registry's `build_enhancer` /
+     `can_run` (there are no per-block step classes),
+   - skip if `can_run(analysis)` is False,
+   - build the enhancer and call `enhance(analysis)`, replacing the working
+     `analysis`.
 5. Return a `RunResult` with the final `analysis`, the list of executed
    blocks, skipped blocks, and any error message.
 
-The runner is the only module that imports pipeline-step classes; everything
-upstream of it works off the registry.
+The runner and the `blocks` registry are the only modules that import enhancer
+classes; everything upstream works off `BLOCKS`.
 
 ### 2.5 [app.py](app.py) — Streamlit glue
 
@@ -256,7 +267,7 @@ flowchart TD
     runner[runner.py]
 
     config[configuration/*.py<br/>Pydantic models]
-    steps[pipeline/*_step.py]
+    enhancers[enhancers/*.py]
     loader[loaders/analysis_loader.py]
     dbloader[loaders/database_loader.py]
 
@@ -274,7 +285,7 @@ flowchart TD
     runner --> dbloader
     runner --> config
 
-    blocks --> steps
+    blocks --> enhancers
     blocks --> config
 
     form --> config
@@ -294,7 +305,7 @@ sequenceDiagram
     participant I as config_io
     participant R as runner
     participant DB as DBLoader
-    participant S as PipelineStep(s)
+    participant S as Enhancer(s)
 
     U->>A: tick "network", "ms1", "ms2"
     U->>A: edit General params (polarity=neg)
@@ -308,11 +319,9 @@ sequenceDiagram
     R->>R: AnalysisLoader.from_files(...)
     R->>DB: new DBLoader(ms_config)
     loop each selected block in canonical order
-        R->>S: step = _build_step(block_id, cfg, logger, db_loader)
-        S-->>R: instance
-        R->>S: can_run(analysis)?
-        S-->>R: True
-        R->>S: process(analysis)
+        R->>R: bind block (build_enhancer + can_run)
+        R->>R: can_run(analysis)?
+        R->>S: enhance(analysis)
         S-->>R: enriched analysis
     end
     R-->>A: RunResult(analysis, executed, skipped, error)
@@ -336,16 +345,17 @@ sequenceDiagram
 - **Workspace split.** `gui_workspace/databases/` is fixed and owned by the
   `DBLoader`; `gui_workspace/input/` is the **default** input folder but the
   user can point elsewhere at runtime.
-- **The runner is the only orchestrator.** The app never calls
-  `PipelineStep` directly; that keeps UI concerns (logging, error surfacing)
-  separate from pipeline concerns.
+- **The runner is the only orchestrator.** The app never calls enhancers
+  directly; that keeps UI concerns (logging, error surfacing) separate from
+  pipeline concerns.
 
 ## 5. Extending the GUI
 
-- **Add a new pipeline block**: create the step + config, add one `BlockSpec`
-  entry to `BLOCKS`, and — only if the constructor shape is new — add a
-  branch to `_build_step` in [runner.py](runner.py). The sidebar checkbox,
-  tab, form, YAML section and execution slot all appear automatically.
+- **Add a new pipeline block**: create the enhancer (honouring
+  `enhance(analysis) -> Analysis`) + its config, then add one `BlockSpec` entry
+  to `BLOCKS` with a `build_enhancer` closure and a `can_run` predicate. No step
+  file and no `_build_step` branch are needed — the sidebar checkbox, tab, form,
+  YAML section, execution slot and runner wiring all appear automatically.
 - **Add a new shared sub-config**: render it above the tabs like
   `general_params`, store it in session state, add it to the
   `exclude_fields` set of affected tabs, and inject it back in
