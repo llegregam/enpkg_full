@@ -24,20 +24,35 @@ from typing import Optional
 from urllib.parse import quote
 
 import numpy as np
-from rdflib import Graph, Literal, URIRef, BNode
+from rdflib import BNode, Graph, Literal, URIRef
 
-from .namespaces import (
-    RDF, RDFS, OWL,
-    EMI, ENPKG, SOSA, MS, CHEMROF, NCBITAXON, NCBITAXON_PROP,
-    PROV, DCTERMS, SKOS, EMI_RES,
-    WD, INCHIKEY, PUBCHEM, GBIF, DOI,
-)
-from .uris import AnalysisURIs, CompoundURIs, OrganismURIs, _organism_uri
 from ..data.analysis import Analysis
 from ..data.annotated_spectra_class import AnnotatedSpectrum
-from ..data.ms1_data_classes.adduct_class import ChemicalAdduct, AdductRecipe
 from ..data.chemical_annotation import MS2ChemicalAnnotation
 from ..data.lotus_class import Lotus
+from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
+from .namespaces import (
+    CHEMROF,
+    DCTERMS,
+    DOI,
+    EMI,
+    EMI_RES,
+    ENPKG,
+    GBIF,
+    INCHIKEY,
+    MS,
+    NCBITAXON,
+    NCBITAXON_PROP,
+    OWL,
+    PROV,
+    PUBCHEM,
+    RDF,
+    RDFS,
+    SKOS,
+    SOSA,
+    WD,
+)
+from .uris import AnalysisURIs, CompoundURIs, OrganismURIs, _organism_uri
 
 # Prefixes bound on the output graph (cosmetic — controls Turtle prefix display).
 _PREFIXES = {
@@ -250,7 +265,7 @@ class AnalysisSerializer:
         self._set(uri, EMI.hasParentMass, spectrum.precursor_mz)
         self._set(uri, EMI.hasRetentionTime, spectrum.retention_time)
         self._set(uri, EMI.hasFeatureArea, spectrum.intensity)
-        # TODO: Look into the ranking of annotations. Should think of when we want to use 
+        # TODO: Look into the ranking of annotations. Should think of when we want to use
         # simple Cosine ranking vs. the more complex reweighted NPC-alignment score
         self._add_ranked_annotations(
             uri, spectrum.ms1_annotations,

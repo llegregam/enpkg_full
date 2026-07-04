@@ -3,18 +3,18 @@ from typing import Optional
 
 from rdflib import URIRef
 
-from .namespaces import EMI_RES, INCHIKEY
 from ..data.analysis import Analysis
 from ..data.annotated_spectra_class import AnnotatedSpectrum
+from ..data.chemical_annotation import AnnotationOrganism, MS2ChemicalAnnotation
 from ..data.lotus_class import Lotus
-from ..data.ms1_data_classes.adduct_class import ChemicalAdduct, AdductRecipe
-from ..data.chemical_annotation import MS2ChemicalAnnotation, AnnotationOrganism
+from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.otl_class import Match
+from .namespaces import EMI_RES, INCHIKEY
 
 
 class AnalysisURIs:
     """Stable URIs for entities related to an Analysis.
-    These are minted in the context of a specific Analysis, 
+    These are minted in the context of a specific Analysis,
     so they can use run-scoped identifiers (e.g. feature_id) and best-match taxon IDs.
     """
     @staticmethod
@@ -105,7 +105,7 @@ class AnalysisURIs:
         different set of attributes and may be used in different contexts.
         """
         return EMI_RES[f"metadata/{analysis.run_name}"]
-    
+
     @staticmethod
     def source_organism_uri(analysis: Analysis) -> Optional[URIRef]:
         """Mint the URI for the sample's source organism.
@@ -212,5 +212,5 @@ class OrganismURIs:
         (Wikidata IRI -> OTT-keyed EMI_RES -> None).
         """
         return _organism_uri(organism.wikidata, organism.ott_id)
-    
-    
+
+

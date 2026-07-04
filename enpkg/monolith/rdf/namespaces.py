@@ -12,7 +12,7 @@ The full entity -> term mapping lives in ``docs/RDF_DATA_MODEL_mapped.md``.
 """
 
 from rdflib import Namespace
-from rdflib.namespace import RDF, RDFS, OWL, XSD  # re-exported for one-stop import
+from rdflib.namespace import OWL, RDF, RDFS, XSD  # re-exported for one-stop import
 
 # --- Vocabulary: classes & predicates ---------------------------------------
 EMI       = Namespace("https://w3id.org/emi#")                # Earth Metabolome Ontology (backbone)
