@@ -1,14 +1,16 @@
 """Submodule for the taxa enhancer."""
 
 import logging
-from typing import Dict, Optional
-from opentree import OT
-import requests
 from re import match as regex_match
+from typing import Dict, Optional
+
+import requests
+from opentree import OT
+
 from enpkg.monolith.data.analysis import Analysis
-from enpkg.monolith.enhancers.enhancer import Enhancer
-from enpkg.monolith.data.otl_class import Match, LineageItem
+from enpkg.monolith.data.otl_class import LineageItem, Match
 from enpkg.monolith.data.wikidata_ott_query_class import WikidataOTTQuery
+from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.exceptions import EnrichmentError
 
 logger = logging.getLogger(__name__)
@@ -160,7 +162,16 @@ class TaxaEnhancer(Enhancer):
 
         return matches
 
-    def enhance(self, genus: str, species: str) -> list[Match]:
-        """Now only takes strings and returns data."""
+    def enhance(self, analysis: Analysis) -> Analysis:
+        """Return the analysis with OTT matches for its source organism appended.
 
-        return self.retrieve_matches(genus, species)
+        No-op (returns the analysis unchanged) when the sample has no usable
+        source taxon, so callers don't need to guard first.
+        """
+        if not analysis.has_source_taxon:
+            return analysis
+        genus, species = analysis.genus_and_species
+        new_matches = self.retrieve_matches(genus, species)
+        return analysis.model_copy(
+            update={"ott_matches": [*analysis.ott_matches, *new_matches]}
+        )

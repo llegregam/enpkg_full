@@ -88,12 +88,12 @@ def build_configs(
 
     Raises pydantic.ValidationError on any invalid section. The caller is
     expected to surface that error to the user.
-    
+
     Args:
         selected_ids: The list of block IDs that are currently selected in the GUI.
         form_state: A mapping from block ID to the raw dictionary of form values for that block.
-    Returns: 
-        A dictionary mapping block IDs to their instantiated Pydantic config objects, 
+    Returns:
+        A dictionary mapping block IDs to their instantiated Pydantic config objects,
         based on the provided form state. For blocks without a config_cls, the value will be None.
     """
     result: dict[str, Any] = {}

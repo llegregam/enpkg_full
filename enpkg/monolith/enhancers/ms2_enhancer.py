@@ -1,29 +1,24 @@
 """Submodule for the ISDB enhancer."""
 
-import logging
 from itertools import groupby
-from time import time
 from logging import Logger
+from time import time
 from typing import Optional
 
 import matchms
-import pandas as pd
 import numpy as np
+from matchms import Spectrum, calculate_scores
+from matchms.similarity import CosineGreedy, CosineHungarian, PrecursorMzMatch
 from tqdm.auto import tqdm, trange
 from tqdm.contrib import tzip
 
-from matchms import calculate_scores
-from matchms.similarity import PrecursorMzMatch
-from matchms.similarity import CosineGreedy, CosineHungarian
-from matchms import Spectrum
-
-from enpkg.monolith.enhancers.enhancer import Enhancer
+from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
+from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
-from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig, SpectralMatchParams
-from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
+from enpkg.monolith.data.chemical_annotation import AnnotationOrganism, MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import Lotus
+from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.loaders.database_loader import DBLoader
-from enpkg.monolith.loaders.database_manager import DatabaseManager
 from enpkg.monolith.loaders.lotus_store import LotusStore
 
 
@@ -61,9 +56,12 @@ class Ms2Enhancer(Enhancer):
 
         self.logger.info("Loading Databases")
         # Taxonomy access is fully owned by LotusStore now; DBLoader is only
-        # around for the spectral DB.
+        # around for the spectral DB. Load the library matching the configured
+        # polarity so negative-mode runs query the negative library.
         start = time()
-        self.db_loader.load_spectral_databases(mode="pos") # TODO: add mode param to config
+        self.db_loader.load_spectral_databases(
+            mode=self.configuration.general_params.polarity
+        )
         self.logger.debug("Spectral databases loaded in %.2f seconds", time() - start)
 
         # TODO: Could be put elsewhere
@@ -106,7 +104,7 @@ class Ms2Enhancer(Enhancer):
     def name(self) -> str:
         """Returns the name of the enhancer."""
         return "MS2 Enhancer"
-    
+
     def _link_lotus_to_spectra(self) -> None:
         """Link Lotus entries to spectral database entries by short inchikey.
 
@@ -128,13 +126,19 @@ class Ms2Enhancer(Enhancer):
             dynamic_ncols=True,
             leave=False,
         ):
-            entries = lotus_by_short_inchikey.get(spectrum.get("compound_name"))
-            if entries is not None:
-                spectrum.set("lotus_entries", entries)
+            compound_name = spectrum.get("compound_name")
+            if compound_name is None:
+                self.logger.warning(
+                    "Spectrum %s has no compound_name metadata; skipping Lotus linking",
+                    spectrum.get("spectrum_id", "unknown"),
+                )
+                continue
+            entries = lotus_by_short_inchikey.get(compound_name)
+            spectrum.set("lotus_entries", entries)
 
         self.logger.debug(f"Linked lotus to spectra in {time() - start:.2f} seconds")
 
-    def enhance(self, spectrum_list: list[AnnotatedSpectrum], chunk_size: int = 1000) -> list[AnnotatedSpectrum]:
+    def enhance(self, analysis: Analysis, chunk_size: int = 1000) -> Analysis:
         """Add MS2 chemical annotations to each spectrum via two-stage matching.
 
         Stage 1 — ``precursor_filter`` (PrecursorMzMatch): cheap pre-filter run
@@ -153,6 +157,8 @@ class Ms2Enhancer(Enhancer):
         in place to ``spectrum.ms2_annotations`` along with the matched
         library spectrum's ``lotus_entries``.
         """
+
+        spectrum_list: tuple[AnnotatedSpectrum] = analysis.spectra
 
         # First call in a batch triggers the expensive LotusStore fetch + library linking.
         self._ensure_lotus_objects()
@@ -174,6 +180,10 @@ class Ms2Enhancer(Enhancer):
                 cosine_similarity = CosineHungarian(
                     tolerance=self.configuration.spectral_match_params.msms_mz_tol
                     # TODO: Consider adding mz_power and intensity_power parameters
+                )
+            case _:
+                raise ValueError(
+                    f"Unknown spectral match method: {self.configuration.spectral_match_params.method!r}"
                 )
         self.logger.debug(
             f"precursor_filter: {precursor_filter}\n{self.configuration.spectral_match_params.method}: {cosine_similarity}"
@@ -216,76 +226,49 @@ class Ms2Enhancer(Enhancer):
                 msms_score, n_matches = cosine_similarity.pair(
                     spectra_chunk[ref_idx], self.db_loader.spectral_db[query_idx]
                 )[()] # Numpy indexing to extract a "scalar" (here a tuple (score, n_matches)) value from a 0-dim array
+                # min_peaks is an inclusive minimum (>=); min_score stays a strict
+                # lower bound (a match must beat the floor, not merely equal it).
                 if (
                     msms_score > self.configuration.spectral_match_params.min_score
-                    and 
-                    n_matches > self.configuration.spectral_match_params.min_peaks
+                    and
+                    n_matches >= self.configuration.spectral_match_params.min_peaks
                 ):
                     lotus_entries: list[Lotus] = self.db_loader.spectral_db[query_idx].get("lotus_entries")
+                    # No taxonomical-DB structure for this library hit -> no
+                    # InChIKey / classification arrays / organisms to keep.
+                    if not lotus_entries:
+                        continue
+                    representative: Lotus = lotus_entries[0]
+                    organisms = [
+                        AnnotationOrganism(
+                            name=entry.organism_name,
+                            wikidata=entry.organism_wikidata,
+                            ott_id=entry.organism_taxonomy_ottid,
+                            domain=entry.domain,
+                            kingdom=entry.kingdom,
+                            phylum=entry.phylum,
+                            klass=entry.klass,
+                            order=entry.order,
+                            family=entry.family,
+                            genus=entry.genus,
+                            species=entry.species,
+                        )
+                        for entry in lotus_entries
+                    ]
                     spectra_chunk[ref_idx].add_ms2_annotation(
                         MS2ChemicalAnnotation(
                             source="Lotus",
                             queried_against="ISDB", # TODO: Create versioning system for databases and include version in the annotation
-                            scores={
-                                self.configuration.spectral_match_params.method: {
-                                    "value": msms_score,
-                                    "n_matches": n_matches
-                                }
-                            },
-                            lotus_entries=lotus_entries,
+                            short_inchikey=representative.short_inchikey,
+                            score=float(msms_score),
+                            n_matched_peaks=int(n_matches),
+                            pathway_scores=representative.structure_taxonomy_hammer_pathways,
+                            superclass_scores=representative.structure_taxonomy_hammer_superclasses,
+                            class_scores=representative.structure_taxonomy_hammer_classes,
+                            organisms=organisms,
                         )
                     )
 
-        # Debug: Sample 5 random spectra to show annotation statistics
-        # import random
-        # sample_size = min(5, len(spectrum_list))
-        # sampled_spectra = random.sample(spectrum_list, k=sample_size)
-        # for spectrum in sampled_spectra:
-        #     n_annotations = len(spectrum.ms2_annotations) if spectrum.ms2_annotations else 0
-        #     self.logger.debug(f"Spectrum {spectrum.feature_id}: {n_annotations} MS2 annotations")
-        #     if n_annotations > 0:
-        #         # Show first 3 annotations as sample
-        #         for i, annotation in enumerate(spectrum.ms2_annotations[:3]):
-        #             self.logger.debug(
-        #                 f"  Annotation {i+1}: source={annotation.source}, "
-        #                 f"queried_against={annotation.queried_against}, "
-        #                 f"scores={annotation.scores}, "
-        #                 f"n_lotus_entries={len(annotation.lotus_entries) if annotation.lotus_entries else 0}"
-        #             )
-
-        # TODO: Decide if analysis should be modified in place or if we should return a new enriched analysis object
-        return spectrum_list
-
-
-if __name__ == "__main__":
-
-    from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-    from enpkg.monolith.pipeline.test_pol import load_config
-
-    logger = logging.getLogger("DBLoader")
-    logging.basicConfig(level=logging.DEBUG)
-    # Silence numba - only show warnings and above
-    logging.getLogger("numba").setLevel(logging.WARNING)
-    config = load_config()
-    config.ms_config.spectral_match_params.method = "cosine_hungarian" # or "hungarian"
-    # )
-    analysis = AnalysisLoader.from_files(
-        path_to_spectra="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/actea_EtOAc-1_pos.mgf",
-        path_to_metadata="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/qualome_metadata.txt",
-        path_to_quant_table="/home/llegregam/git_projects/enpkg_full/gui_workspace/input/actea_EtOAc-1_pos_quant.csv",
-        ionization_mode="pos"
-    )
-    logger.info(f"Loading enhancer from file")
-    start = time()
-    db_loader = DBLoader(configuration=config.ms_config, logger=logger)
-    lotus_store = LotusStore(
-        duckdb_path=config.ms_config.downloader_params.duckdb_path, logger=logger,
-    )
-    enhancer = Ms2Enhancer(
-        configuration=config.ms_config, logger=logger,
-        db_loader=db_loader, lotus_store=lotus_store,
-    )
-    logger.info(f"Enhancer loaded in {time() - start:.2f} seconds")
-    start = time()
-    enhancer.enhance(analysis.spectra)
-    logger.info(f"Enhanced analysis in {time() - start:.2f} seconds")
+        # Spectra are annotated in place; the same Analysis is returned (uniform
+        # enhancer contract).
+        return analysis

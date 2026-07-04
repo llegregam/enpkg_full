@@ -29,21 +29,21 @@ def render_model(
     with existing values and excluding specific fields from rendering.
 
     Args:
-        model_cls (type[BaseModel]): 
+        model_cls (type[BaseModel]):
             The Pydantic BaseModel subclass (e.g., `EnhancerConfig`) to render in the GUI. Each field in the model
             is rendered as a corresponding Streamlit widget based on its type and metadata.
-        current (dict | None): 
+        current (dict | None):
             A dictionary of current values to pre-populate the widgets with. This is useful for editing existing
             configurations or loading values from a YAML file. If `None`, fields will use their default values.
-        key_prefix (str): 
+        key_prefix (str):
             A unique string prefix to ensure Streamlit widget keys are distinct across the form. This is typically
             the block ID (e.g., "ms1") to avoid key collisions in Streamlit's session state.
-        exclude_fields (set[str] | None, optional): 
+        exclude_fields (set[str] | None, optional):
             A set of field names to exclude from rendering. This is useful for cases where certain fields (e.g.,
             shared sub-configurations like `general_params`) are rendered separately. Defaults to `None`.
-    
+
     Returns:
-        dict: 
+        dict:
             A dictionary mapping field names to the current values of the corresponding widgets. This dictionary
             can be validated and coerced using `model_cls.model_validate`.
     """
@@ -126,23 +126,23 @@ def _render_field(
     This function generates a Streamlit widget based on the type and metadata of a given Pydantic field.
     It supports various field types, including nested BaseModel instances, lists, booleans, integers, floats,
     and strings. The rendered widget allows users to input or modify the field's value, which is then returned
-    for further processing or validation. 
+    for further processing or validation.
 
     Args:
-        name (str): 
+        name (str):
             The name of the field to render. This is used as the label for the widget.
-        field_info (FieldInfo): 
+        field_info (FieldInfo):
             The Pydantic `FieldInfo` object containing metadata about the field, such as its type, default value,
             description, and validation constraints.
-        current_value (Any): 
+        current_value (Any):
             The current value of the field, used to pre-populate the widget. If `None`, the field's default value
             (if defined) is used instead.
-        key (str): 
+        key (str):
             A unique key for the Streamlit widget. This ensures that the widget's state is properly managed
             within Streamlit's session state.
 
     Returns:
-        Any: 
+        Any:
             The value entered by the user in the widget. The type of the returned value depends on the field's type:
             - For nested BaseModel fields, a dictionary of values is returned.
             - For lists, a list of strings is returned.
