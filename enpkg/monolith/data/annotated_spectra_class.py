@@ -1,16 +1,17 @@
 """Module to store annotated spectra and MSMS annotations."""
 
-from typing import Optional, Dict, Any, Tuple
-from matchms import Spectrum
+from typing import Dict, Optional
+
 import numpy as np
-from scipy.stats import entropy
-from enpkg.monolith.data.ms1_data_classes import ChemicalAdduct
+from matchms import Spectrum
+
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
+
 # from enpkg.monolith.data.sirius_data_classes import SiriusChemicalAnnotation
 from enpkg.monolith.data.lotus_class import (
     Lotus,
 )
-from enpkg.monolith.data.otl_class import Match
+from enpkg.monolith.data.ms1_data_classes import ChemicalAdduct
 
 
 class AnnotatedSpectrum(Spectrum):
@@ -65,7 +66,7 @@ class AnnotatedSpectrum(Spectrum):
     def feature_id(self) -> int:
         """Return the feature ID of the spectrum"""
         return int(self.get("feature_id"))
-    
+
     # NPC CLASSIFICATION SCORES (propagated)
     @property
     def ms1_pathway_scores(self) -> Optional[np.ndarray]:
@@ -132,7 +133,7 @@ class AnnotatedSpectrum(Spectrum):
     def ms1_annotations(self) -> list[ChemicalAdduct]:
         """Return the MS1 annotations"""
         return self._ms1_annotations
-    
+
     @ms1_annotations.setter
     def ms1_annotations(self, annotation_list: list[ChemicalAdduct]):
         """Set the MS1 annotations"""
@@ -142,7 +143,7 @@ class AnnotatedSpectrum(Spectrum):
     def ms2_annotations(self) -> list[MS2ChemicalAnnotation]:
         """Return the MS2 annotations"""
         return self._ms2_annotations
-    
+
     @ms2_annotations.setter
     def ms2_annotations(self, annotation_list: list[MS2ChemicalAnnotation]):
         """Set the MS2 annotations"""

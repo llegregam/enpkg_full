@@ -1,5 +1,6 @@
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
 from enpkg.monolith.data.wikidata_ott_query_class import WikidataOTTQuery
 
 

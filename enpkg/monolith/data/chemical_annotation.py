@@ -7,8 +7,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from enpkg.monolith.data.otl_class import Match
-
-MAXIMAL_TAXONOMICAL_SCORE: float = 8.0
+from enpkg.monolith.data.taxonomy import normalized_rank_similarity, rank_similarity
 
 
 @dataclass(slots=True)
@@ -35,30 +34,15 @@ class AnnotationOrganism:
     def taxonomical_similarity_with_match(self, match: Match) -> float:
         """Rank-ladder similarity against an OTT match.
 
-        8 = same species, 7 = genus, ... 1 = domain, 0 = no shared rank. Mirrors
-        ``Lotus.taxonomical_similarity_with_otl_match`` so reranking is unchanged.
+        8 = same species, 7 = genus, ... 1 = domain, 0 = no shared rank. Shares
+        the single ladder in :mod:`enpkg.monolith.data.taxonomy` with
+        ``Lotus`` so the two never drift apart.
         """
-        if self.species == match.species:
-            return 8.0
-        if self.genus == match.genus:
-            return 7.0
-        if self.family == match.family:
-            return 6.0
-        if self.order == match.order:
-            return 5.0
-        if self.klass == match.klass:
-            return 4.0
-        if self.phylum == match.phylum:
-            return 3.0
-        if self.kingdom == match.kingdom:
-            return 2.0
-        if self.domain == match.domain:
-            return 1.0
-        return 0.0
+        return rank_similarity(self, match)
 
     def normalized_taxonomical_similarity_with_match(self, match: Match) -> float:
         """Taxonomical similarity normalised to [0, 1]."""
-        return self.taxonomical_similarity_with_match(match) / MAXIMAL_TAXONOMICAL_SCORE
+        return normalized_rank_similarity(self, match)
 
 
 class ChemicalAnnotation(BaseModel):

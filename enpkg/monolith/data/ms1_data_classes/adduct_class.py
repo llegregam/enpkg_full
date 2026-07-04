@@ -1,10 +1,10 @@
 """Submodule providing the data class for representing chemical adducts."""
 
-from typing import Dict
 from dataclasses import dataclass
+from typing import Dict
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, field_validator, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.otl_class import Match
@@ -72,7 +72,6 @@ class ChemicalAdduct(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True) # For handling np.ndarrays. Will be removed once Lotus class is refactored
     lotus: list[Lotus]
     recipe: AdductRecipe
-    adduct_mass: float | None = None
 
     @field_validator("lotus", mode="after")
     @classmethod
@@ -80,7 +79,7 @@ class ChemicalAdduct(BaseModel):
         """"Validate that the list of lotus entries"""
         if len(lotus) == 0:
             raise ValueError("The lotus must not be empty")
-        
+
         # All lotus entries must have the same exact mass and chemical formula
         structure_molecular_formula = lotus[0].structure_molecular_formula
 
@@ -94,14 +93,15 @@ class ChemicalAdduct(BaseModel):
                 f"but got {structure_molecular_formula} and {[entry.structure_molecular_formula for entry in wrong_mass_entries]}"
             )
         return lotus
-    
-    @model_validator(mode="after")
-    def compute_adduct_mass(self) -> "ChemicalAdduct":
-        """Compute the adduct mass using the recipe and the exact mass of the Lotus entries."""
-        
-        if self.adduct_mass is None:
-            self.adduct_mass = self.recipe.compute_adduct_mass(self.lotus[0].structure_exact_mass)
-        return self
+
+    @property
+    def adduct_mass(self) -> float:
+        """Ion mass from applying the recipe to the group's exact mass.
+
+        Every Lotus entry in the group shares a molecular formula (enforced by
+        ``validate_lotus``), so ``lotus[0]``'s exact mass is representative.
+        """
+        return self.recipe.compute_adduct_mass(self.lotus[0].structure_exact_mass)
 
     @property
     def short_inchikey(self) -> str:
