@@ -98,7 +98,7 @@ def main() -> None:
         logger.info("Importing LOTUS metadata and NPC classifications")
         t0 = time()
         db.import_from_csvs(
-            metadata_path=args.metadata,
+            lotus_metadata_path=args.metadata,
             pathways_path=args.pathways,
             superclasses_path=args.superclasses,
             classes_path=args.classes,
