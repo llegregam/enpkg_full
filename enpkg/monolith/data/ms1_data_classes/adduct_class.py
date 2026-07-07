@@ -48,7 +48,7 @@ class AdductRecipe:
     multimer_factor: float = 1.0
 
     def compute_adduct_mass(self, exact_lotus_mass: float) -> float:
-        """Applies the adduct recepy to the provided exact lotus mass"""
+        """Applies the adduct recipe to the provided exact lotus mass"""
         return (
             self.multimer_factor * exact_lotus_mass
             + sum(ADDUCT_MASSES[key] * count for key, count in self.ingredients.items())
@@ -76,7 +76,7 @@ class ChemicalAdduct(BaseModel):
     @field_validator("lotus", mode="after")
     @classmethod
     def validate_lotus(cls, lotus:list[Lotus]) -> list[Lotus]:
-        """"Validate that the list of lotus entries"""
+        """"Validate that the list of lotus entries is not empty"""
         if len(lotus) == 0:
             raise ValueError("The lotus must not be empty")
 
