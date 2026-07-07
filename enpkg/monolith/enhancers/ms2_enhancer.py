@@ -23,7 +23,7 @@ from enpkg.monolith.loaders.lotus_store import LotusStore
 
 
 class Ms2Enhancer(Enhancer):
-    """Enhancer that adds MS2 information to the analysis."""
+    """Enhancer that adds MS2 annotations to the analysis."""
 
     def __init__(
         self,
