@@ -12,7 +12,11 @@ from dotenv import load_dotenv
 from enpkg.monolith.configuration.sirius_enhancer_config import SiriusEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.enhancers.enhancer import Enhancer
-from enpkg.monolith.enhancers.sirius_parser import SiriusOutputParser, SiriusResults
+from enpkg.monolith.enhancers.sirius_parser import (
+    SiriusOutputParser,
+    SiriusResults,
+    attach_sirius_annotations,
+)
 
 
 class SiriusLoginInfo:
@@ -208,11 +212,18 @@ class SiriusEnhancer(Enhancer):
 
         self._run_sirius(sirius_args)
         results = self._get_results(output_path)
-        if results is not None:
-            self._logger.info(
-                "Parsed SIRIUS summaries (attaching them onto the Analysis model "
-                "is pending — see REFACTORING_PLAN.md F-03)."
-            )
-        # TODO(F-03): attach `results` (structure/formula/CANOPUS frames) onto the
-        # spectra of the Analysis so they can be reweighted and serialized.
+        if results is None:
+            self._logger.warning("No SIRIUS summaries parsed; analysis left unchanged.")
+            return analysis
+        # Attach the top-k structure identifications onto the spectra (joined by
+        # mappingFeatureId -> feature_id) so they can be serialized into the KG.
+        analysis = attach_sirius_annotations(
+            analysis, results, top_k=self.config.sirius_params.top_k_sirius
+        )
+        n_annotated = sum(1 for spectrum in analysis.spectra if spectrum.has_sirius_annotations())
+        total = sum(len(spectrum.sirius_annotations) for spectrum in analysis.spectra)
+        self._logger.info(
+            "Attached SIRIUS structure identifications: %d annotations across %d/%d spectra.",
+            total, n_annotated, len(analysis.spectra),
+        )
         return analysis
