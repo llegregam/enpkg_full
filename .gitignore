@@ -78,6 +78,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb
 
 # IPython
 profile_default/
@@ -142,7 +143,10 @@ enpkg/tests/__pycache__
 enpkg/tests/.databases
 enpkg/tests/.test_cache
 enpkg/tests/data_for_analysis
-
+enpkg/monolith/test-data/databases/
+enpkg/tests/data/
+gui_workspace/
+sirius_output/
 enpkg/lib64
 enpkg/data
 enpkg/npc_classification_arx.duckdb

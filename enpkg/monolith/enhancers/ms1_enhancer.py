@@ -53,11 +53,19 @@ class MS1Enhancer(Enhancer):
         the configured polarity, then the list is sorted by adduct mass so
         precursor matching in ``enhance`` can binary-search it.
         """
-        recipes = (
-            POSITIVE_RECIPES
-            if self.configuration.general_params.polarity == "pos"
-            else NEGATIVE_RECIPES
-        )
+        match self.configuration.general_params.polarity:
+            case "pos":
+                self.logger.info("Initializing positive adducts")
+                recipes = POSITIVE_RECIPES
+            case "neg":
+                self.logger.info("Initializing negative adducts")
+                recipes = NEGATIVE_RECIPES
+            case _:
+                raise ValueError(
+                    f"Invalid polarity {self.configuration.general_params.polarity!r}, "
+                    "expected 'pos' or 'neg'"
+                )
+
         adducts: list[ChemicalAdduct] = [
             ChemicalAdduct(lotus=lotus_group, recipe=recipe)
             for lotus_group in lotus_grouped_by_structure_molecular_formula
@@ -92,11 +100,16 @@ class MS1Enhancer(Enhancer):
         List of lists of LOTUS objects, each inner list sharing a molecular
         formula.
         """
-        recipes = (
-            POSITIVE_RECIPES
-            if self.configuration.general_params.polarity == "pos"
-            else NEGATIVE_RECIPES
-        )
+        match self.configuration.general_params.polarity:
+            case "pos":
+                recipes = POSITIVE_RECIPES
+            case "neg":
+                recipes = NEGATIVE_RECIPES
+            case _:
+                raise ValueError(
+                    f"Invalid polarity {self.configuration.general_params.polarity!r}, "
+                    "expected 'pos' or 'neg'"
+                )
         tol = self.configuration.spectral_match_params.parent_mz_tol
         precursor_mzs = [s.precursor_mz for s in spectrum_list]
 
@@ -132,9 +145,7 @@ class MS1Enhancer(Enhancer):
         number_of_spectra = len(spectrum_list)
         self.logger.info("Running MS1 enrichment on %d spectra", number_of_spectra)
 
-        # Adducts are rebuilt on every enhance() call: in batch mode a cached set
-        # would reuse the previous experiment's mass-windowed adducts even though
-        # its spectra cover a different m/z range.
+        # Adducts are rebuilt on every enhance() call
         self.logger.info("Initializing LOTUS objects and adducts")
         start = time()
         lotus_grouped_by_formula = self.initialize_lotus_objects(spectrum_list=spectrum_list)

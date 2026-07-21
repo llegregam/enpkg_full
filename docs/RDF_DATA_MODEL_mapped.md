@@ -113,14 +113,14 @@ rank — see §4/§5/§8a/§8b.
 | Element | Shape | Target / type | Vocab term |
 |---|---|---|---|
 | (spectrum → ion) | obj | LCMSFeature → ion (×N) | ⛏ custom `enpkg:hasIon` |
-| rdf:type | type | — | ✅ `MS:1000342` ("product ion") |
+| rdf:type | type | — | ⛔ none — `MS:1000342` ("product ion") is **obsolete** with no non-obsolete replacement; the node is identified by `enpkg:hasIon` + the m/z & intensity value props |
 | m/z | lit | xsd:double | ✅ `MS:1001225` ("product ion m/z") — cvParam, see §4 note |
 | intensity | lit | xsd:double | ✅ `MS:1001226` ("product ion intensity") — cvParam, see §4 note |
 
 ## 4. ChemicalAdduct (MS1) — `chemical_adduct_uri`
 | Element | Shape | Target / type | Vocab term |
 |---|---|---|---|
-| rdf:type | type | — | ✅ `emi:StructuralAnnotation` + `MS:1000353` ("adduct ion"); polarity-specific `MS:1002807` (pos) / `MS:1002808` (neg) |
+| rdf:type | type | — | ✅ `emi:StructuralAnnotation` + `enpkg:AdductAnnotation` (MS1 subclass); polarity-specific `MS:1002807` (pos) / `MS:1002808` (neg). Parent `MS:1000353` ("adduct ion") dropped as redundant — it is entailed by the polarity class |
 | adduct form | lit | "[M+H]+" string | ✅ `MS:1002813` ("adduct ion formula"; regex `MS:1002812`) — alongside `emi:hasAdduct` |
 | hasRecipe | obj | → AdductRecipe node | custom `enpkg:hasRecipe` (structured composition; §5) |
 | annotatesCompound (×N) | obj | → ChemicalStructure | ✅ `emi:hasChemicalStructure` |
@@ -134,7 +134,7 @@ rank — see §4/§5/§8a/§8b.
 > *classes* meant for value typing, not OWL predicates. Either reify the value
 > (`[ a MS:1003243 ; rdf:value 19.018 ]`) or use a plain datatype property linked
 > to the term (`… skos:exactMatch MS:1003243`), as EMI does with its own `emi:has*`
-> props. `MS:1000353` / `MS:1002807-8` used as `rdf:type` are unambiguous.
+> props. `MS:1002807-8` used as `rdf:type` are unambiguous.
 
 ## 5. AdductRecipe — `recipe_uri`
 > **Decision: use a structured recipe node** (custom). PSI-MS gives the adduct
@@ -154,7 +154,7 @@ rank — see §4/§5/§8a/§8b.
 ## 6. MS2ChemicalAnnotation — `ms2_annotation_uri`
 | Element | Shape | Target / type | Vocab term |
 |---|---|---|---|
-| rdf:type | type | — | ✅ `emi:StructuralAnnotation` |
+| rdf:type | type | — | ✅ `emi:StructuralAnnotation` + `enpkg:SpectralAnnotation` (MS2 subclass) |
 | annotatesCompound | obj | → ChemicalStructure (→ `emi:InChIKey2D` for the short key) | ✅ `emi:hasChemicalStructure` |
 | producedBy (×N) | obj | → Organism | ✅ `emi:inTaxon` ("found in taxon") |
 | source | obj | → source DB resource | ✅ `prov:wasDerivedFrom` (e.g. a LOTUS dataset node) |
@@ -250,9 +250,12 @@ rank — see §4/§5/§8a/§8b.
 - **Ion / peak** (§3a): `hasIon`, `maxIonsPerSpectrum`
 - **OTT match** (§1/§9): `hasOTTMatch`, `matchScore`, `isApproximateMatch`, `isSynonym`, `nomenclatureCode`, `searchString`
 - **MS2** (§6): `nMatchedPeaks`
+- **Annotation classes** (§4/§6): `AdductAnnotation` (MS1) and `SpectralAnnotation` (MS2), both `rdfs:subClassOf emi:StructuralAnnotation` — differentiate the two annotation kinds EMI otherwise unifies.
+- **Annotation ranking** (§4/§6): `annotationRank`, `annotationScore` (reweighted top-k, derived from the weights-enhancer propagated NPC scores; MS2 falls back to cosine when NPC scores are absent). Serialization caps each spectrum at **top-k = 5** per side by default (`top_k_ms1`/`top_k_ms2`; pass `<=0` to emit all).
+- **Numeric value props** (§3a/§4/§5) — each `owl:DatatypeProperty` + `skos:exactMatch` to its PSI-MS *class* (PSI-MS has no properties, so using the class as a predicate would pun it): `adductMass` (→MS:1003243), `charge` (→MS:1000041), `productIonMz` (→MS:1001225), `productIonIntensity` (→MS:1001226), `lowIntensityThreshold` (→MS:1000629). The adduct **formula** string uses the real EMI property `emi:hasAdduct` (`"[M+H]+"`). PSI-MS terms now appear only as `rdf:type` on adduct nodes (`MS:1002807`/`1002808`); the obsolete product-ion type (`MS:1000342`) and the redundant parent `MS:1000353` have been dropped.
 - **Compound scalars** (§8a): `xlogp`, `stereocentersTotal`, `stereocentersUnspecified`, `manualValidation`
 - **Sample** (§2): `sourceId`, `sampleFilenamePos`, `sampleFilenameNeg`
-- **Resolved by PSI-MS (`ms-voab.owl`)**: adduct class/polarity (`MS:1000353`/`1002807`/`1002808`), adduct formula (`MS:1002813`), `adduct_mass` (`MS:1003243`/`1003635`), `charge` (`MS:1000041`), ionization mode (`MS:1000009`)
+- **Resolved by PSI-MS (`ms-voab.owl`)**: adduct polarity class (`MS:1002807`/`1002808`; the parent `MS:1000353` is entailed, not emitted), adduct formula (`MS:1002813`), `adduct_mass` (`MS:1003243`/`1003635`), `charge` (`MS:1000041`), ionization mode (`MS:1000009`)
 - **Resolved by ChEBI/ChemROF (`chebi-vocab.owl`)**: `molecular_formula`, `exact_mass`, SMILES, InChI, InChIKey, formal charge — via `chemrof:` annotation properties (§8a)
 - **Resolved by NCBITaxon slim (`NCBITaxon_slim-vocab.owl`)**: organism lineage + rank → `obo:NCBITaxon_{ncbiid}` node (hierarchy via `rdfs:subClassOf`, rank via `ncbitaxon:has_rank`); applies where an NCBI id exists (Lotus organism — not yet `AnnotationOrganism`)
 

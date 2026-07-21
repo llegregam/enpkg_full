@@ -35,6 +35,7 @@ _TYPES = {
     "StructuralAnnotation": EMI.StructuralAnnotation,
     "AdductAnnotation": ENPKG.AdductAnnotation,
     "SpectralAnnotation": ENPKG.SpectralAnnotation,
+    "SiriusAnnotation": ENPKG.SiriusAnnotation,
     "ChemicalStructure": EMI.ChemicalStructure,
     "Taxon": EMI.Taxon,
     "LFpair": EMI.LFpair,
@@ -115,6 +116,9 @@ def main(argv=None) -> int:
     parser.add_argument("--top-k-ms2", type=int, default=5,
                         help="Keep only the top-k MS2 annotations per spectrum (by reweighted score, "
                              "else cosine). Default 5; pass <=0 to disable the cap (emit all).")
+    parser.add_argument("--top-k-sirius", type=int, default=None,
+                        help="Keep only the top-k SIRIUS annotations per spectrum (by structurePerIdRank). "
+                             "Default: emit all (the summary file is already SIRIUS's top-X).")
     parser.add_argument("--include-network", action="store_true",
                         help="Emit the molecular network (LFpair edges). Off by default.")
     parser.add_argument("--include-ions", action="store_true")
@@ -133,6 +137,7 @@ def main(argv=None) -> int:
     opts = dict(
         top_k_ms1=args.top_k_ms1,
         top_k_ms2=args.top_k_ms2,
+        top_k_sirius=args.top_k_sirius,
         include_network=args.include_network,
         include_ions=args.include_ions,
         min_relative_intensity=args.min_relative_intensity,
@@ -141,7 +146,7 @@ def main(argv=None) -> int:
 
     print(f"Batch:  {batch_dir}")
     print(f"Output: {args.out_dir.resolve()}")
-    print(f"Top-k:  ms1={args.top_k_ms1}  ms2={args.top_k_ms2}")
+    print(f"Top-k:  ms1={args.top_k_ms1}  ms2={args.top_k_ms2}  sirius={args.top_k_sirius}")
     print(f"Ions:   {'on' if args.include_ions else 'off'}\n")
 
     overall_ok = True

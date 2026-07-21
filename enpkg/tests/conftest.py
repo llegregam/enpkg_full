@@ -13,6 +13,7 @@ from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from enpkg.monolith.data.sample_metadata import SampleMetadata
+from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 
 
 def pytest_collection_modifyitems(config, items):
@@ -121,6 +122,7 @@ def make_spectrum():
         intensities=None,
         retention_time: float = 1.0,
         intensity: float = 1000.0,
+        sirius_annotations=None,
     ) -> AnnotatedSpectrum:
         mz = np.array([100.0, 150.0]) if mz is None else np.asarray(mz, dtype=float)
         intensities = (
@@ -135,11 +137,34 @@ def make_spectrum():
                 "charge": charge,
             },
         )
-        return AnnotatedSpectrum(
+        spectrum = AnnotatedSpectrum(
             base,
             mass_over_charge=precursor_mz,
             retention_time=retention_time,
             intensity=intensity,
+        )
+        if sirius_annotations is not None:
+            spectrum.sirius_annotations = list(sirius_annotations)
+        return spectrum
+
+    return _make
+
+
+@pytest.fixture
+def make_sirius_annotation():
+    """Return a factory building a SiriusChemicalAnnotation (defaults to a rank-1 hit)."""
+
+    def _make(
+        rank: int = 1,
+        molecular_formula: str = "C6H9N3O3S",
+        adduct: str = "[M+K]+",
+        inchikey_2d: str = "BBTZETLXNQDZKF",
+    ) -> SiriusChemicalAnnotation:
+        return SiriusChemicalAnnotation(
+            rank=rank,
+            molecular_formula=molecular_formula,
+            adduct=adduct,
+            inchikey_2d=inchikey_2d,
         )
 
     return _make

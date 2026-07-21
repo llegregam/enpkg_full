@@ -6,12 +6,11 @@ import numpy as np
 from matchms import Spectrum
 
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
-
-# from enpkg.monolith.data.sirius_data_classes import SiriusChemicalAnnotation
 from enpkg.monolith.data.lotus_class import (
     Lotus,
 )
 from enpkg.monolith.data.ms1_data_classes import ChemicalAdduct
+from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 
 
 class AnnotatedSpectrum(Spectrum):
@@ -41,7 +40,7 @@ class AnnotatedSpectrum(Spectrum):
         self.mass_over_charge: float = mass_over_charge
         self.retention_time: float = retention_time
         self.intensity: float = intensity
-        # self._sirius_annotations: list[SiriusChemicalAnnotation] = []
+        self._sirius_annotations: list[SiriusChemicalAnnotation] = []
         self._ms2_annotations: list[MS2ChemicalAnnotation] = []
         self._ms1_annotations: list[ChemicalAdduct] = []
         self._ms1_pathway_scores: Optional[np.ndarray] = None
@@ -161,9 +160,24 @@ class AnnotatedSpectrum(Spectrum):
         """Add an MS2 annotation to the spectrum."""
         self._ms2_annotations.append(annotation)
 
-    # def add_sirius_annotation(self, annotation: SiriusChemicalAnnotation):
-    #     """Add a Sirius annotation to the spectrum."""
-    #     self._sirius_annotations.append(annotation)
+    # SIRIUS ANNOTATIONS
+    @property
+    def sirius_annotations(self) -> list[SiriusChemicalAnnotation]:
+        """Return the SIRIUS structure-identification annotations"""
+        return self._sirius_annotations
+
+    @sirius_annotations.setter
+    def sirius_annotations(self, annotation_list: list[SiriusChemicalAnnotation]):
+        """Set the SIRIUS structure-identification annotations"""
+        self._sirius_annotations = annotation_list
+
+    def has_sirius_annotations(self) -> bool:
+        """Returns whether the spectrum has SIRIUS annotations"""
+        return len(self._sirius_annotations) > 0
+
+    def add_sirius_annotation(self, annotation: SiriusChemicalAnnotation):
+        """Add a SIRIUS annotation to the spectrum."""
+        self._sirius_annotations.append(annotation)
 
     def get_top_k_lotus_annotation(self, k: int = 1) -> Optional[list[Lotus]]:
         """Returns the top k best LOTUS annotations from the MS1 adduct annotations.

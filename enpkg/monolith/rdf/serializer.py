@@ -31,6 +31,7 @@ from ..data.annotated_spectra_class import AnnotatedSpectrum
 from ..data.chemical_annotation import MS2ChemicalAnnotation
 from ..data.lotus_class import Lotus
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
+from ..data.sirius_annotation import SiriusChemicalAnnotation
 from .namespaces import (
     CHEMROF,
     DCTERMS,
@@ -80,6 +81,7 @@ _PROPERTY_MAPPINGS = {
 _CLASS_MAPPINGS = {
     "AdductAnnotation": ("Adduct annotation (MS1)", EMI.StructuralAnnotation),
     "SpectralAnnotation": ("Spectral library annotation (MS2)", EMI.StructuralAnnotation),
+    "SiriusAnnotation": ("SIRIUS structure annotation", EMI.StructuralAnnotation),
 }
 
 # Ingredient name -> chemical symbol, for rendering emi:hasAdduct strings.
@@ -100,6 +102,7 @@ class AnalysisSerializer:
         *,
         top_k_ms1: Optional[int] = 5,
         top_k_ms2: Optional[int] = 5,
+        top_k_sirius: Optional[int] = None,
         include_network: bool = False,
         include_ions: bool = False,
         min_relative_intensity: float = 0.0,
@@ -118,6 +121,9 @@ class AnalysisSerializer:
         # value disables the cap (emit all).
         self.top_k_ms1 = top_k_ms1 if (top_k_ms1 is None or top_k_ms1 > 0) else None
         self.top_k_ms2 = top_k_ms2 if (top_k_ms2 is None or top_k_ms2 > 0) else None
+        # SIRIUS candidates arrive pre-ranked (structurePerIdRank) and the summary
+        # file is already SIRIUS's chosen top-X, so this defaults to None (emit all).
+        self.top_k_sirius = top_k_sirius if (top_k_sirius is None or top_k_sirius > 0) else None
         self.include_network = include_network
         self.include_ions = include_ions
         self.min_relative_intensity = min_relative_intensity
@@ -280,6 +286,7 @@ class AnalysisSerializer:
             emit=lambda ann: self._add_ms2_annotation(analysis, spectrum, ann),
             fallback_key=lambda ann: ann.score,  # cosine, when NPC scores absent
         )
+        self._add_sirius_annotations(analysis, spectrum, uri)
         if self.include_ions:
             self._add_ions(uri, spectrum)
         return uri
@@ -520,6 +527,42 @@ class AnalysisSerializer:
                     wikidata=organism.wikidata,
                     ott_id=organism.ott_id,
                 )))
+        return uri
+
+    # ------------------------------------------------------- SIRIUS annotations
+    def _add_sirius_annotations(
+        self, analysis: Analysis, spectrum: AnnotatedSpectrum, spectrum_uri: URIRef
+    ) -> None:
+        """Link a spectrum to its SIRIUS candidates via enpkg:hasSiriusAnnotation.
+
+        SIRIUS emits candidates already ranked (structurePerIdRank, 1=best), so this
+        keeps that order and only caps at top_k_sirius)."""
+        annotations = spectrum.sirius_annotations
+        if not annotations:
+            return
+        ranked = sorted(annotations, key=lambda a: a.rank)
+        if self.top_k_sirius is not None:
+            ranked = ranked[: self.top_k_sirius]
+        for annotation in ranked:
+            annotation_uri = self._add_sirius_annotation(analysis, spectrum, annotation)
+            self.graph.add((spectrum_uri, ENPKG.hasSiriusAnnotation, annotation_uri))
+
+    def _add_sirius_annotation(
+        self, analysis: Analysis, spectrum: AnnotatedSpectrum, annotation: SiriusChemicalAnnotation
+    ) -> URIRef:
+        uri = AnalysisURIs.sirius_annotation_uri(analysis, spectrum, annotation)
+        if uri in self._emitted:
+            return uri
+        self._emitted.add(uri)
+        g = self.graph
+        g.add((uri, RDF.type, EMI.StructuralAnnotation))
+        g.add((uri, RDF.type, ENPKG.SiriusAnnotation))             # SIRIUS-specific subclass
+        self._set(uri, CHEMROF.generalized_empirical_formula, annotation.molecular_formula)
+        self._set(uri, EMI.hasAdduct, annotation.adduct)           # "[M+K]+" form (EMI property)
+        self._set(uri, ENPKG.annotationRank, annotation.rank)      # SIRIUS structurePerIdRank (1=best)
+        # Candidate structure attaches at the 2D (short InChIKey) level — the same node
+        # MS1 compounds (hasInChIKey2D) and MS2 matches (hasChemicalStructure) reuse.
+        g.add((uri, EMI.hasChemicalStructure, self._inchikey2d_node(annotation.inchikey_2d)))
         return uri
 
     # ------------------------------------------------ match/network/ions (Ph 3)

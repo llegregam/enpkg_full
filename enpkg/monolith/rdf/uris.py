@@ -9,6 +9,7 @@ from ..data.chemical_annotation import AnnotationOrganism, MS2ChemicalAnnotation
 from ..data.lotus_class import Lotus
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.otl_class import Match
+from ..data.sirius_annotation import SiriusChemicalAnnotation
 from .namespaces import EMI_RES, INCHIKEY
 
 
@@ -95,6 +96,26 @@ class AnalysisURIs:
         return EMI_RES[
             f"ms2ann/{analysis.run_name}/{spectrum.feature_id}/"
             f"{queried_against}/{annotation.short_inchikey}"
+        ]
+
+    # SIRIUS ANNOTATION URIs
+    @staticmethod
+    def sirius_annotation_uri(
+        analysis: Analysis,
+        spectrum: AnnotatedSpectrum,
+        annotation: SiriusChemicalAnnotation,
+    ) -> URIRef:
+        """Mint the URI for one SIRIUS structure-identification annotation on a spectrum.
+
+        Run-scoped and per-spectrum, like the MS2 match event: SIRIUS proposes a
+        ranked candidate structure for a given feature in a given run. Keyed on the
+        matched structure (2D InChIKey) — the stable identity of the candidate — so
+        re-serializing is idempotent; the SIRIUS rank rides along as a property, not
+        as a node. Sharing happens one level down, at the InChIKey2D node this
+        annotation points to (the same node MS1 compounds and MS2 matches reuse).
+        """
+        return EMI_RES[
+            f"sirius/{analysis.run_name}/{spectrum.feature_id}/{annotation.inchikey_2d}"
         ]
 
     @staticmethod

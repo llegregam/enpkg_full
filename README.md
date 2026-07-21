@@ -11,6 +11,41 @@
 🌟 We're delighted to have you explore our computational workflow. This guide will walk you through the installation, setup, and execution of the ENPKG full workflow.
 Interested in the science behind ENPKG? Check out the paper (https://doi.org/10.1021/acscentsci.3c00800) ! It's packed with insights and methodologies that power this workflow.
 
+## 🧭 Repository status & architecture
+
+The workflow is being re-implemented as an in-memory, object-oriented pipeline
+under [`enpkg/monolith/`](enpkg/monolith/), replacing the older per-sample shell
+scripts. The current design:
+
+- **Data model** ([`data/`](enpkg/monolith/data/)) — an `Analysis` aggregates a
+  sample's `AnnotatedSpectrum` list, MS1 adduct hypotheses, MS2 spectral-library
+  matches, OpenTree taxonomy matches, and the molecular network.
+- **Enhancers** ([`enhancers/`](enpkg/monolith/enhancers/)) — composable steps
+  that each implement one uniform contract, `enhance(analysis) -> Analysis`:
+  MS1 adducting, MS2 (ISDB) cosine matching, molecular networking, taxonomy
+  resolution, SIRIUS, and taxonomy/network-aware reweighting (label propagation).
+- **Registry + runner** ([`gui/blocks.py`](enpkg/monolith/gui/blocks.py),
+  [`gui/runner.py`](enpkg/monolith/gui/runner.py)) — a single `BLOCKS` registry
+  is the source of truth for which blocks exist, how to build each enhancer, and
+  when it can run; the runner executes selected blocks in canonical order.
+- **Reference data** — LOTUS compound/taxonomy metadata and the ISDB spectral
+  library are resolved from a persistent **DuckDB** file (see
+  [`loaders/`](enpkg/monolith/loaders/); build it with
+  [`enpkg/scripts/build_duckdb.py`](enpkg/scripts/build_duckdb.py)).
+- **Output** — an RDF/Turtle knowledge graph via [`rdf/`](enpkg/monolith/rdf/)
+  (`AnalysisSerializer`), mapped to the EMI vocabulary.
+
+A Streamlit GUI drives the pipeline — see
+[`gui/ARCHITECTURE.md`](enpkg/monolith/gui/ARCHITECTURE.md) and the per-enhancer
+notes under [`docs/`](docs/). Run the tests with `pytest`: unit tests
+(`enpkg/tests/test_data`, `enpkg/tests/test_pipeline`) need no external data;
+tests marked `@pytest.mark.integration` need the DuckDB file and network access.
+
+> ⚠️ The shell-script instructions in the **Launching the Workflow** section
+> below describe the **legacy** per-sample workflow and are retained for
+> reference while the port completes. The installation steps that follow still
+> apply.
+
 ## 🌱 Getting Started
 
 ### Clone the repository
