@@ -111,7 +111,7 @@ class AnalysisURIs:
         ranked candidate structure for a given feature in a given run. Keyed on the
         matched structure (2D InChIKey) — the stable identity of the candidate — so
         re-serializing is idempotent; the SIRIUS rank rides along as a property, not
-        as identity. Sharing happens one level down, at the InChIKey2D node this
+        as a node. Sharing happens one level down, at the InChIKey2D node this
         annotation points to (the same node MS1 compounds and MS2 matches reuse).
         """
         return EMI_RES[
