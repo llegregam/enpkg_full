@@ -65,7 +65,7 @@ class MS1Enhancer(Enhancer):
                     f"Invalid polarity {self.configuration.general_params.polarity!r}, "
                     "expected 'pos' or 'neg'"
                 )
-            
+
         adducts: list[ChemicalAdduct] = [
             ChemicalAdduct(lotus=lotus_group, recipe=recipe)
             for lotus_group in lotus_grouped_by_structure_molecular_formula

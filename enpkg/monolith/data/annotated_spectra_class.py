@@ -6,11 +6,11 @@ import numpy as np
 from matchms import Spectrum
 
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
-from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 from enpkg.monolith.data.lotus_class import (
     Lotus,
 )
 from enpkg.monolith.data.ms1_data_classes import ChemicalAdduct
+from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 
 
 class AnnotatedSpectrum(Spectrum):
