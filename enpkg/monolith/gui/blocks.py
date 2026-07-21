@@ -227,13 +227,17 @@ def _log_ms2(logger: logging.Logger, analysis: Analysis) -> None:
 
 
 def _log_sirius(logger: logging.Logger, analysis: Analysis) -> None:
-    """Summarise Sirius structure-identification results.
+    """Summarise SIRIUS structure-identification annotations.
 
-    Stub: Sirius annotations are not yet surfaced on the Analysis data model
-    (``SiriusChemicalAnnotation`` is commented out in ``AnnotatedSpectrum``).
-    Expand this once the field is wired in.
+    Counts how many spectra received at least one SIRIUS annotation and the total
+    number of candidate structures attached across all spectra (reads
+    ``AnnotatedSpectrum.sirius_annotations``, populated by ``attach_sirius_annotations``).
     """
-    logger.info("    Sirius step completed (annotation summary not yet available)")
+    n_spectra = len(analysis.spectra)
+    n_annotated = sum(1 for s in analysis.spectra if s.has_sirius_annotations())
+    total = sum(len(s.sirius_annotations) for s in analysis.spectra)
+    logger.info("    Spectra with SIRIUS annotations : %d / %d", n_annotated, n_spectra)
+    logger.info("    Total SIRIUS annotations        : %d", total)
 
 
 # Number of example reranked spectra to show per level (MS1 / MS2) in the
