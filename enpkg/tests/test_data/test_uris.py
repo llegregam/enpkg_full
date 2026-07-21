@@ -65,6 +65,16 @@ def test_spectrum_and_adduct_uris(make_analysis, make_adduct):
     ]
 
 
+def test_sirius_annotation_uri(make_analysis, make_sirius_annotation):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    annotation = make_sirius_annotation(inchikey_2d="BBTZETLXNQDZKF")
+    # Keyed on run + feature + 2D InChIKey (structural identity); rank rides as a property.
+    assert AnalysisURIs.sirius_annotation_uri(analysis, spectrum, annotation) == EMI_RES[
+        f"sirius/RUNX/{spectrum.feature_id}/BBTZETLXNQDZKF"
+    ]
+
+
 def test_lotus_uri_cascade(make_lotus):
     with_inchikey = make_lotus(structure_inchikey="ABCDEFGHIJKLMN-OPQRSTUVWX-Y")
     assert CompoundURIs.lotus_uri(with_inchikey) == INCHIKEY["ABCDEFGHIJKLMN-OPQRSTUVWX-Y"]
