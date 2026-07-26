@@ -36,6 +36,7 @@ from typing import Any, Callable, Optional, Type
 import networkx as nx
 from pydantic import BaseModel
 
+from enpkg.monolith.configuration.ms1_graph_enhancer_config import MS1GraphEnhancerConfig
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
 from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
@@ -43,6 +44,7 @@ from enpkg.monolith.configuration.sirius_enhancer_config import SiriusEnhancerCo
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.enhancers.ms1_enhancer import MS1Enhancer
+from enpkg.monolith.enhancers.ms1_graph_enhancer import MS1GraphEnhancer
 from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
 from enpkg.monolith.enhancers.network_enhancer import NetworkEnhancer
 from enpkg.monolith.enhancers.sirius_enhancer import SiriusEnhancer
@@ -115,6 +117,10 @@ def _build_taxonomical(config: Any, ctx: BuildContext) -> Enhancer:
 
 def _build_network(config: Any, ctx: BuildContext) -> Enhancer:
     return NetworkEnhancer(configuration=config)
+
+
+def _build_ms1_graph(config: Any, ctx: BuildContext) -> Enhancer:
+    return MS1GraphEnhancer(config, ctx.logger)
 
 
 def _build_ms1(config: Any, ctx: BuildContext) -> Enhancer:
@@ -198,6 +204,29 @@ def _log_network(logger: logging.Logger, analysis: Analysis) -> None:
         logger.info("    Max degree             : %d", max(degrees))
     n_components = nx.number_connected_components(network)
     logger.info("    Connected components   : %d", n_components)
+
+
+def _log_ms1_graph(logger: logging.Logger, analysis: Analysis) -> None:
+    """Summarise the MS1 adduct-relationship graph resolution.
+
+    Reads the per-spectrum ``ms1_cluster_role`` stamps and the attached
+    ``analysis.ms1_adduct_graph``; reports how features were resolved into
+    clusters (anchors / satellites / unexplained) versus left as singletons.
+    """
+    graph = analysis.ms1_adduct_graph
+    if graph is None:
+        logger.info("    (no MS1 adduct graph on analysis)")
+        return
+    roles = [s.ms1_cluster_role for s in analysis.spectra]
+    n_clusters = len(
+        {s.ms1_cluster_id for s in analysis.spectra if s.ms1_cluster_id is not None}
+    )
+    logger.info("    Features               : %d", len(analysis.spectra))
+    logger.info("    Adduct clusters        : %d", n_clusters)
+    logger.info("    Anchors                : %d", roles.count("anchor"))
+    logger.info("    Satellites             : %d", roles.count("satellite"))
+    logger.info("    Unexplained            : %d", roles.count("unexplained"))
+    logger.info("    Singletons             : %d", roles.count("singleton"))
 
 
 def _log_ms1(logger: logging.Logger, analysis: Analysis) -> None:
@@ -367,13 +396,24 @@ BLOCKS: list[BlockSpec] = [
         description="Builds a spectral similarity network from MS/MS spectra.",
     ),
     BlockSpec(
+        id="ms1_graph",
+        label="MS1 adduct graph",
+        build_enhancer=_build_ms1_graph,
+        can_run=_has_spectra,
+        config_cls=MS1GraphEnhancerConfig,
+        log_summary=_log_ms1_graph,
+        description="Relates features that are adducts of the same molecule and "
+        "resolves each cluster's base ion. Runs before MS1 enhancement.",
+    ),
+    BlockSpec(
         id="ms1",
         label="MS1 enhancement",
         build_enhancer=_build_ms1,
         can_run=_has_spectra,
         config_cls=MSEnhancerConfig, # Shared with MS2
         log_summary=_log_ms1,
-        description="Matches MS1 precursor m/z against adduct libraries. Shares config with MS2.",
+        description="Matches MS1 precursor m/z against adduct libraries. Shares config with MS2. "
+        "Uses the MS1 adduct graph's cluster resolution when the ms1_graph block ran before it.",
     ),
     BlockSpec(
         id="ms2",
