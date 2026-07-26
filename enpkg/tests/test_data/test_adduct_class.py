@@ -31,6 +31,23 @@ def test_multiple_ingredients_sum():
     assert recipe.compute_adduct_mass(100.0) == pytest.approx(expected)
 
 
+def test_compute_neutral_mass_inverts_compute_adduct_mass():
+    # Round-trip: neutral -> ion m/z -> neutral must recover the starting mass,
+    # for a non-trivial recipe (multimer + multi-ingredient + charge).
+    recipe = AdductRecipe(
+        ingredients={"proton": 1, "sodium": 2}, charge=3, positive=True, multimer_factor=2.0
+    )
+    ion_mz = recipe.compute_adduct_mass(180.0634)
+    assert recipe.compute_neutral_mass(ion_mz) == pytest.approx(180.0634)
+
+
+def test_ingredient_complexity_sums_absolute_counts():
+    # A neutral loss carries a negative count; complexity uses the magnitude.
+    recipe = AdductRecipe(ingredients={"proton": -1, "magnesium": 1}, charge=1, positive=True)
+    assert recipe.ingredient_complexity == 2
+    assert AdductRecipe(ingredients={"proton": 1}, charge=1, positive=True).ingredient_complexity == 1
+
+
 def test_chemical_adduct_mass_is_derived_from_recipe(make_adduct, make_lotus, make_recipe):
     lotus = make_lotus(structure_exact_mass=180.0634)
     adduct = make_adduct(lotus=[lotus], recipe=make_recipe(ingredients={"proton": 1}, charge=1))
