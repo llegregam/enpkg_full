@@ -54,6 +54,27 @@ class AdductRecipe:
             + sum(ADDUCT_MASSES[key] * count for key, count in self.ingredients.items())
         ) / self.charge
 
+    def compute_neutral_mass(self, observed_mz: float) -> float:
+        """Inverse of ``compute_adduct_mass``: the neutral (monomer) mass that, under
+        this recipe, would appear at ``observed_mz``.
+
+        Used by the MS1 adduct-relationship graph to test whether one peak seen as
+        recipe A implies another peak seen as recipe B (both from the same molecule).
+        """
+        ingredient_sum = sum(
+            ADDUCT_MASSES[key] * count for key, count in self.ingredients.items()
+        )
+        return (observed_mz * self.charge - ingredient_sum) / self.multimer_factor
+
+    @property
+    def ingredient_complexity(self) -> float:
+        """Total ionization complexity: the sum of absolute ingredient counts.
+
+        Feeds the singleton adduct-plausibility prior: ``[M+H]+`` (one proton) scores
+        1, whereas ``[M+H+2Na]3+`` (``{proton: 1, sodium: 2}``) scores 3.
+        """
+        return sum(abs(count) for count in self.ingredients.values())
+
 
 class ChemicalAdduct(BaseModel):
     """Data class representing a chemical adduct.
