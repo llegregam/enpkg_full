@@ -9,7 +9,7 @@ from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import (
     Lotus,
 )
-from enpkg.monolith.data.ms1_data_classes import ChemicalAdduct
+from enpkg.monolith.data.ms1_data_classes import AdductRecipe, ChemicalAdduct
 from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 
 
@@ -49,6 +49,13 @@ class AnnotatedSpectrum(Spectrum):
         self._ms2_pathway_scores: Optional[np.ndarray] = None
         self._ms2_superclass_scores: Optional[np.ndarray] = None
         self._ms2_class_scores: Optional[np.ndarray] = None
+        # MS1 adduct-graph cluster resolution (set by the MS1 graph enhancer).
+        self._ms1_cluster_id: Optional[int] = None
+        self._ms1_cluster_role: Optional[str] = None
+        self._ms1_assigned_recipe: Optional[AdductRecipe] = None
+        self._ms1_cluster_connectivity: Optional[int] = None
+        self._ms1_cluster_intensity_coverage: Optional[float] = None
+        self._ms1_cluster_count_coverage: Optional[float] = None
 
     # SPECTRUM PROPERTIES
     @property
@@ -126,6 +133,61 @@ class AnnotatedSpectrum(Spectrum):
     def ms2_class_scores(self, class_scores: np.ndarray):
         """Set the MS2 propagated NPC class scores"""
         self._ms2_class_scores = class_scores
+
+    # MS1 ADDUCT-GRAPH CLUSTER RESOLUTION
+    @property
+    def ms1_cluster_id(self) -> Optional[int]:
+        """Id of the adduct-graph cluster this feature belongs to (None if singleton)."""
+        return self._ms1_cluster_id
+
+    @ms1_cluster_id.setter
+    def ms1_cluster_id(self, value: Optional[int]):
+        self._ms1_cluster_id = value
+
+    @property
+    def ms1_cluster_role(self) -> Optional[str]:
+        """Role in the cluster: 'anchor', 'satellite', 'unexplained', or 'singleton'."""
+        return self._ms1_cluster_role
+
+    @ms1_cluster_role.setter
+    def ms1_cluster_role(self, value: Optional[str]):
+        self._ms1_cluster_role = value
+
+    @property
+    def ms1_assigned_recipe(self) -> Optional[AdductRecipe]:
+        """Ionization form resolved for this feature (None for singleton/unexplained)."""
+        return self._ms1_assigned_recipe
+
+    @ms1_assigned_recipe.setter
+    def ms1_assigned_recipe(self, value: Optional[AdductRecipe]):
+        self._ms1_assigned_recipe = value
+
+    @property
+    def ms1_cluster_connectivity(self) -> Optional[int]:
+        """Number of features in this feature's cluster (mzAdan CGC)."""
+        return self._ms1_cluster_connectivity
+
+    @ms1_cluster_connectivity.setter
+    def ms1_cluster_connectivity(self, value: Optional[int]):
+        self._ms1_cluster_connectivity = value
+
+    @property
+    def ms1_cluster_intensity_coverage(self) -> Optional[float]:
+        """Fraction of the analysis' total intensity explained by this cluster (CIC)."""
+        return self._ms1_cluster_intensity_coverage
+
+    @ms1_cluster_intensity_coverage.setter
+    def ms1_cluster_intensity_coverage(self, value: Optional[float]):
+        self._ms1_cluster_intensity_coverage = value
+
+    @property
+    def ms1_cluster_count_coverage(self) -> Optional[float]:
+        """Fraction of the analysis' features contained in this cluster (CCC)."""
+        return self._ms1_cluster_count_coverage
+
+    @ms1_cluster_count_coverage.setter
+    def ms1_cluster_count_coverage(self, value: Optional[float]):
+        self._ms1_cluster_count_coverage = value
 
     # ANNOTATIONS
     @property

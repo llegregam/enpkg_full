@@ -27,6 +27,10 @@ class Analysis(BaseModel):
     ionization_mode: str
     ott_matches: list[Match] = Field(default_factory=list)
     molecular_network: Optional[nx.Graph] = None
+    # Directed graph relating features that look like adducts of the same molecule
+    # (nodes = feature ids). Attached by the MS1 graph enhancer; see
+    # enpkg/monolith/utils/ms1_adduct_graph.py.
+    ms1_adduct_graph: Optional[nx.DiGraph] = None
 
     # --- Convenience properties ---
 
@@ -117,5 +121,17 @@ class Analysis(BaseModel):
         # Check order
         if list(self.molecular_network.nodes) != feature_ids:
             raise ValueError("Network node order must match spectra order.")
+
+        return self
+
+    @model_validator(mode='after')
+    def validate_adduct_graph_integrity(self) -> Self:
+        """Validate the MS1 adduct graph (if set) covers exactly the analysis features.
+        """
+        if self.ms1_adduct_graph is None:
+            return self
+
+        if set(self.ms1_adduct_graph.nodes) != set(self.feature_ids):
+            raise ValueError("Adduct graph nodes do not match spectrum feature IDs.")
 
         return self
