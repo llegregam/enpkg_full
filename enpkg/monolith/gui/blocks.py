@@ -413,7 +413,9 @@ BLOCKS: list[BlockSpec] = [
         config_cls=MSEnhancerConfig, # Shared with MS2
         log_summary=_log_ms1,
         description="Matches MS1 precursor m/z against adduct libraries. Shares config with MS2. "
-        "Uses the MS1 adduct graph's cluster resolution when the ms1_graph block ran before it.",
+        "When the ms1_graph block ran first, only anchors and singletons are searched; each "
+        "satellite inherits its cluster anchor's molecule under its own adduct form (no redundant "
+        "search). Without the graph, every feature is searched.",
     ),
     BlockSpec(
         id="ms2",
