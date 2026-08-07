@@ -194,3 +194,14 @@ class MSEnhancerConfig(EnhancerConfig, BaseModel):
         description="Parameters for spectral matching"
     )
 
+    ms2_adduct_filter: Literal["non_satellite", "base_only", "all"] = Field(
+        default="non_satellite",
+        description="Which features the MS2 enhancer annotates, based on the MS1 adduct "
+        "graph's cluster roles (requires the 'ms1_graph' block to run first). Spectral "
+        "libraries are overwhelmingly [M+H]+/[M-H]-, so matching resolved non-base adducts "
+        "is redundant. 'non_satellite' (default): annotate base-ion anchors and singletons, "
+        "skip resolved adducts ([M+Na]+/[M+K]+/...). 'base_only': annotate only resolved "
+        "base-ion anchors. 'all': annotate every feature (legacy). Falls back to 'all' with "
+        "a warning if no cluster roles are stamped. Read only by the MS2 enhancer.",
+    )
+
