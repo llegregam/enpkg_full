@@ -270,7 +270,9 @@ def _log_sirius(logger: logging.Logger, analysis: Analysis) -> None:
 
 
 # Number of example reranked spectra to show per level (MS1 / MS2) in the
-# weights log summary.
+# weights log summary. The MS2 examples are drawn changed-first: they sit directly
+# under the "N spectra whose top pick changed" count and are read as evidence for
+# it, so showing unchanged spectra there makes the report contradict itself.
 _WEIGHTS_MAX_EXAMPLES = 3
 
 
@@ -337,7 +339,14 @@ def _log_weights(logger: logging.Logger, analysis: Analysis) -> None:
                 len(ms2_scored), len(spectra))
 
     n_changed = 0
-    examples: list[tuple] = []
+    # Two buckets filled in the one pass. The examples illustrate the "top pick
+    # changed" line printed just below them, so changed spectra are shown first and
+    # unchanged ones only backfill an otherwise short list. Collecting the first
+    # three candidates regardless used to print three identical before/after keys
+    # directly under "N / M changed", which read as a broken report. The loop still
+    # visits every candidate — n_changed counts all of them, not just the shown ones.
+    changed_examples: list[tuple] = []
+    unchanged_examples: list[tuple] = []
     for spectrum in ms2_candidates:
         try:
             reranked = spectrum.get_top_k_ms2_structures(1)
@@ -351,14 +360,16 @@ def _log_weights(logger: logging.Logger, analysis: Analysis) -> None:
         changed = reranked[0] != spectral_best.short_inchikey
         if changed:
             n_changed += 1
-        if len(examples) < _WEIGHTS_MAX_EXAMPLES:
-            examples.append((
+        bucket = changed_examples if changed else unchanged_examples
+        if len(bucket) < _WEIGHTS_MAX_EXAMPLES:
+            bucket.append((
                 spectrum.feature_id,
                 spectral_best.short_inchikey,
                 spectral_best.score,
                 reranked[0],
-                "  [changed]" if changed else "",
+                "  [changed]" if changed else "  [unchanged]",
             ))
+    examples = (changed_examples + unchanged_examples)[:_WEIGHTS_MAX_EXAMPLES]
 
     logger.info("    %-34s : %d / %d", "MS2 spectra whose top pick changed",
                 n_changed, len(ms2_candidates))
