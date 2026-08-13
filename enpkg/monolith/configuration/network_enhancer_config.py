@@ -23,13 +23,16 @@ class NetworkEnhancerConfig(EnhancerConfig):
     mn_top_n: int = Field(
         15,
         gt=0,
-        description="Maximum number of links to add per node"
+        description="Candidate pool per node: an edge is only considered if the partner ranks "
+        "among this node's N most similar spectra. With the 'mutual' link method the pairing "
+        "must be reciprocal — each spectrum must be in the other's top-N. Must be greater "
+        "than mn_max_links."
         )
     mn_max_links: int = Field(
         10,
         gt=0,
-        description="Consider edge between spectrumA and spectrumB if score falls into top_n for " \
-        "spectrumA and spectrumB"
+        description="Degree cap: the maximum number of edges kept per node, applied after the "
+        "score cutoff and the top-N candidate filter. Must be smaller than mn_top_n."
         )
 
     @model_validator(mode='after')

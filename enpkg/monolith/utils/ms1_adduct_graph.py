@@ -89,7 +89,7 @@ def build_adduct_graph(
     peaks:
         The features to relate. ``feature_id`` values must be unique.
     recipes:
-        The (small) graph recipe set for the analysis polarity.
+        The (small) graph recipe set for the analysis ionization mode.
     tol:
         m/z match tolerance in Da (reuses the enhancer's ``parent_mz_tol``).
     rt_tolerance:

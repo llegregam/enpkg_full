@@ -14,7 +14,7 @@ from logging import Logger
 from enpkg.monolith.configuration.ms1_graph_enhancer_config import MS1GraphEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.enhancers.enhancer import Enhancer
-from enpkg.monolith.enhancers.graph_adducts import graph_recipes_for_polarity
+from enpkg.monolith.enhancers.graph_adducts import graph_recipes_for_ionization_mode
 from enpkg.monolith.utils.ms1_adduct_graph import GraphPeak, resolve_adduct_graph
 
 
@@ -40,8 +40,8 @@ class MS1GraphEnhancer(Enhancer):
         attached via ``model_copy`` (Analysis is immutable), matching the network
         enhancer's pattern.
         """
-        polarity = self.configuration.general_params.polarity
-        recipes, base_recipe = graph_recipes_for_polarity(polarity)
+        ionization_mode = self.configuration.general_params.ionization_mode
+        recipes, base_recipe = graph_recipes_for_ionization_mode(ionization_mode)
 
         # Node ids are the raw feature ids (as the molecular network uses), so the
         # graph lines up with analysis.feature_ids for the integrity validator.

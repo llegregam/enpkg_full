@@ -8,8 +8,8 @@ from enpkg.monolith.configuration.config import EnhancerConfig
 class MS1GraphEnhancerConfig(EnhancerConfig):
     """Parameters for building and resolving the MS1 adduct-relationship graph.
 
-    Polarity is taken from ``general_params.polarity`` (inherited), matching the
-    MS1 enhancer. The mass tolerance mirrors the MS1 enhancer's ``parent_mz_tol``
+    Ionization mode is taken from ``general_params.ionization_mode`` (inherited),
+    matching the MS1 enhancer. The mass tolerance mirrors the MS1 enhancer's ``parent_mz_tol``
     default and should be kept in step with it.
 
     Retention-time gating is **always applied** (there is no toggle to disable it):

@@ -60,7 +60,7 @@ def ms_enhancer_config(common_urls: Urls) -> MSEnhancerConfig:
     return MSEnhancerConfig(
         general_params=GeneralParams(
             recompute=False,
-            polarity="pos",
+            ionization_mode="pos",
         ),
         downloader_params=DownloaderParams(
             redownload_if_exists=False,
@@ -77,7 +77,7 @@ def reweighting_config(common_urls: Urls) -> ReweightingConfig:
     return ReweightingConfig(
         general_params=GeneralParams(
             recompute=False,
-            polarity="pos",
+            ionization_mode="pos",
         ),
         downloader_params=DownloaderParams(
             redownload_if_exists=False,

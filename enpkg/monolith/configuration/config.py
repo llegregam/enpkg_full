@@ -4,7 +4,7 @@ Abstract configuration class for the enhancers.
 from abc import ABC
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class GeneralParams(BaseModel):
@@ -15,11 +15,27 @@ class GeneralParams(BaseModel):
         description="Whether to recompute results even if they already exist"
     )
 
-    polarity: str = Field(
+    ionization_mode: str = Field(
         default="pos",
         pattern="^(pos|neg)$",
-        description="Ionization mode polarity ('pos' or 'neg')"
+        description="Ionization mode ('pos' or 'neg')"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_polarity_key(cls, data):
+        """Accept the old ``polarity`` key as an alias for ``ionization_mode``.
+
+        ``polarity`` was the field's name before it was renamed to match
+        ``Analysis.ionization_mode`` (the two were always the same concept under
+        different names). Saved YAML configs on disk (e.g. from the GUI) still use
+        the old key, so it's translated here rather than left to silently fall
+        back to the default and mis-process negative-mode runs as positive.
+        """
+        if isinstance(data, dict) and "polarity" in data and "ionization_mode" not in data:
+            data = {**data, "ionization_mode": data["polarity"]}
+            del data["polarity"]
+        return data
 
 
 class EnhancerConfig(BaseModel, ABC):

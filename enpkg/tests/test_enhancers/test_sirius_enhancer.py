@@ -41,7 +41,7 @@ def sirius_config() -> SiriusEnhancerConfig:
         and general parameters needed to initialize the enhancer.
     """
     return SiriusEnhancerConfig(
-        general_params=GeneralParams(polarity="pos"),
+        general_params=GeneralParams(ionization_mode="pos"),
         sirius_params=SiriusParams(
             path_to_sirius="/mock/path/to/sirius",
             output_directory="/mock/out",

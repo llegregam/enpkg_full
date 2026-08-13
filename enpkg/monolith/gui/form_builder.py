@@ -102,7 +102,7 @@ def _pattern_choices(field_info: FieldInfo) -> Optional[list[str]]:
     """Extract a small enum-like choice list from a simple regex pattern.
 
     Recognises ``^(a|b|c)$`` style patterns that Pydantic validators use for
-    string enums such as polarity.
+    string enums such as ionization_mode.
     """
     for m in field_info.metadata:
         pattern = getattr(m, "pattern", None)

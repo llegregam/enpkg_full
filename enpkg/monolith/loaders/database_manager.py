@@ -597,7 +597,7 @@ class DatabaseManager:
     # ── Spectral queries ───────────────────────────────────────────────────────
 
     def get_spectra_by_mode(self, mode: str) -> list[Spectrum]:
-        """Reconstruct all matchms.Spectrum objects for the given polarity."""
+        """Reconstruct all matchms.Spectrum objects for the given ionization mode."""
         logger.debug("Querying spectral_library for mode=%s", mode)
         t0 = time()
         rows = self._conn.execute(

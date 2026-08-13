@@ -151,12 +151,15 @@ class SiriusEnhancer(Enhancer):
         # TODO: need better identifiers for the samples.
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        if self.config.general_params.polarity == "pos":
+        if self.config.general_params.ionization_mode == "pos":
             sample_name = analysis.metadata.sample_filename_pos.split(".")[0]
-        elif self.config.general_params.polarity == "neg":
+        elif self.config.general_params.ionization_mode == "neg":
             sample_name = analysis.metadata.sample_filename_neg.split(".")[0]
         else:
-            raise ValueError(f"Invalid polarity: {self.config.general_params.polarity}. Must be 'pos' or 'neg'.")
+            raise ValueError(
+                f"Invalid ionization mode: {self.config.general_params.ionization_mode}. "
+                "Must be 'pos' or 'neg'."
+            )
 
         # SIRIUS 6 stores each project as a single `.sirius` file (a Nitrite database),
         # not a directory like SIRIUS 5 did. Create only the parent folder and point

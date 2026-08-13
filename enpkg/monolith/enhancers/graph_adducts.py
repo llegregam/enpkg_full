@@ -39,18 +39,18 @@ GRAPH_POSITIVE_BASE_RECIPE: AdductRecipe = GRAPH_POSITIVE_RECIPES[0]
 GRAPH_NEGATIVE_BASE_RECIPE: AdductRecipe = GRAPH_NEGATIVE_RECIPES[0]
 
 
-def graph_recipes_for_polarity(polarity: str) -> tuple[list[AdductRecipe], AdductRecipe]:
+def graph_recipes_for_ionization_mode(ionization_mode: str) -> tuple[list[AdductRecipe], AdductRecipe]:
     """Return ``(recipes, base_recipe)`` for ``"pos"`` or ``"neg"``.
 
     Raises
     ------
     ValueError
-        If ``polarity`` is neither ``"pos"`` nor ``"neg"``.
+        If ``ionization_mode`` is neither ``"pos"`` nor ``"neg"``.
     """
-    match polarity:
+    match ionization_mode:
         case "pos":
             return GRAPH_POSITIVE_RECIPES, GRAPH_POSITIVE_BASE_RECIPE
         case "neg":
             return GRAPH_NEGATIVE_RECIPES, GRAPH_NEGATIVE_BASE_RECIPE
         case _:
-            raise ValueError(f"Invalid polarity {polarity!r}, expected 'pos' or 'neg'")
+            raise ValueError(f"Invalid ionization mode {ionization_mode!r}, expected 'pos' or 'neg'")
