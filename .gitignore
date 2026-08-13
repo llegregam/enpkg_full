@@ -158,3 +158,6 @@ enpkg/pyvenv.cfg
 enpkg/requirements.txt
 enpkg/topological_propagation.drawio
 enpkg/monolith/enhancers/test_isdb
+
+# Large downloaded vocabulary reference, not meant for version control
+docs/vocab/chebi-vocab.owl
