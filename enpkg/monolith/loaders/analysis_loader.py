@@ -32,6 +32,20 @@ class AnalysisLoader:
 
     RAW_EXTENSIONS = [".mzML", ".mzml", ".mzXML", ".mzxml"]
 
+    # MZmine's newer "modular" CSV export names its feature-level columns
+    # differently from the legacy GNPS-style export that the rest of this loader
+    # speaks. The two are otherwise structurally identical — one row per feature,
+    # retention time in minutes, same feature-ID space as the MGF — so renaming
+    # is enough to read both. ``area`` maps to ``Peak area`` rather than
+    # ``height`` so intensity keeps the same meaning as in runs made against
+    # legacy exports (the two differ by an order of magnitude in practice).
+    MODULAR_COLUMN_ALIASES = {
+        "id": "row ID",
+        "mz": "row m/z",
+        "rt": "row retention time",
+        "area": "Peak area",
+    }
+
     @classmethod
     def from_files(
         cls,
@@ -165,6 +179,39 @@ class AnalysisLoader:
         return sep
 
     @classmethod
+    def _normalize_quant_columns(cls, quant_table: pl.DataFrame) -> pl.DataFrame:
+        """Rename MZmine modular-export columns to their legacy equivalents.
+
+        No-op when the legacy names are already present, so a legacy export that
+        also happens to carry a stray ``id``/``mz`` column is left untouched.
+        Aliases are matched against bare column names only: the modular export
+        additionally emits per-datafile columns such as
+        ``datafile:<run>.raw:area``, which hold single-file values and must not
+        be mistaken for the aggregated feature-level ones.
+        """
+        if "row ID" in quant_table.columns:
+            return quant_table
+
+        renames = {
+            source: target
+            for source, target in cls.MODULAR_COLUMN_ALIASES.items()
+            if source in quant_table.columns and target not in quant_table.columns
+        }
+        if not renames:
+            return quant_table
+
+        # Exports produced without an area column still carry height; use it so
+        # the run proceeds rather than failing on a missing intensity column.
+        if "Peak area" not in renames.values() and "height" in quant_table.columns:
+            renames["height"] = "Peak height"
+
+        logger.info(
+            "Detected MZmine modular quantification export; renaming %s",
+            ", ".join(f"{k!r} -> {v!r}" for k, v in sorted(renames.items())),
+        )
+        return quant_table.rename(renames)
+
+    @classmethod
     def _load_quantification_table(cls, path: Path) -> pl.DataFrame:
         """Load quantification table from file with auto-detected separator."""
         separator = cls._sniff_separator(path)
@@ -177,6 +224,8 @@ class AnalysisLoader:
                 exc,
             )
             quant_table = pl.read_csv(path, separator=separator, ignore_errors=True)
+
+        quant_table = cls._normalize_quant_columns(quant_table)
 
         required = ("row ID", "row m/z", "row retention time")
         missing = [c for c in required if c not in quant_table.columns]
