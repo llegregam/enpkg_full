@@ -36,6 +36,7 @@ INCHIKEY  = Namespace("https://identifiers.org/inchikey/")    # canonical, resol
 PUBCHEM   = Namespace("https://identifiers.org/pubchem.compound/")
 GBIF      = Namespace("https://www.gbif.org/species/")
 DOI       = Namespace("https://doi.org/")
+MASSIVE   = Namespace("https://massive.ucsd.edu/ProteoSAFe/dataset.jsp?accession=")  # emi:hasMassiveDOI target
 # NCBITAXON (above) also serves as the owl:sameAs target for organism NCBI ids.
 
 __all__ = [
@@ -43,5 +44,5 @@ __all__ = [
     "EMI", "ENPKG", "SOSA", "MS", "CHEMROF", "NCBITAXON", "NCBITAXON_PROP",
     "PROV", "DCTERMS", "SKOS",
     "EMI_RES",
-    "WD", "INCHIKEY", "PUBCHEM", "GBIF", "DOI",
+    "WD", "INCHIKEY", "PUBCHEM", "GBIF", "DOI", "MASSIVE",
 ]

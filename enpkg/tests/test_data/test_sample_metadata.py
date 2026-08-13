@@ -51,3 +51,25 @@ def test_from_dict_splits_known_and_extra_fields():
     )
     assert meta.sample_id == "s"
     assert meta.extra_fields == {"custom_col": "v"}
+
+
+def test_from_dict_recognizes_sample_and_extraction_fields():
+    """sample_name/collection_date/collection_location/extraction_method/
+    extraction_solvent come from the user metadata file, via SampleMetadata —
+    make sure they land as known fields, not extra_fields."""
+    meta = SampleMetadata.from_dict(
+        {
+            "sample_id": "s",
+            "sample_name": "VGF151_E05",
+            "collection_date": "2019-03-14",
+            "collection_location": "Geneva, CH",
+            "extraction_method": "maceration",
+            "extraction_solvent": "MeOH",
+        }
+    )
+    assert meta.sample_name == "VGF151_E05"
+    assert meta.collection_date == "2019-03-14"
+    assert meta.collection_location == "Geneva, CH"
+    assert meta.extraction_method == "maceration"
+    assert meta.extraction_solvent == "MeOH"
+    assert meta.extra_fields == {}

@@ -125,6 +125,18 @@ class ChemicalAdduct(BaseModel):
         return self.recipe.compute_adduct_mass(self.lotus[0].structure_exact_mass)
 
     @property
+    def neutral_mass(self) -> float:
+        """The candidate group's own exact mass — the neutral (uncharged) mass
+        ``adduct_mass`` is derived from via the recipe (``adduct_mass ==
+        recipe.compute_adduct_mass(neutral_mass)``), so the two are always
+        mutually consistent for a given hypothesis.
+
+        Every Lotus entry in the group shares a molecular formula (enforced by
+        ``validate_lotus``), so ``lotus[0]``'s exact mass is representative.
+        """
+        return self.lotus[0].structure_exact_mass
+
+    @property
     def short_inchikey(self) -> str:
         """Return the first 14 characters of the inchikey."""
         return self.lotus[0].short_inchikey

@@ -1,5 +1,6 @@
 import hashlib
 from typing import Optional
+from urllib.parse import quote
 
 from rdflib import URIRef
 
@@ -55,13 +56,74 @@ class AnalysisURIs:
         """Mint the URI for one MS1 adduct hypothesis on a spectrum.
 
         Run-scoped: an adduct only exists for a given spectrum in a given run.
-        A spectrum carries several competing hypotheses (spectrum.ms1_annotations),
-        so the recipe hash discriminates them. Never str(adduct) — that's an
-        unstable Pydantic repr, not a stable key.
+        A ``ChemicalAdduct`` *is* a (LOTUS formula group, recipe) pairing — the MS1
+        enhancer builds exactly one per pair — so **both** halves belong in the key.
+        The recipe alone is not a key: keying on it merged every molecule proposed
+        for one feature under one ionization form onto a single node, which then
+        kept the first hypothesis' masses and candidate structures while collecting
+        a conflicting ``enpkg:annotationRank`` from each of the others.
+
+        The formula rides as a readable segment (``.../<recipe hash>/C9H8O4``)
+        rather than as a second opaque hash: an adduct IRI is something humans read
+        in the Turtle, and the formula is exactly the discriminator they need to
+        see. It is percent-encoded — LOTUS formulae are plain ASCII in practice,
+        but nothing validates them and one stray ``/`` would reshape the IRI path.
+
+        ``_recipe_hash`` is deliberately reused unchanged: it also keys the globally
+        shared recipe nodes (``recipe_uri``), so widening it would move every recipe
+        IRI too, for no gain.
+
+        Never str(adduct) — that's an unstable Pydantic repr, not a stable key.
         """
         return EMI_RES[
-            f"adduct/{analysis.run_name}/{spectrum.feature_id}/{_recipe_hash(adduct.recipe)}"
+            f"adduct/{analysis.run_name}/{spectrum.feature_id}"
+            f"/{_recipe_hash(adduct.recipe)}/{_formula_segment(adduct)}"
         ]
+
+    # MS1 ADDUCT-CLUSTER URIs
+    @staticmethod
+    def adduct_cluster_uri(analysis: Analysis, cluster_id: int) -> URIRef:
+        """Mint the URI for one resolved MS1 adduct cluster (a molecule and its adducts).
+
+        Run-scoped: ``cluster_id`` (from the graph enhancer's ``resolve_clusters``) is
+        only unique *within* a run, so the URI composes run_name + cluster_id — the
+        same pattern as the per-spectrum URI. Stable across re-serializations.
+        """
+        return EMI_RES[f"adductcluster/{analysis.run_name}/{cluster_id}"]
+
+    # MOLECULAR-NETWORK URIs
+    @staticmethod
+    def lfpair_uri(analysis: Analysis, feature_id_a, feature_id_b) -> URIRef:
+        """Mint the URI for one reified molecular-network edge (an ``emi:LFpair``).
+
+        The pair is *unordered* — the network is an undirected graph, so ``(u, v)``
+        comes out of networkx in arbitrary orientation — hence the key is the two
+        feature ids **sorted**: ``lfpair/{run}/{lo}_{hi}``. Sorting at all is what
+        makes the URI orientation-independent (the same edge always mints the same
+        node, so re-serializing is a no-op); sorting *numerically* rather than
+        lexicographically is what keeps 9 below 10, since node ids reach us as
+        strings. Run-scoped like spectrum_uri: a feature id is only unique
+        within a run.
+        """
+        low, high = sorted((int(feature_id_a), int(feature_id_b)))
+        return EMI_RES[f"lfpair/{analysis.run_name}/{low}_{high}"]
+
+    @staticmethod
+    def fbmn_component_uri(analysis: Analysis, min_feature_id) -> URIRef:
+        """Mint the URI for one connected component of the molecular network.
+
+        A component has no identifier of its own (unlike an MS1 adduct cluster,
+        which the graph enhancer numbers), so it is keyed on its smallest member
+        feature id, compared **numerically** — a canonical, membership-derived
+        representative that does not depend on iteration order.
+
+        Caveat (the same one adduct_cluster_uri carries, but it bites harder here):
+        the key is a function of the component's membership, so recomputing the
+        network with different NetworkEnhancer parameters can put a *different*
+        component behind the same URI. Merging two differently-parameterised
+        exports of one run is therefore not meaningful.
+        """
+        return EMI_RES[f"fbmncomponent/{analysis.run_name}/{int(min_feature_id)}"]
 
     @staticmethod
     def recipe_uri(recipe: AdductRecipe) -> URIRef:
@@ -175,6 +237,39 @@ def _recipe_hash(recipe: AdductRecipe) -> str:
     """
     ingredients = ",".join(f"{k}:{recipe.ingredients[k]}" for k in sorted(recipe.ingredients))
     return _short_hash(f"{recipe.charge}|{recipe.positive}|{recipe.multimer_factor}|{ingredients}")
+
+
+def _formula_segment(adduct: ChemicalAdduct) -> str:
+    """IRI-safe segment naming the LOTUS formula group behind one adduct hypothesis.
+
+    ``ChemicalAdduct.validate_lotus`` guarantees every entry of the group shares a
+    molecular formula, and ``LotusStore`` builds exactly one group per formula, so
+    the formula names the whole group faithfully and separates any two hypotheses
+    one feature can carry under one recipe.
+
+    ``Lotus`` is a plain (unvalidated) dataclass fed from a scraped database, so the
+    formula can arrive as None, NaN or blank. The cascade below never raises and
+    never silently merges two groups:
+
+    1. the formula, percent-encoded — nothing validates a formula, and a single
+       stray ``/`` or space would otherwise reshape the IRI path;
+    2. else the group's own exact mass, which *defines* a formula group (same
+       formula => same exact mass) and is load-bearing for the whole MS1 path, so
+       it cannot be missing where a formula can be;
+    3. else a hash of the group's short InChIKey — last resort, since it names one
+       member rather than the group.
+
+    Step 3 is not paranoia: ``f"mass-{None:.6f}"`` raises TypeError, and both GUI
+    export paths wrap serialization in a bare except, so one junk LOTUS row would
+    lose the *entire* file. Same reasoning as ``_resolve_node`` in the serializer.
+    """
+    formula = adduct.molecular_formula
+    if isinstance(formula, str) and formula.strip():
+        return quote(formula.strip(), safe="")
+    mass = adduct.neutral_mass
+    if isinstance(mass, (int, float)) and mass == mass:  # rejects None and NaN
+        return f"mass-{mass:.6f}"
+    return f"group-{_short_hash(str(adduct.short_inchikey))}"
 
 
 def _organism_uri(wikidata: Optional[str], ott_id: Optional[int]) -> Optional[URIRef]:

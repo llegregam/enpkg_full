@@ -15,6 +15,7 @@ class SampleMetadata(BaseModel):
     """
 
     sample_id: str
+    sample_name: Optional[str] = None
     source_taxon: Optional[str] = None
     sample_type: Optional[str] = None
     source_id: Optional[str] = None
@@ -24,6 +25,14 @@ class SampleMetadata(BaseModel):
     organism_order: Optional[str] = None
     organism_family: Optional[str] = None
     organism_genus: Optional[str] = None
+
+    # Collection provenance
+    collection_date: Optional[str] = None
+    collection_location: Optional[str] = None
+
+    # Extraction (backs the RDF ExtractSample node's own attributes)
+    extraction_method: Optional[str] = None
+    extraction_solvent: Optional[str] = None
 
     # TODO: Externalize these fields
     sample_filename_pos: Optional[str] = None
@@ -53,9 +62,11 @@ class SampleMetadata(BaseModel):
         Known fields are extracted explicitly; unknown fields go to extra_fields.
         """
         known_fields = {
-            "sample_id", "source_taxon", "sample_type", "source_id",
+            "sample_id", "sample_name", "source_taxon", "sample_type", "source_id",
             "organism_kingdom", "organism_phylum", "organism_class",
             "organism_order", "organism_family", "organism_genus",
+            "collection_date", "collection_location",
+            "extraction_method", "extraction_solvent",
             "sample_filename_pos", "sample_filename_neg", "massive_id"
         }
 

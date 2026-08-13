@@ -25,6 +25,8 @@ class Analysis(BaseModel):
     spectra: Tuple[AnnotatedSpectrum, ...]
     metadata: SampleMetadata
     ionization_mode: str
+    operator: Optional[str] = None
+    instrument: Optional[str] = None
     ott_matches: list[Match] = Field(default_factory=list)
     molecular_network: Optional[nx.Graph] = None
     # Directed graph relating features that look like adducts of the same molecule

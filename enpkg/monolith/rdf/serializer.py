@@ -15,16 +15,20 @@ Phases implemented here:
   1. ``Analysis -> Sample -> FeatureSet -> Spectrum`` spine + shared Taxon node.
   2. MS1 adducts (+ recipe), compounds (+ 2D-InChIKey bridge node, organism,
      reference) and MS2 annotations.
-The OTT match node, molecular network and (gated) product-ion layer are Phase 3.
+  3. The OTT match node, the molecular network (``emi:LFpair`` edges, gated by
+     ``include_network``; ``emi:FBMNComponent`` nodes for the connected components
+     those edges form, on by default) and the gated product-ion layer.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
+import networkx as nx
 import numpy as np
-from rdflib import BNode, Graph, Literal, URIRef
+from rdflib import Graph, Literal, URIRef
 
 from ..data.analysis import Analysis
 from ..data.annotated_spectra_class import AnnotatedSpectrum
@@ -41,6 +45,7 @@ from .namespaces import (
     ENPKG,
     GBIF,
     INCHIKEY,
+    MASSIVE,
     MS,
     NCBITAXON,
     NCBITAXON_PROP,
@@ -61,28 +66,14 @@ _PREFIXES = {
     "taxon": NCBITAXON, "ncbitaxon": NCBITAXON_PROP,
     "prov": PROV, "dcterms": DCTERMS, "skos": SKOS, "emi-res": EMI_RES,
     "wd": WD, "inchikey": INCHIKEY, "pubchem": PUBCHEM, "gbif": GBIF, "doi": DOI,
+    "massive": MASSIVE,
 }
 
-# Numeric-value predicates minted in our namespace, each declared a datatype
-# property and skos:exactMatch-linked to the PSI-MS *class* it corresponds to.
-# PSI-MS terms (MS_1003243, ...) are classes / cvParam concepts, not properties,
-# so using them directly as predicates would pun a class as a property.
-_PROPERTY_MAPPINGS = {
-    "adductMass": ("1003243", "adduct ion mass"),
-    "charge": ("1000041", "charge state"),
-    "productIonMz": ("1001225", "product ion m/z"),
-    "productIonIntensity": ("1001226", "product ion intensity"),
-    "lowIntensityThreshold": ("1000629", "low intensity threshold"),
-}
-
-# Minted annotation subclasses of emi:StructuralAnnotation, used to tell apart the
-# two annotation kinds that EMI otherwise unifies: MS1 adduct hypotheses and MS2
-# spectral-library matches. Declared once per graph (label + subClassOf).
-_CLASS_MAPPINGS = {
-    "AdductAnnotation": ("Adduct annotation (MS1)", EMI.StructuralAnnotation),
-    "SpectralAnnotation": ("Spectral library annotation (MS2)", EMI.StructuralAnnotation),
-    "SiriusAnnotation": ("SIRIUS structure annotation", EMI.StructuralAnnotation),
-}
+# The single source of truth for every enpkg: term's rdf:type / rdfs:domain /
+# rdfs:range / skos:exactMatch etc. — see docs/SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md,
+# Group F D3. serializer.py is 3 directories below the repo root (rdf -> monolith ->
+# enpkg -> root), same depth as the drift test that also resolves this path.
+_VOCAB_PATH = Path(__file__).resolve().parents[3] / "docs" / "vocab" / "enpkg.ttl"
 
 # Ingredient name -> chemical symbol, for rendering emi:hasAdduct strings.
 _ADDUCT_SYMBOLS = {
@@ -104,15 +95,16 @@ class AnalysisSerializer:
         top_k_ms2: Optional[int] = 5,
         top_k_sirius: Optional[int] = None,
         include_network: bool = False,
+        include_fbmn_components: bool = True,
         include_ions: bool = False,
+        include_adduct_clusters: bool = True,
         min_relative_intensity: float = 0.0,
         max_ions_per_spectrum: Optional[int] = None,
     ):
         self.graph = Graph()
         for prefix, namespace in _PREFIXES.items():
             self.graph.bind(prefix, namespace)
-        self._declare_property_mappings()
-        self._declare_class_mappings()
+        self._declare_vocabulary()
         # URIs of shared nodes already described (compounds, organisms, recipes,
         # references, 2D InChIKeys) so they are emitted once even across repeated
         # add_analysis calls.
@@ -125,7 +117,12 @@ class AnalysisSerializer:
         # file is already SIRIUS's chosen top-X, so this defaults to None (emit all).
         self.top_k_sirius = top_k_sirius if (top_k_sirius is None or top_k_sirius > 0) else None
         self.include_network = include_network
+        # Components are O(features) where the edges they derive from are O(features^2),
+        # and the component is the unit FBMN consumers reason about — so unlike
+        # include_network this defaults on. Both are no-ops without a network.
+        self.include_fbmn_components = include_fbmn_components
         self.include_ions = include_ions
+        self.include_adduct_clusters = include_adduct_clusters
         self.min_relative_intensity = min_relative_intensity
         self.max_ions_per_spectrum = max_ions_per_spectrum
 
@@ -157,26 +154,43 @@ class AnalysisSerializer:
         except (TypeError, ValueError):
             return None
 
-    def _declare_property_mappings(self) -> None:
-        """Declare each minted numeric predicate as a datatype property and link it
-        to the PSI-MS class it means (skos:exactMatch) — so we query with a real
-        property while keeping the PSI-MS semantics. Emitted once per graph."""
-        for local, (ms_accession, label) in _PROPERTY_MAPPINGS.items():
-            prop = ENPKG[local]
-            self.graph.add((prop, RDF.type, OWL.DatatypeProperty))
-            self.graph.add((prop, RDFS.label, Literal(label)))
-            self.graph.add((prop, SKOS.exactMatch, MS[ms_accession]))
+    @staticmethod
+    def _massive_uri(massive_id) -> Optional[URIRef]:
+        """Build the ``emi:hasMassiveDOI`` object URI from ``metadata.massive_id``.
 
-    def _declare_class_mappings(self) -> None:
-        """Declare each minted annotation subclass as an owl:Class, link it under its
-        EMI parent (rdfs:subClassOf) and label it. Lets consumers tell MS1 (adduct)
-        from MS2 (spectral) annotations while both stay emi:StructuralAnnotation.
-        Emitted once per graph."""
-        for local, (label, parent) in _CLASS_MAPPINGS.items():
-            cls = ENPKG[local]
-            self.graph.add((cls, RDF.type, OWL.Class))
-            self.graph.add((cls, RDFS.subClassOf, parent))
-            self.graph.add((cls, RDFS.label, Literal(label)))
+        EMI declares ``hasMassiveDOI`` an ``owl:ObjectProperty`` — its own example
+        points it at a resolvable MassIVE dataset URL, not a literal accession
+        string. ``massive_id`` normally arrives as a bare accession (e.g.
+        ``"MSV000087728"``), turned into ``https://massive.ucsd.edu/ProteoSAFe/
+        dataset.jsp?accession=MSV000087728`` via the ``MASSIVE`` namespace; a
+        value that's already a full URL (someone pasted the whole link into the
+        metadata sheet) is kept as-is rather than double-prefixed.
+        """
+        if massive_id is None:
+            return None
+        massive_id = str(massive_id).strip()
+        if not massive_id:
+            return None
+        if massive_id.startswith(("http://", "https://")):
+            return URIRef(massive_id)
+        return MASSIVE[massive_id]
+
+    def _declare_vocabulary(self) -> None:
+        """Load every enpkg: term declaration from the single source of truth
+        (docs/vocab/enpkg.ttl) into the output graph, once per graph.
+
+        Replaces what used to be six methods spelling out each term's
+        rdf:type/rdfs:domain/rdfs:range/skos:exactMatch as Python literals — a
+        second, driftable copy of what enpkg.ttl already declares (see
+        docs/SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md, Group F D3). Every export
+        stays exactly as self-contained as before (the full vocabulary is still
+        inlined into every ``.ttl`` file); only the source of the declarations
+        changed. This brings in the ontology's own header triple too
+        (``enpkg: a owl:Ontology ; owl:imports emi: ; ...``) — a statement that
+        EMI's axioms apply, not an actual fetch of them; ``graph.parse`` reads
+        only this one file.
+        """
+        self.graph.parse(_VOCAB_PATH, format="turtle")
 
     @staticmethod
     def _format_adduct(recipe: AdductRecipe) -> str:
@@ -208,20 +222,29 @@ class AnalysisSerializer:
         uri = AnalysisURIs.analysis_uri(analysis)
         g = self.graph
         g.add((uri, RDF.type, EMI.LCMSAnalysis))
-        polarity = (analysis.ionization_mode or "").lower()
-        if polarity.startswith("pos"):
+        ionization_mode = (analysis.ionization_mode or "").lower()
+        if ionization_mode.startswith("pos"):
             g.add((uri, RDF.type, EMI.LCMSAnalysisPos))
-        elif polarity.startswith("neg"):
+        elif ionization_mode.startswith("neg"):
             g.add((uri, RDF.type, EMI.LCMSAnalysisNeg))
         self._set(uri, DCTERMS.identifier, analysis.run_name)
-        self._set(uri, EMI.hasMassiveDOI, getattr(analysis.metadata, "massive_id", None))
+        massive_uri = self._massive_uri(getattr(analysis.metadata, "massive_id", None))
+        if massive_uri is not None:
+            g.add((uri, EMI.hasMassiveDOI, massive_uri))
 
-        g.add((uri, EMI.hasSample, self._add_sample(analysis)))
-        g.add((uri, EMI.hasLCMSFeatureSet, self._add_featureset(analysis)))
+        g.add((self._add_sample(analysis), ENPKG.hasLabProcess, uri))
+        featureset_uri = self._add_featureset(analysis)
+        g.add((uri, EMI.hasLCMSFeatureSet, featureset_uri))
+        # Adduct clusters group features, so they hang off the feature set (which also
+        # minted the member feature URIs just above), not the analysis directly.
+        if self.include_adduct_clusters:
+            self._add_adduct_clusters(analysis, featureset_uri)
         for match in (analysis.ott_matches or []):
             g.add((uri, ENPKG.hasOTTMatch, self._add_match(analysis, match)))
-        if self.include_network:
-            self._add_molecular_network(analysis)
+        # Network components also group features, so like the adduct clusters above
+        # they hang off the feature set — and both layers reference the member
+        # feature nodes it just minted, so this must stay after _add_featureset.
+        self._add_network_layer(analysis, featureset_uri)
         return uri
 
     def _add_sample(self, analysis: Analysis) -> URIRef:
@@ -273,23 +296,73 @@ class AnalysisSerializer:
         self._set(uri, EMI.hasFeatureArea, spectrum.intensity)
         # TODO: Look into the ranking of annotations. Should think of when we want to use
         # simple Cosine ranking vs. the more complex reweighted NPC-alignment score
-        self._add_ranked_annotations(
-            uri, spectrum.ms1_annotations,
-            scores=(spectrum.ms1_pathway_scores, spectrum.ms1_superclass_scores, spectrum.ms1_class_scores),
-            top_k=self.top_k_ms1,
-            emit=lambda ann: self._add_chemical_adduct(analysis, spectrum, ann),
-        )
-        self._add_ranked_annotations(
+        #
+        # MS2 is emitted first so MS1 can be *coupled to* it: an MS2 match identifies a
+        # specific compound by fragmentation, and the MS1 adduct proposing that same
+        # compound is the one that explains its ionization. See _emit_ms1_annotations.
+        ms2_emitted = self._add_ranked_annotations(
             uri, spectrum.ms2_annotations,
             scores=(spectrum.ms2_pathway_scores, spectrum.ms2_superclass_scores, spectrum.ms2_class_scores),
             top_k=self.top_k_ms2,
             emit=lambda ann: self._add_ms2_annotation(analysis, spectrum, ann),
             fallback_key=lambda ann: ann.score,  # cosine, when NPC scores absent
         )
+        self._emit_ms1_annotations(analysis, spectrum, uri, ms2_emitted)
         self._add_sirius_annotations(analysis, spectrum, uri)
         if self.include_ions:
             self._add_ions(uri, spectrum)
         return uri
+
+    def _emit_ms1_annotations(
+        self, analysis, spectrum, spectrum_uri, ms2_emitted
+    ) -> None:
+        """Emit the feature's MS1 adducts, coupled to any MS2 matches.
+
+        Two regimes:
+
+        * **No serialized MS2** (``ms2_emitted`` empty) — emit MS1 as mass-only
+          hypotheses, ranked and capped at ``top_k_ms1`` (unchanged behaviour).
+        * **MS2-identified feature** — an MS2 match names a compound by
+          fragmentation, so only the MS1 adducts whose candidate structures include
+          an MS2-matched compound (shared 2D short InChIKey) are meaningful. Keep
+          *every* such adduct (all forms; ``top_k`` off), drop the mass-coincidence
+          rest, and link each MS2 annotation to its corresponding adduct via
+          ``enpkg:hasCorrespondingAdduct``. A feature whose MS2 compound appears in
+          no MS1 group is therefore serialized with no MS1 adduct — intended (see
+          ``docs/MS2_ENHANCER.md`` §6 caveat).
+        """
+        ms1_scores = (
+            spectrum.ms1_pathway_scores,
+            spectrum.ms1_superclass_scores,
+            spectrum.ms1_class_scores,
+        )
+        # short InChIKey -> the MS2 annotation URIs that matched that compound.
+        ms2_by_short_ik: dict[str, list[URIRef]] = {}
+        for _score, annotation, ms2_uri in ms2_emitted:
+            ms2_by_short_ik.setdefault(annotation.short_inchikey, []).append(ms2_uri)
+
+        if not ms2_by_short_ik:
+            self._add_ranked_annotations(
+                spectrum_uri, spectrum.ms1_annotations,
+                scores=ms1_scores, top_k=self.top_k_ms1,
+                emit=lambda ann: self._add_chemical_adduct(analysis, spectrum, ann),
+            )
+            return
+
+        corresponding = [
+            adduct for adduct in spectrum.ms1_annotations
+            if {lotus.short_inchikey for lotus in adduct.lotus} & ms2_by_short_ik.keys()
+        ]
+        ms1_emitted = self._add_ranked_annotations(
+            spectrum_uri, corresponding,
+            scores=ms1_scores, top_k=None,  # keep every corresponding adduct form
+            emit=lambda ann: self._add_chemical_adduct(analysis, spectrum, ann),
+        )
+        for _score, adduct, adduct_uri in ms1_emitted:
+            shared = {lotus.short_inchikey for lotus in adduct.lotus} & ms2_by_short_ik.keys()
+            for short_ik in shared:
+                for ms2_uri in ms2_by_short_ik[short_ik]:
+                    self.graph.add((ms2_uri, ENPKG.hasCorrespondingAdduct, adduct_uri))
 
     @staticmethod
     def _alignment_score(annotation, pathway, superclass, klass) -> float:
@@ -307,15 +380,19 @@ class AnalysisSerializer:
 
     def _add_ranked_annotations(
         self, spectrum_uri, annotations, *, scores, top_k, emit, fallback_key=None
-    ) -> None:
+    ) -> list[tuple[Optional[float], object, URIRef]]:
         """Emit a spectrum's annotations ranked by reweighted score, capped at
         top_k. Tags each kept node with enpkg:annotationRank (1=best) +
         enpkg:annotationScore. When the propagated NPC scores are absent (weights
         enhancer not run), falls back to ``fallback_key`` (e.g. MS2 cosine) for
         ranking; if that's also absent, keeps stored order. The cap is always
-        applied so top_k means top_k, ranked or not."""
+        applied so top_k means top_k, ranked or not.
+
+        Returns the emitted ``(score, annotation, annotation_uri)`` triples (in
+        rank order), so callers can wire cross-annotation links (e.g. couple MS2
+        matches to their corresponding MS1 adducts); ``[]`` when nothing is emitted."""
         if not annotations:
-            return
+            return []
         pathway, superclass, klass = scores
         rankable = pathway is not None and superclass is not None and klass is not None
         if rankable:
@@ -335,11 +412,14 @@ class AnalysisSerializer:
             ranked = [(None, a) for a in annotations]
         if top_k is not None:
             ranked = ranked[:top_k]
+        emitted: list[tuple[Optional[float], object, URIRef]] = []
         for rank, (score, annotation) in enumerate(ranked, start=1):
             annotation_uri = emit(annotation)
             self.graph.add((spectrum_uri, EMI.hasAnnotation, annotation_uri))
             self._set(annotation_uri, ENPKG.annotationRank, rank)
             self._set(annotation_uri, ENPKG.annotationScore, score)
+            emitted.append((score, annotation, annotation_uri))
+        return emitted
 
     def _add_taxon(
         self,
@@ -395,10 +475,14 @@ class AnalysisSerializer:
         # ("adduct ion") is entailed, so we don't emit it redundantly.
         g.add((uri, RDF.type, MS["1002807" if adduct.recipe.positive else "1002808"]))  # polarity
         self._set(uri, ENPKG.adductMass, adduct.adduct_mass)        # skos:exactMatch MS:1003243
+        self._set(uri, ENPKG.adductNeutralMass, adduct.neutral_mass)  # skos:closeMatch chemrof:monoisotopic_mass
         self._set(uri, EMI.hasAdduct, self._format_adduct(adduct.recipe))  # "[M+H]+" form (EMI property)
         g.add((uri, ENPKG.hasRecipe, self._add_recipe(adduct.recipe)))
         for lotus in adduct.lotus:
-            g.add((uri, EMI.hasChemicalStructure, self._add_compound(lotus)))
+            # Sibling of emi:hasChemicalStructure (used by MS2/SIRIUS), deliberately not a
+            # subproperty: MS1 candidates are mass-coincidence hits, not confirmed
+            # identifications — see docs/SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md §1b.
+            g.add((uri, ENPKG.hasCandidateStructure, self._add_compound(lotus)))
         return uri
 
     def _add_recipe(self, recipe: AdductRecipe) -> URIRef:
@@ -421,6 +505,54 @@ class AnalysisSerializer:
             self._set(ingredient, ENPKG.ingredientName, name)
             self._set(ingredient, ENPKG.ingredientCount, count)
         return uri
+
+    def _add_adduct_clusters(self, analysis: Analysis, featureset_uri: URIRef) -> None:
+        """Emit one ``enpkg:AdductCluster`` node per resolved MS1 adduct cluster.
+
+        A cluster is *implicit* in memory: the MS1 graph enhancer stamps each member
+        spectrum with a shared ``ms1_cluster_id`` and identical CGC/CIC/CCC copies,
+        plus an ``ms1_cluster_role`` and ``ms1_assigned_recipe``. Here we regroup the
+        spectra by cluster id to materialise the molecule as an explicit node (its
+        anchor base ion + satellite adducts), so "all adducts of one compound" is a
+        one-hop query. Clusters group features, so each hangs off the ``featureset_uri``
+        via ``enpkg:hasAdductCluster``. Singletons (``ms1_cluster_id is None``) get no
+        cluster node. Keys off the per-spectrum stamps only — the ``ms1_adduct_graph``
+        need not be set.
+        """
+        clusters: dict[int, list[AnnotatedSpectrum]] = {}
+        for spectrum in analysis.spectra:
+            cluster_id = spectrum.ms1_cluster_id
+            if cluster_id is None:
+                continue  # singleton — absence of membership *is* "singleton"
+            clusters.setdefault(cluster_id, []).append(spectrum)
+
+        g = self.graph
+        for cluster_id, members in clusters.items():
+            cluster_uri = AnalysisURIs.adduct_cluster_uri(analysis, cluster_id)
+            g.add((featureset_uri, ENPKG.hasAdductCluster, cluster_uri))
+            if cluster_uri in self._emitted:
+                continue
+            self._emitted.add(cluster_uri)
+            g.add((cluster_uri, RDF.type, ENPKG.AdductCluster))
+            # CGC/CIC/CCC are identical across members, so any member is representative.
+            representative = members[0]
+            self._set(cluster_uri, ENPKG.clusterConnectivity, representative.ms1_cluster_connectivity)
+            self._set(cluster_uri, ENPKG.clusterIntensityCoverage, representative.ms1_cluster_intensity_coverage)
+            self._set(cluster_uri, ENPKG.clusterCountCoverage, representative.ms1_cluster_count_coverage)
+            for member in members:
+                member_uri = AnalysisURIs.spectrum_uri(analysis, member)
+                g.add((cluster_uri, ENPKG.hasClusterMember, member_uri))
+                if member.ms1_cluster_role == "anchor":
+                    g.add((cluster_uri, ENPKG.hasAnchor, member_uri))
+                # Per-feature resolution: role, back-link, and the resolved ionization
+                # form as a literal (e.g. "[M+Na]+") — not a parallel edge to a node.
+                # The form is already carried by the feature's MS1 annotations
+                # (emi:hasAnnotation), so a string here avoids a redundant recipe node.
+                self._set(member_uri, ENPKG.clusterRole, member.ms1_cluster_role)
+                g.add((member_uri, ENPKG.inAdductCluster, cluster_uri))
+                if member.ms1_assigned_recipe is not None:
+                    self._set(member_uri, ENPKG.resolvedAdduct,
+                              self._format_adduct(member.ms1_assigned_recipe))
 
     def _add_compound(self, lotus: Lotus) -> URIRef:
         uri = CompoundURIs.lotus_uri(lotus)
@@ -533,7 +665,14 @@ class AnalysisSerializer:
     def _add_sirius_annotations(
         self, analysis: Analysis, spectrum: AnnotatedSpectrum, spectrum_uri: URIRef
     ) -> None:
-        """Link a spectrum to its SIRIUS candidates via enpkg:hasSiriusAnnotation.
+        """Link a spectrum to its SIRIUS candidates via emi:hasAnnotation.
+
+        Unified with the MS1/MS2 attach predicate (see §1c of
+        docs/SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md): all three channels subclass
+        emi:StructuralAnnotation already, so the dedicated enpkg:hasSiriusAnnotation
+        predicate was only historical baggage, not a real distinction. A consumer
+        tells the channels apart by rdf:type (enpkg:SiriusAnnotation), the same way
+        it already must for AdductAnnotation vs SpectralAnnotation.
 
         SIRIUS emits candidates already ranked (structurePerIdRank, 1=best), so this
         keeps that order and only caps at top_k_sirius)."""
@@ -545,7 +684,7 @@ class AnalysisSerializer:
             ranked = ranked[: self.top_k_sirius]
         for annotation in ranked:
             annotation_uri = self._add_sirius_annotation(analysis, spectrum, annotation)
-            self.graph.add((spectrum_uri, ENPKG.hasSiriusAnnotation, annotation_uri))
+            self.graph.add((spectrum_uri, EMI.hasAnnotation, annotation_uri))
 
     def _add_sirius_annotation(
         self, analysis: Analysis, spectrum: AnnotatedSpectrum, annotation: SiriusChemicalAnnotation
@@ -586,19 +725,154 @@ class AnalysisSerializer:
             self._same_as(uri, URIRef(taxon.wikidata.wd))
         return uri
 
-    def _add_molecular_network(self, analysis: Analysis) -> None:
+    def _add_network_layer(self, analysis: Analysis, featureset_uri: URIRef) -> None:
+        """Emit the molecular-network layers. A no-op when there is no network.
+
+        Two independent views of the same ``nx.Graph``:
+
+        * ``include_network`` — the reified pairwise edges (``emi:LFpair``). Off by
+          default: worst-case quadratic in the number of features.
+        * ``include_fbmn_components`` — the connected components those edges form
+          (``emi:FBMNComponent``). On by default: one node per family, so O(features),
+          and in FBMN practice the component is the unit people reason about.
+
+        Builds the feature-id -> spectrum lookup **once** and shares it with both
+        emitters. The lookup is needed because network node ids are the MGF
+        FEATURE_ID/SCANS values and arrive as *strings* ('9'), while
+        AnnotatedSpectrum.feature_id is an int — normalising both sides through int
+        is what lets a node find its spectrum, and hence the canonical
+        AnalysisURIs.spectrum_uri rather than a hand-built copy of that rule.
+        """
         network = analysis.molecular_network
         if network is None:
             return
-        g, run = self.graph, analysis.run_name
+        if not (self.include_network or self.include_fbmn_components):
+            return
+        spectra_by_id = {spectrum.feature_id: spectrum for spectrum in analysis.spectra}
+        if self.include_network:
+            self._add_molecular_network(analysis, network, spectra_by_id)
+        if self.include_fbmn_components:
+            self._add_fbmn_components(analysis, network, featureset_uri, spectra_by_id)
+
+    @staticmethod
+    def _resolve_node(
+        spectra_by_id: dict[int, AnnotatedSpectrum], node
+    ) -> Optional[AnnotatedSpectrum]:
+        """Return the spectrum a network node id names, or None if it names none.
+
+        ``Analysis.validate_network_integrity`` makes an unresolvable node impossible
+        *at construction* — but the enhancer attaches the graph with
+        ``model_copy(update=...)``, and pydantic does not re-run validators there, so
+        a mismatched graph can still reach the serializer. Returning None (and
+        skipping that edge / member) keeps one bad node from failing an otherwise
+        good export: both GUI export paths wrap serialization in a bare except, so
+        raising here would lose the entire file.
+        """
+        try:
+            return spectra_by_id.get(int(node))
+        except (TypeError, ValueError):
+            return None
+
+    def _add_molecular_network(
+        self,
+        analysis: Analysis,
+        network: nx.Graph,
+        spectra_by_id: dict[int, AnnotatedSpectrum],
+    ) -> None:
+        """Emit one named ``emi:LFpair`` node per network edge.
+
+        An RDF triple carries no attributes, so the edge is reified into a node
+        holding the modified-cosine score and the precursor-mass difference — the
+        modification separating the two features, which is exactly what modified
+        cosine already aligned the spectra on.
+
+        The node gets a *named* URI, not a blank node, for the two reasons _add_ions
+        gives: blank nodes are not surfaced by GraphDB's browser / visual graph, and
+        they are re-minted on every serialization, so merging two exports of one run
+        duplicated every edge instead of collapsing it. The URI is keyed on the
+        numerically-sorted feature-id pair and the members are emitted in that same
+        order, so re-serializing is a no-op and the output no longer depends on which
+        way round networkx yielded (u, v).
+
+        "First"/"second" therefore means "lower/higher feature id" — deterministic,
+        but still nothing chemical. A consumer asking "what is feature X similar to?"
+        should query the emi:hasPairMember superproperty both specialise.
+
+        Deliberately *not* registered in self._emitted: idempotency comes from the
+        URI itself (identical triples, RDF set semantics), and one entry per edge
+        would make _emitted the largest object in the serializer on a big run.
+        """
+        g = self.graph
         for u, v, data in network.edges(data=True):
-            edge = BNode()
-            g.add((edge, RDF.type, EMI.LFpair))
-            g.add((edge, EMI.hasFirstMember, EMI_RES[f"spectrum/{run}/{int(u)}"]))
-            g.add((edge, EMI.hasSecondMember, EMI_RES[f"spectrum/{run}/{int(v)}"]))
+            spectrum_u = self._resolve_node(spectra_by_id, u)
+            spectrum_v = self._resolve_node(spectra_by_id, v)
+            if spectrum_u is None or spectrum_v is None:
+                continue  # node names no spectrum — a one-member pair is malformed
+            if spectrum_u.feature_id == spectrum_v.feature_id:
+                continue  # self-loop: a feature is not a pair, and hasFirst/SecondMember
+                          # are functional, so this would be an OWL inconsistency
+            low, high = sorted((spectrum_u, spectrum_v), key=lambda s: s.feature_id)
+            pair = AnalysisURIs.lfpair_uri(analysis, low.feature_id, high.feature_id)
+            g.add((pair, RDF.type, EMI.LFpair))
+            g.add((pair, EMI.hasFirstMember, AnalysisURIs.spectrum_uri(analysis, low)))
+            g.add((pair, EMI.hasSecondMember, AnalysisURIs.spectrum_uri(analysis, high)))
             # matchms SimilarityNetwork stores the cosine under "weight".
             score = data.get("weight", data.get("ModifiedCosine_score"))
-            self._set(edge, EMI.hasCosine, float(score) if score is not None else None)
+            self._set(pair, EMI.hasCosine, float(score) if score is not None else None)
+            # Absolute, so it does not depend on the first/second assignment.
+            self._set(pair, EMI.hasMassDifference, abs(high.precursor_mz - low.precursor_mz))
+
+    def _add_fbmn_components(
+        self,
+        analysis: Analysis,
+        network: nx.Graph,
+        featureset_uri: URIRef,
+        spectra_by_id: dict[int, AnnotatedSpectrum],
+    ) -> None:
+        """Emit one ``emi:FBMNComponent`` node per connected component of the network.
+
+        The network's *components*, not its edges, are what FBMN consumers reason
+        about: a component is a putative structural family. They are implicit in the
+        edge set, so this materialises them — exactly as _add_adduct_clusters
+        materialises the MS1 clusters implicit in the per-spectrum stamps. The two
+        are declared skos:closeMatch in _declare_adduct_cluster_class: same modelling
+        pattern, different notion of relatedness (one molecule ionised several ways
+        vs. several structurally related molecules).
+
+        A component has no id of its own, so it is keyed on its smallest member
+        feature id compared **numerically** — never min() on the raw node ids, which
+        are strings in production, where '10' < '9'. Single-node components are
+        skipped: an isolated feature is not a family, mirroring how
+        _add_adduct_clusters skips MS1 singletons.
+        """
+        g = self.graph
+        for component in nx.connected_components(network):
+            if len(component) < 2:
+                continue  # isolated feature — no family, no node
+            members = [
+                spectrum
+                for spectrum in (self._resolve_node(spectra_by_id, n) for n in component)
+                if spectrum is not None
+            ]
+            if len(members) < 2:
+                continue
+            # Sorting by the int feature_id gives the canonical key (members[0]) and a
+            # deterministic emission order in one pass. connected_components yields
+            # sets, so without this the key would depend on iteration order.
+            members.sort(key=lambda s: s.feature_id)
+            component_uri = AnalysisURIs.fbmn_component_uri(analysis, members[0].feature_id)
+            g.add((featureset_uri, ENPKG.hasNetworkComponent, component_uri))
+            if component_uri in self._emitted:
+                continue
+            self._emitted.add(component_uri)
+            g.add((component_uri, RDF.type, EMI.FBMNComponent))
+            self._set(component_uri, ENPKG.componentSize, len(members))
+            for member in members:
+                member_uri = AnalysisURIs.spectrum_uri(analysis, member)
+                g.add((component_uri, ENPKG.hasComponentMember, member_uri))
+                # EMI's own property runs feature -> component: its rdfs:domain is
+                # emi:LCMSFeature, so the feature has to be the subject.
+                g.add((member_uri, EMI.hasFBMNComponent, component_uri))
 
     def _add_ions(self, spectrum_uri: URIRef, spectrum: AnnotatedSpectrum) -> None:
         """Emit a named `enpkg:hasIon` product-ion node per (filtered) peak.

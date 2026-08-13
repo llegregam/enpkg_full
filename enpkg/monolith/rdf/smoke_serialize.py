@@ -11,6 +11,7 @@ path raise (the script reports that per-analysis rather than crashing).
 Usage::
 
     python -m enpkg.monolith.rdf.smoke_serialize [--batch-dir DIR] [--out-dir DIR]
+        [--include-network] [--no-fbmn-components]
         [--include-ions] [--min-relative-intensity F] [--max-ions-per-spectrum N]
 """
 
@@ -22,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from rdflib import Graph, Literal, URIRef
+from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import RDF
 
 from .namespaces import EMI, ENPKG
@@ -39,7 +40,9 @@ _TYPES = {
     "ChemicalStructure": EMI.ChemicalStructure,
     "Taxon": EMI.Taxon,
     "LFpair": EMI.LFpair,
+    "FBMNComponent": EMI.FBMNComponent,
     "AdductRecipe": ENPKG.AdductRecipe,
+    "AdductCluster": ENPKG.AdductCluster,
     "InChIKey2D": EMI.InChIKey2D,
 }
 _JUNK_LITERALS = {"nan", "none", ""}
@@ -84,6 +87,12 @@ def _check(mem_graph: Graph, file_graph: Graph, analysis) -> tuple[bool, dict]:
     )
     results["literal_hygiene"] = (not bad_literals, f"{len(bad_literals)} junk")
 
+    # Nothing in the serializer mints a BNode any more (LFpairs were the last ones),
+    # so any blank node here is a regression — they are invisible in GraphDB's
+    # browser and are re-minted on every serialization, breaking idempotency.
+    blank = {term for triple in file_graph for term in triple if isinstance(term, BNode)}
+    results["no_blank_nodes"] = (not blank, str(len(blank)))
+
     return all(ok for ok, _ in results.values()), results
 
 
@@ -98,10 +107,13 @@ def _info(graph: Graph) -> dict:
         initBindings={"ft": EMI.LCMSFeature, "has": EMI.hasAnnotation, "hcs": EMI.hasChemicalStructure},
     )
     annotated_structures = int(next(iter(annotated))[0]) if len(annotated) else 0
+    # MS2 matches coupled to a corresponding MS1 adduct (D2).
+    coupled_ms2 = len(set(graph.subjects(ENPKG.hasCorrespondingAdduct, None)))
     return {
         "types": type_counts,
         "compound_sharing": f"{distinct_compounds} distinct / {total_refs} refs",
         "annotated_structures": annotated_structures,
+        "ms2_with_corresponding_adduct": coupled_ms2,
     }
 
 
@@ -121,6 +133,11 @@ def main(argv=None) -> int:
                              "Default: emit all (the summary file is already SIRIUS's top-X).")
     parser.add_argument("--include-network", action="store_true",
                         help="Emit the molecular network (LFpair edges). Off by default.")
+    parser.add_argument("--no-fbmn-components", dest="include_fbmn_components",
+                        action="store_false",
+                        help="Skip the emi:FBMNComponent nodes for the network's connected "
+                             "components. On by default (O(features), unlike the quadratic "
+                             "LFpair edges); a no-op when the analysis carries no network.")
     parser.add_argument("--include-ions", action="store_true")
     parser.add_argument("--min-relative-intensity", type=float, default=0.0)
     parser.add_argument("--max-ions-per-spectrum", type=int, default=None)
@@ -139,6 +156,7 @@ def main(argv=None) -> int:
         top_k_ms2=args.top_k_ms2,
         top_k_sirius=args.top_k_sirius,
         include_network=args.include_network,
+        include_fbmn_components=args.include_fbmn_components,
         include_ions=args.include_ions,
         min_relative_intensity=args.min_relative_intensity,
         max_ions_per_spectrum=args.max_ions_per_spectrum,
@@ -147,6 +165,8 @@ def main(argv=None) -> int:
     print(f"Batch:  {batch_dir}")
     print(f"Output: {args.out_dir.resolve()}")
     print(f"Top-k:  ms1={args.top_k_ms1}  ms2={args.top_k_ms2}  sirius={args.top_k_sirius}")
+    print(f"Network: edges={'on' if args.include_network else 'off'}  "
+          f"components={'on' if args.include_fbmn_components else 'off'}")
     print(f"Ions:   {'on' if args.include_ions else 'off'}\n")
 
     overall_ok = True
