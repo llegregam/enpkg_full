@@ -139,6 +139,7 @@ tests/data
 enpkg/lib
 
 # Remove big test folders
+data
 enpkg/tests/__pycache__
 enpkg/tests/.databases
 enpkg/tests/.test_cache
