@@ -20,6 +20,7 @@ from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.utils.ms2_adduct_gating import select_spectra_for_ms2
 
 
 class Ms2Enhancer(Enhancer):
@@ -57,10 +58,10 @@ class Ms2Enhancer(Enhancer):
         self.logger.info("Loading Databases")
         # Taxonomy access is fully owned by LotusStore now; DBLoader is only
         # around for the spectral DB. Load the library matching the configured
-        # polarity so negative-mode runs query the negative library.
+        # ionization mode so negative-mode runs query the negative library.
         start = time()
         self.db_loader.load_spectral_databases(
-            mode=self.configuration.general_params.polarity
+            mode=self.configuration.general_params.ionization_mode
         )
         self.logger.debug("Spectral databases loaded in %.2f seconds", time() - start)
 
@@ -158,7 +159,14 @@ class Ms2Enhancer(Enhancer):
         library spectrum's ``lotus_entries``.
         """
 
-        spectrum_list: tuple[AnnotatedSpectrum] = analysis.spectra
+        # Gate on the MS1 adduct-graph roles: spectral libraries are almost all
+        # base-ion ([M+H]+/[M-H]-), so resolved non-base adducts are skipped.
+        # Falls back to all features (with a warning) if the graph did not run.
+        spectrum_list: list[AnnotatedSpectrum] = select_spectra_for_ms2(
+            analysis.spectra,
+            self.configuration.ms2_adduct_filter,
+            self.logger,
+        )
 
         # First call in a batch triggers the expensive LotusStore fetch + library linking.
         self._ensure_lotus_objects()
