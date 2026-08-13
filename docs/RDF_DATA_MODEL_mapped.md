@@ -118,14 +118,21 @@ rank — see §4/§5/§8a/§8b.
 | intensity | lit | xsd:double | ✅ `MS:1001226` ("product ion intensity") — cvParam, see §4 note |
 
 ## 4. ChemicalAdduct (MS1) — `chemical_adduct_uri`
+
+> **Identity:** `adduct/{run}/{feature}/{recipe_hash}/{formula}`. A `ChemicalAdduct` is a
+> *(LOTUS formula group, recipe)* pairing, so both halves are in the key. Keying on the
+> recipe alone (the pre-2026-08-10 scheme) merged every molecule proposed for one feature
+> under one ionization form into a single node — see `docs/MS1_ADDUCT_RANKING_ISSUE.md` §2.
+
 | Element | Shape | Target / type | Vocab term |
 |---|---|---|---|
 | rdf:type | type | — | ✅ `emi:StructuralAnnotation` + `enpkg:AdductAnnotation` (MS1 subclass); polarity-specific `MS:1002807` (pos) / `MS:1002808` (neg). Parent `MS:1000353` ("adduct ion") dropped as redundant — it is entailed by the polarity class |
 | adduct form | lit | "[M+H]+" string | ✅ `MS:1002813` ("adduct ion formula"; regex `MS:1002812`) — alongside `emi:hasAdduct` |
 | hasRecipe | obj | → AdductRecipe node | custom `enpkg:hasRecipe` (structured composition; §5) |
-| annotatesCompound (×N) | obj | → ChemicalStructure | ✅ `emi:hasChemicalStructure` |
+| annotatesCompound (×N) | obj | → ChemicalStructure | custom `enpkg:hasCandidateStructure` — a *sibling* of `emi:hasChemicalStructure`, deliberately not a subproperty: an MS1 hit is a mass coincidence, not a confirmed identification (MS2/SIRIUS use the EMI term) |
 | adduct_mass | lit | xsd:double | ✅ `MS:1003243` ("adduct ion mass"); `MS:1003635` if monoisotopic — see cvParam note |
-| molecular_formula (derived) | lit | → on the structure | (see §8a) |
+| neutral_mass | lit | xsd:double | custom `enpkg:adductNeutralMass` (`skos:closeMatch chemrof:monoisotopic_mass`) — the candidate group's own mass, from which `adduct_mass` is derived via the recipe |
+| molecular_formula (derived) | lit | → on the structure; also the last segment of the adduct IRI | (see §8a) |
 | short_inchikey (derived) | lit | → InChIKey2D node | (see §8a) |
 | positive (derived) | type | — | ✅ via `MS:1002807`/`MS:1002808` rdf:type |
 | scores | lit | xsd:double | ✅ `emi:hasFinalScore` / `hasTaxoScore` / `hasConsistencyScore` (Sirius-style) |
@@ -141,6 +148,10 @@ rank — see §4/§5/§8a/§8b.
 > *formula string* (`MS:1002813`) and the abstract *adduct* product
 > (`MS:1003055`), but **no structured ingredient list** — so the composition is
 > minted under your own `enpkg:` namespace.
+>
+> `recipe_uri` and `_recipe_hash` were deliberately **not** touched when the adduct
+> identity was fixed (§4): the recipe node is globally shared across every adduct that
+> applies it, so widening its hash would have moved every recipe IRI for no gain.
 
 | Element | Shape | Target / type | Vocab term |
 |---|---|---|---|
@@ -162,6 +173,7 @@ rank — see §4/§5/§8a/§8b.
 | n_matched_peaks | lit | xsd:integer | ⛏ custom `enpkg:nMatchedPeaks` |
 | queried_against | lit/obj | library | ✅ `dcterms:source` (the spectral library, e.g. ISDB) |
 | pathway/superclass/class_scores | obj | → ChemicalTaxonAnnotation | ✅ via `emi:ChemicalTaxonAnnotation` (§ NPC) — gate for size |
+| (corresponding MS1 adduct) | obj | → `enpkg:AdductAnnotation` (§4) | ⛏ custom `enpkg:hasCorrespondingAdduct` — the MS1 adduct proposing the same compound (shared 2D InChIKey); emitted only on MS2-identified features, which also prunes the non-corresponding MS1 adducts. See D2. |
 
 ## 7. AnnotationOrganism — `organism_uri`
 | Element | Shape | Target / type | Vocab term |
@@ -240,8 +252,8 @@ rank — see §4/§5/§8a/§8b.
 |---|---|---|---|
 | rdf:type | type | — | ✅ `emi:LFpair` (feature pair) · clusters → `emi:FBMNComponent` |
 | connects | obj | → two LCMSFeature | ✅ `emi:hasFirstMember` / `emi:hasSecondMember` |
-| cosine score | lit | xsd:double | 🟡 `emi:hasCosine` (declared on `SpectralPair` — verify it's valid on `LFpair`, else use `emi:SpectralPair`) |
-| mass difference | lit | xsd:double | 🟡 `emi:hasMassDifference` (same caveat) |
+| cosine score | lit | xsd:double | ✅ `emi:hasCosine` — declared on `SpectralPair`, and `LFpair rdfs:subClassOf SpectralPair`, so the domain is satisfied and no `emi:SpectralPair` workaround is needed |
+| mass difference | lit | xsd:double | ✅ `emi:hasMassDifference` — same reasoning; emitted as the absolute precursor-mass difference |
 
 ---
 
@@ -253,6 +265,7 @@ rank — see §4/§5/§8a/§8b.
 - **Annotation classes** (§4/§6): `AdductAnnotation` (MS1) and `SpectralAnnotation` (MS2), both `rdfs:subClassOf emi:StructuralAnnotation` — differentiate the two annotation kinds EMI otherwise unifies.
 - **Annotation ranking** (§4/§6): `annotationRank`, `annotationScore` (reweighted top-k, derived from the weights-enhancer propagated NPC scores; MS2 falls back to cosine when NPC scores are absent). Serialization caps each spectrum at **top-k = 5** per side by default (`top_k_ms1`/`top_k_ms2`; pass `<=0` to emit all).
 - **Numeric value props** (§3a/§4/§5) — each `owl:DatatypeProperty` + `skos:exactMatch` to its PSI-MS *class* (PSI-MS has no properties, so using the class as a predicate would pun it): `adductMass` (→MS:1003243), `charge` (→MS:1000041), `productIonMz` (→MS:1001225), `productIonIntensity` (→MS:1001226), `lowIntensityThreshold` (→MS:1000629). The adduct **formula** string uses the real EMI property `emi:hasAdduct` (`"[M+H]+"`). PSI-MS terms now appear only as `rdf:type` on adduct nodes (`MS:1002807`/`1002808`); the obsolete product-ion type (`MS:1000342`) and the redundant parent `MS:1000353` have been dropped.
+- **Adduct clusters (MS1 graph resolution)**: `AdductCluster` (`owl:Class`, `skos:closeMatch emi:FBMNComponent`); `hasAdductCluster` (FeatureSet→Cluster), `hasClusterMember`, `hasAnchor`, `inAdductCluster` (Feature→Cluster); `clusterConnectivity` / `clusterIntensityCoverage` / `clusterCountCoverage` (CGC/CIC/CCC); `clusterRole` and `resolvedAdduct` (literals on the feature — the resolved form as a `"[M+Na]+"` string, not a node edge). One cluster node per resolved molecule; singletons produce none. Implemented — see [DATA_MODEL_AND_SERIALIZATION_GAP.md](DATA_MODEL_AND_SERIALIZATION_GAP.md) §D1.
 - **Compound scalars** (§8a): `xlogp`, `stereocentersTotal`, `stereocentersUnspecified`, `manualValidation`
 - **Sample** (§2): `sourceId`, `sampleFilenamePos`, `sampleFilenameNeg`
 - **Resolved by PSI-MS (`ms-voab.owl`)**: adduct polarity class (`MS:1002807`/`1002808`; the parent `MS:1000353` is entailed, not emitted), adduct formula (`MS:1002813`), `adduct_mass` (`MS:1003243`/`1003635`), `charge` (`MS:1000041`), ionization mode (`MS:1000009`)

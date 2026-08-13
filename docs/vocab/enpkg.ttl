@@ -1,0 +1,438 @@
+@prefix enpkg:   <https://w3id.org/enpkg#> .
+@prefix emi:     <https://w3id.org/emi#> .
+@prefix ms:      <http://purl.obolibrary.org/obo/MS_> .
+@prefix chemrof: <https://w3id.org/chemrof/> .
+@prefix chebi:   <http://purl.obolibrary.org/obo/CHEBI_> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+
+#################################################################
+# ENPKG Vocabulary
+#
+# Terms minted for the ENPKG knowledge-graph pipeline where no term in a
+# reused vocabulary (EMI, PSI-MS, ChEBI/ChemROF) already fits. "ENPKG" is a
+# legacy name from the pipeline's first version; the tool itself is
+# general-purpose — it lets any user build a knowledge graph for their own
+# project. Because every user's separately-generated graph is only
+# interoperable with every other user's graph if they share one term
+# definition, this file (not the serializer that emits triples against it)
+# is the source of truth for what an `enpkg:` term means. See
+# docs/SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md for the review and decisions
+# this file transcribes, and CLAUDE.md for the reuse rationale.
+#
+# Status markers — every term below carries exactly one, in its rdfs:comment:
+#   [live]   already emitted by enpkg/monolith/rdf/serializer.py
+#   [target] in the target schema (docs/_static/MAIN_SCHEMA.mmd) and/or the
+#            Python data model, not yet wired into the serializer
+# A drift test (enpkg/tests/test_data/test_vocabulary_drift.py) enforces the
+# one direction that matters: nothing may be emitted that is not declared here.
+# The reverse is allowed on purpose — that is what [target] means.
+#################################################################
+
+<https://w3id.org/enpkg#> a owl:Ontology ;
+    owl:imports emi: ;
+    owl:versionInfo "0.1.0" ;
+    dcterms:title "ENPKG Vocabulary" ;
+    dcterms:description "Terms minted for the ENPKG knowledge-graph pipeline, reused unchanged across every knowledge graph the pipeline generates. Complements the Earth Metabolome Ontology (EMI), which this ontology imports." ;
+    dcterms:creator "Pierre-Marie Allard" , "Loïc Le Grégam" ;
+    dcterms:license <https://www.gnu.org/licenses/gpl-3.0.html> .
+
+#################################################################
+# Classes
+#################################################################
+
+### Adduct / MS1
+
+enpkg:AdductAnnotation a owl:Class ;
+    rdfs:subClassOf emi:StructuralAnnotation ;
+    rdfs:label "adduct annotation (MS1)" ;
+    rdfs:comment "[live] A mass-based adduct hypothesis on one LCMSFeature: one (LOTUS formula-group, AdductRecipe) pairing. Carries the candidate structures as enpkg:hasCandidateStructure (mass-coincidence hits, not confirmed identifications — see enpkg:SpectralAnnotation/enpkg:SiriusAnnotation for those)." .
+
+enpkg:SpectralAnnotation a owl:Class ;
+    rdfs:subClassOf emi:StructuralAnnotation ;
+    rdfs:label "spectral library annotation (MS2)" ;
+    rdfs:comment "[live] A fragmentation-matched spectral-library identification on one LCMSFeature. Attaches to structure at the 2D-InChIKey level via emi:hasChemicalStructure, since MS2 only resolves the 2D skeleton." .
+
+enpkg:SiriusAnnotation a owl:Class ;
+    rdfs:subClassOf emi:StructuralAnnotation ;
+    rdfs:label "SIRIUS structure annotation" ;
+    rdfs:comment "[live] An in-silico structure identification from SIRIUS on one LCMSFeature, attached via the same emi:hasAnnotation predicate as MS1/MS2 (unified — SIRIUS previously had its own enpkg:hasSiriusAnnotation predicate, retired). Candidates arrive pre-ranked by SIRIUS's structurePerIdRank, stamped as enpkg:annotationRank." .
+
+enpkg:AdductRecipe a owl:Class ;
+    rdfs:label "adduct recipe" ;
+    rdfs:comment "[live] The ionization form applied to a neutral molecule to produce an observed ion: e.g. [M+H]+. Composed of Ingredients; cf. MS:1003055 (\"adduct\"), which has no structured-composition equivalent." .
+
+enpkg:Ingredient a owl:Class ;
+    rdfs:label "adduct recipe ingredient" ;
+    rdfs:comment "[target] One named, signed-count component of an AdductRecipe (e.g. proton:+1, water:-1). The *nodes* are live — _add_recipe mints them and hangs enpkg:ingredientName/ingredientCount off each — but it never stamps this rdf:type on them, so the class itself is not yet emitted (a gap; see the review doc)." .
+
+enpkg:AdductCluster a owl:Class ;
+    rdfs:label "MS1 adduct cluster (a molecule and its adducts)" ;
+    skos:closeMatch emi:FBMNComponent ;
+    rdfs:comment "[live] Groups the features resolved as different ionization forms of one molecule by the MS1 relationship graph (an anchor base ion + its satellite adducts). No EMI term; emi:FBMNComponent is the analogous *network* grouping (structural family, a different notion of relatedness)." .
+
+enpkg:MolecularFormula a owl:Class ;
+    rdfs:label "molecular formula" ;
+    skos:exactMatch ms:1000866 ;
+    rdfs:comment "[target] MS:1000866 is a PSI-MS cvParam *value* class, not meant to type nodes directly — this class is the node-typing equivalent, cross-referenced to it." .
+
+enpkg:Atom a owl:Class ;
+    rdfs:label "atom" ;
+    skos:closeMatch chebi:33250 ;
+    rdfs:comment "[target] One element (with signed count and optional isotope) in a MolecularFormula's composition." .
+
+### Sample & spine
+
+enpkg:SampleMetadata a owl:Class ;
+    rdfs:label "sample metadata" ;
+    rdfs:comment "[target] Collection-level metadata about a sample, sourced from the user's metadata file. Distinct from ExtractSample, which is the analytical-process side; no minted URI yet for this node (see the review doc, §1a)." .
+
+#################################################################
+# Object properties
+#################################################################
+
+### Sample & spine
+
+enpkg:hasLabProcess a owl:ObjectProperty ;
+    rdfs:label "has lab process" ;
+    rdfs:domain emi:ExtractSample ;
+    rdfs:range emi:LCMSAnalysis ;
+    rdfs:comment "[live] Links a sample to the analytical process performed on it. Replaces emi:hasSample, which does not exist in EMI; direction matches EMI's own framing — the analysis *uses* a sample, so the edge reads from the thing used toward the activity that used it." .
+
+enpkg:hasSampleMetadata a owl:ObjectProperty ;
+    rdfs:label "has sample metadata" ;
+    rdfs:domain emi:ExtractSample ;
+    rdfs:range enpkg:SampleMetadata ;
+    rdfs:comment "[target] ExtractSample -> its collection-level SampleMetadata." .
+
+enpkg:hasOTTMatch a owl:ObjectProperty ;
+    rdfs:label "has Open Tree of Life match" ;
+    rdfs:domain emi:LCMSAnalysis ;
+    rdfs:range emi:Taxon ;
+    rdfs:comment "[live] Links an analysis to an OTT taxonomy-resolution event, itself typed emi:Taxon and carrying match-quality literals (enpkg:matchScore etc.) distinct from the canonical organism node a compound points to." .
+
+### Adduct / MS1
+
+enpkg:hasRecipe a owl:ObjectProperty ;
+    rdfs:label "has adduct recipe" ;
+    rdfs:domain enpkg:AdductAnnotation ;
+    rdfs:range enpkg:AdductRecipe ;
+    rdfs:comment "[live]" .
+
+enpkg:hasIngredient a owl:ObjectProperty ;
+    rdfs:label "has ingredient" ;
+    rdfs:domain enpkg:AdductRecipe ;
+    rdfs:range enpkg:Ingredient ;
+    rdfs:comment "[live]" .
+
+enpkg:hasAdductCluster a owl:ObjectProperty ;
+    rdfs:label "has adduct cluster" ;
+    rdfs:domain emi:LCMSFeatureSet ;
+    rdfs:range enpkg:AdductCluster ;
+    rdfs:comment "[live]" .
+
+enpkg:hasAnchor a owl:ObjectProperty ;
+    rdfs:label "has anchor" ;
+    rdfs:domain enpkg:AdductCluster ;
+    rdfs:range emi:LCMSFeature ;
+    rdfs:comment "[live] The cluster's base ion (e.g. [M+H]+/[M-H]-), a specialisation of hasClusterMember." .
+
+enpkg:hasClusterMember a owl:ObjectProperty ;
+    rdfs:label "has cluster member" ;
+    rdfs:domain enpkg:AdductCluster ;
+    rdfs:range emi:LCMSFeature ;
+    rdfs:comment "[live]" .
+
+enpkg:inAdductCluster a owl:ObjectProperty ;
+    rdfs:label "in adduct cluster" ;
+    rdfs:domain emi:LCMSFeature ;
+    rdfs:range enpkg:AdductCluster ;
+    owl:inverseOf enpkg:hasClusterMember ;
+    rdfs:comment "[live] Per-member back-link, emitted for every member (anchor or satellite)." .
+
+enpkg:hasCandidateStructure a owl:ObjectProperty ;
+    rdfs:label "has candidate structure" ;
+    rdfs:domain enpkg:AdductAnnotation ;
+    rdfs:range emi:ChemicalStructure ;
+    rdfs:comment "[live] Sibling of emi:hasChemicalStructure (used by MS2/SIRIUS for confirmed identifications), deliberately *not* a subproperty of it: MS1 candidates are mass-coincidence hits from a formula-group lookup, not a fragmentation- or in-silico-confirmed identification. Keeping the predicates distinct (not one entailing the other) keeps 'candidate' and 'confirmed' queryable apart. See docs/SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md §1b." .
+
+enpkg:hasMolecularFormula a owl:ObjectProperty ;
+    rdfs:label "has molecular formula" ;
+    rdfs:range enpkg:MolecularFormula ;
+    rdfs:comment "[target] Used from both enpkg:AdductAnnotation and emi:ChemicalStructure — no single rdfs:domain is asserted, since the two share no useful common superclass and a false one would mis-entail." .
+
+enpkg:hasAtom a owl:ObjectProperty ;
+    rdfs:label "has atom" ;
+    rdfs:domain enpkg:MolecularFormula ;
+    rdfs:range enpkg:Atom ;
+    rdfs:comment "[target] No ChEBI/PSI-MS instance-level equivalent exists — checked; the closest, obo:BFO_0000051 (has_part), is a class-level existential restriction used a handful of times inside ChEBI itself, with no cardinality." .
+
+enpkg:hasCorrespondingAdduct a owl:ObjectProperty ;
+    rdfs:label "corresponding MS1 adduct hypothesis" ;
+    rdfs:domain enpkg:SpectralAnnotation ;
+    rdfs:range enpkg:AdductAnnotation ;
+    rdfs:comment "[live] Links an MS2 spectral annotation to the MS1 adduct hypothesis proposing the *same* compound (shared 2D InChIKey) — the adduct that explains how the fragmentation-identified molecule ionised to this feature's precursor m/z." .
+
+### Molecular network
+
+enpkg:hasNetworkComponent a owl:ObjectProperty ;
+    rdfs:label "has molecular-network component" ;
+    rdfs:domain emi:LCMSFeatureSet ;
+    rdfs:range emi:FBMNComponent ;
+    rdfs:comment "[live] emi:hasFBMNComponent's rdfs:domain is emi:LCMSFeature, so it cannot serve here without entailing the feature set is itself a feature." .
+
+enpkg:hasComponentMember a owl:ObjectProperty ;
+    rdfs:label "has network-component member" ;
+    rdfs:domain emi:FBMNComponent ;
+    rdfs:range emi:LCMSFeature ;
+    owl:inverseOf emi:hasFBMNComponent ;
+    rdfs:comment "[live]" .
+
+### Ions (gated, include_ions)
+
+enpkg:hasIon a owl:ObjectProperty ;
+    rdfs:label "has ion" ;
+    rdfs:domain emi:LCMSFeature ;
+    rdfs:range chebi:24870 ;
+    rdfs:comment "[live] Range is ChEBI's ion (CHEBI:24870); the serializer does not currently stamp this rdf:type on the ion node itself (PSI-MS's product-ion term, MS:1000342, is obsolete with no replacement, which is why typing was skipped) — declaring the range here lets a reasoner infer it anyway." .
+
+#################################################################
+# Datatype properties
+#################################################################
+
+### Sample & spine
+# Reused, not minted: emi:hasRowId (LCMSFeature id), dcterms:identifier (Taxon ott id,
+# SampleMetadata.sampleId, OTT match's taxon id) — no enpkg: term needed for these.
+
+enpkg:sourceId a owl:DatatypeProperty ;
+    rdfs:domain emi:ExtractSample ; rdfs:range xsd:string ;
+    rdfs:comment "[live]" .
+
+enpkg:sampleFilenamePos a owl:DatatypeProperty ;
+    rdfs:domain emi:ExtractSample ; rdfs:range xsd:string ;
+    rdfs:comment "[live]" .
+
+enpkg:sampleFilenameNeg a owl:DatatypeProperty ;
+    rdfs:domain emi:ExtractSample ; rdfs:range xsd:string ;
+    rdfs:comment "[live]" .
+
+enpkg:matchScore a owl:DatatypeProperty ;
+    rdfs:domain emi:Taxon ; rdfs:range xsd:double ;
+    rdfs:comment "[live] On the OTT-match-typed emi:Taxon instance." .
+
+enpkg:isApproximateMatch a owl:DatatypeProperty ;
+    rdfs:domain emi:Taxon ; rdfs:range xsd:boolean ;
+    rdfs:comment "[live]" .
+
+enpkg:isSynonym a owl:DatatypeProperty ;
+    rdfs:domain emi:Taxon ; rdfs:range xsd:boolean ;
+    rdfs:comment "[live]" .
+
+enpkg:nomenclatureCode a owl:DatatypeProperty ;
+    rdfs:domain emi:Taxon ; rdfs:range xsd:string ;
+    rdfs:comment "[live]" .
+
+enpkg:searchString a owl:DatatypeProperty ;
+    rdfs:domain emi:Taxon ; rdfs:range xsd:string ;
+    rdfs:comment "[live]" .
+
+enpkg:sampleName a owl:DatatypeProperty ;
+    rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Python field exists (SampleMetadata.sample_name); not yet wired into the serializer." .
+
+enpkg:sampleType a owl:DatatypeProperty ;
+    rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Pragmatic plain literal. RDF_DATA_MODEL_mapped.md §2 originally proposed EMI sample subclassing by value (emi:QCSample/Blank/ExtractSample) instead — not implemented (the serializer always types the node emi:ExtractSample) — worth reconsidering later." .
+
+enpkg:collectionDate a owl:DatatypeProperty ;
+    rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:date ;
+    rdfs:comment "[target] Python field exists (SampleMetadata.collection_date); not yet wired into the serializer." .
+
+enpkg:collectionLocation a owl:DatatypeProperty ;
+    rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Python field exists (SampleMetadata.collection_location); not yet wired into the serializer." .
+
+enpkg:extractionMethod a owl:DatatypeProperty ;
+    rdfs:domain emi:ExtractSample ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Python field exists (SampleMetadata.extraction_method, backing ExtractSample's RDF attributes); not yet wired into the serializer." .
+
+enpkg:extractionSolvent a owl:DatatypeProperty ;
+    rdfs:domain emi:ExtractSample ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Python field exists (SampleMetadata.extraction_solvent); not yet wired into the serializer." .
+
+enpkg:operator a owl:DatatypeProperty ;
+    rdfs:domain emi:LCMSAnalysis ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Python field exists (Analysis.operator); not yet wired into the serializer." .
+
+enpkg:instrument a owl:DatatypeProperty ;
+    rdfs:domain emi:LCMSAnalysis ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Python field exists (Analysis.instrument); not yet wired into the serializer." .
+
+enpkg:ionizationMode a owl:DatatypeProperty ;
+    rdfs:domain emi:LCMSAnalysis ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Value 'pos' or 'neg'. The serializer currently encodes this only via the emi:LCMSAnalysisPos/Neg rdf:type subclass, not also as this literal — decide whether both should be emitted before wiring this in." .
+
+### Adduct / MS1
+
+enpkg:adductMass a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductAnnotation ; rdfs:range xsd:double ;
+    skos:exactMatch ms:1003243 ;
+    rdfs:comment "[live] The observed ion's mass (recipe applied to the neutral mass) — see enpkg:adductNeutralMass for the paired neutral value." .
+
+enpkg:adductNeutralMass a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductAnnotation ; rdfs:range xsd:double ;
+    skos:closeMatch chemrof:monoisotopic_mass ;
+    rdfs:comment "[live] The matched LOTUS candidate group's own exact mass — the neutral (uncharged) mass enpkg:adductMass is derived from via the recipe (adductMass == recipe.compute_adduct_mass(adductNeutralMass)), so the two are always mutually consistent for a given hypothesis. Not the same quantity as back-calculating a neutral mass from the observed precursor m/z (recipe.compute_neutral_mass) — that would be a measurement-derived diagnostic, not this field." .
+
+enpkg:charge a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductRecipe ; rdfs:range xsd:integer ;
+    skos:exactMatch ms:1000041 ;
+    rdfs:comment "[live]" .
+
+enpkg:ingredientName a owl:DatatypeProperty ;
+    rdfs:domain enpkg:Ingredient ; rdfs:range xsd:string ;
+    rdfs:comment "[live]" .
+
+enpkg:ingredientCount a owl:DatatypeProperty ;
+    rdfs:domain enpkg:Ingredient ; rdfs:range xsd:double ;
+    rdfs:comment "[live] Signed (e.g. water:-1 for a loss)." .
+
+enpkg:isPositive a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductRecipe ; rdfs:range xsd:boolean ;
+    rdfs:comment "[live]" .
+
+enpkg:multimerFactor a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductRecipe ; rdfs:range xsd:double ;
+    rdfs:comment "[live]" .
+
+enpkg:adductFormula a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductRecipe ; rdfs:range xsd:string ;
+    skos:exactMatch ms:1002813 ;
+    rdfs:comment "[target] The rendered form (\"[M+H]+\"), same rendering _format_adduct already produces for emi:hasAdduct on the annotation — this places the same string on the recipe node too. Not yet wired into the serializer." .
+
+enpkg:clusterConnectivity a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductCluster ; rdfs:range xsd:double ;
+    rdfs:comment "[live] mzAdan's CGC index." .
+
+enpkg:clusterIntensityCoverage a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductCluster ; rdfs:range xsd:double ;
+    rdfs:comment "[live] mzAdan's CIC index." .
+
+enpkg:clusterCountCoverage a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductCluster ; rdfs:range xsd:double ;
+    rdfs:comment "[live] mzAdan's CCC index." .
+
+enpkg:clusterRole a owl:DatatypeProperty ;
+    rdfs:domain emi:LCMSFeature ; rdfs:range xsd:string ;
+    rdfs:comment "[live] \"anchor\" or \"satellite\", per-member." .
+
+enpkg:resolvedAdduct a owl:DatatypeProperty ;
+    rdfs:domain emi:LCMSFeature ; rdfs:range xsd:string ;
+    rdfs:comment "[live] The member's resolved ionization form, e.g. \"[M+Na]+\"." .
+
+enpkg:formula a owl:DatatypeProperty ;
+    rdfs:domain enpkg:MolecularFormula ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Not yet wired into the serializer." .
+
+enpkg:element a owl:DatatypeProperty ;
+    rdfs:domain enpkg:Atom ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Not yet wired into the serializer." .
+
+enpkg:isotope a owl:DatatypeProperty ;
+    rdfs:domain enpkg:Atom ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Not yet wired into the serializer." .
+
+enpkg:atomCount a owl:DatatypeProperty ;
+    rdfs:domain enpkg:Atom ; rdfs:range xsd:integer ;
+    rdfs:comment "[target] Signed. Renamed from a bare 'count' during review to avoid an unqualified name being reused across unrelated classes, matching enpkg:ingredientCount's naming. Not yet wired into the serializer." .
+
+### Annotation ranking (cross-channel)
+
+enpkg:annotationRank a owl:DatatypeProperty ;
+    rdfs:domain emi:StructuralAnnotation ; rdfs:range xsd:integer ;
+    rdfs:comment "[live] 1 = best. Reweighted NPC-alignment rank for MS1/MS2; SIRIUS keeps its own structurePerIdRank under this same property." .
+
+enpkg:annotationScore a owl:DatatypeProperty ;
+    rdfs:domain emi:StructuralAnnotation ; rdfs:range xsd:double ;
+    rdfs:comment "[live] Emitted for MS1/MS2 (reweighted NPC-alignment score, or cosine fallback for MS2); not currently emitted for SIRIUS, which has no analogous score." .
+
+enpkg:annotationMethod a owl:DatatypeProperty ;
+    rdfs:domain enpkg:AdductAnnotation ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Not yet wired into the serializer." .
+
+enpkg:nMatchedPeaks a owl:DatatypeProperty ;
+    rdfs:domain enpkg:SpectralAnnotation ; rdfs:range xsd:integer ;
+    rdfs:comment "[live]" .
+
+enpkg:algorithm a owl:DatatypeProperty ;
+    rdfs:domain enpkg:SpectralAnnotation ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Not yet in the Python data model (MS2ChemicalAnnotation has no matching field today) — needs that before it's wired into the serializer, same situation Analysis.operator/instrument were in before Group C." .
+
+enpkg:siriusVersion a owl:DatatypeProperty ;
+    rdfs:domain enpkg:SiriusAnnotation ; rdfs:range xsd:string ;
+    rdfs:comment "[target] Not yet in the Python data model (SiriusChemicalAnnotation has no matching field today)." .
+
+### Molecular network
+
+enpkg:componentSize a owl:DatatypeProperty ;
+    rdfs:domain emi:FBMNComponent ; rdfs:range xsd:integer ;
+    rdfs:comment "[live] Not an EMI term — emi:FBMNComponent has no properties of its own." .
+
+### Compound scalars
+
+enpkg:xlogp a owl:DatatypeProperty ;
+    rdfs:domain emi:ChemicalStructure ; rdfs:range xsd:double ;
+    rdfs:comment "[live]" .
+
+enpkg:stereocentersTotal a owl:DatatypeProperty ;
+    rdfs:domain emi:ChemicalStructure ; rdfs:range xsd:integer ;
+    rdfs:comment "[live]" .
+
+enpkg:stereocentersUnspecified a owl:DatatypeProperty ;
+    rdfs:domain emi:ChemicalStructure ; rdfs:range xsd:integer ;
+    rdfs:comment "[live]" .
+
+enpkg:manualValidation a owl:DatatypeProperty ;
+    rdfs:domain emi:ChemicalStructure ; rdfs:range xsd:boolean ;
+    rdfs:comment "[live]" .
+
+enpkg:classyfireKingdom a owl:DatatypeProperty ;
+    rdfs:domain emi:ChemicalStructure ; rdfs:range xsd:string ;
+    rdfs:comment "[live] ClassyFire rank, kept as a literal; node-linking to ChemOnt deferred." .
+
+enpkg:classyfireSuperclass a owl:DatatypeProperty ;
+    rdfs:domain emi:ChemicalStructure ; rdfs:range xsd:string ;
+    rdfs:comment "[live]" .
+
+enpkg:classyfireClass a owl:DatatypeProperty ;
+    rdfs:domain emi:ChemicalStructure ; rdfs:range xsd:string ;
+    rdfs:comment "[live]" .
+
+enpkg:classyfireDirectParent a owl:DatatypeProperty ;
+    rdfs:domain emi:ChemicalStructure ; rdfs:range xsd:string ;
+    rdfs:comment "[live]" .
+
+### Ions (gated, include_ions)
+
+enpkg:productIonMz a owl:DatatypeProperty ;
+    rdfs:domain chebi:24870 ; rdfs:range xsd:double ;
+    skos:exactMatch ms:1001225 ;
+    rdfs:comment "[live]" .
+
+enpkg:productIonIntensity a owl:DatatypeProperty ;
+    rdfs:domain chebi:24870 ; rdfs:range xsd:double ;
+    skos:exactMatch ms:1001226 ;
+    rdfs:comment "[live]" .
+
+enpkg:lowIntensityThreshold a owl:DatatypeProperty ;
+    rdfs:domain emi:LCMSFeature ; rdfs:range xsd:double ;
+    skos:exactMatch ms:1000629 ;
+    rdfs:comment "[live] Stamped only when min_relative_intensity filtering was applied — % of base peak." .
+
+enpkg:maxIonsPerSpectrum a owl:DatatypeProperty ;
+    rdfs:domain emi:LCMSFeature ; rdfs:range xsd:integer ;
+    rdfs:comment "[live] Stamped only when the top-N cap was applied — reproducibility record." .
