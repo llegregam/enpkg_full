@@ -22,6 +22,7 @@ from enpkg.monolith.data.ms1_data_classes.adduct_class import ADDUCT_MASSES
 from enpkg.monolith.enhancers.adducts import NEGATIVE_RECIPES, POSITIVE_RECIPES
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.utils.ms1_cluster_dispatch import inherit_satellite_annotations
 
 
 class MS1Enhancer(Enhancer):
@@ -50,10 +51,10 @@ class MS1Enhancer(Enhancer):
         """Build a mass-sorted list of ChemicalAdduct objects.
 
         One ChemicalAdduct is created per (LOTUS formula group, recipe) pair for
-        the configured polarity, then the list is sorted by adduct mass so
+        the configured ionization mode, then the list is sorted by adduct mass so
         precursor matching in ``enhance`` can binary-search it.
         """
-        match self.configuration.general_params.polarity:
+        match self.configuration.general_params.ionization_mode:
             case "pos":
                 self.logger.info("Initializing positive adducts")
                 recipes = POSITIVE_RECIPES
@@ -62,7 +63,7 @@ class MS1Enhancer(Enhancer):
                 recipes = NEGATIVE_RECIPES
             case _:
                 raise ValueError(
-                    f"Invalid polarity {self.configuration.general_params.polarity!r}, "
+                    f"Invalid ionization mode {self.configuration.general_params.ionization_mode!r}, "
                     "expected 'pos' or 'neg'"
                 )
 
@@ -100,14 +101,14 @@ class MS1Enhancer(Enhancer):
         List of lists of LOTUS objects, each inner list sharing a molecular
         formula.
         """
-        match self.configuration.general_params.polarity:
+        match self.configuration.general_params.ionization_mode:
             case "pos":
                 recipes = POSITIVE_RECIPES
             case "neg":
                 recipes = NEGATIVE_RECIPES
             case _:
                 raise ValueError(
-                    f"Invalid polarity {self.configuration.general_params.polarity!r}, "
+                    f"Invalid ionization mode {self.configuration.general_params.ionization_mode!r}, "
                     "expected 'pos' or 'neg'"
                 )
         tol = self.configuration.spectral_match_params.parent_mz_tol
@@ -145,10 +146,28 @@ class MS1Enhancer(Enhancer):
         number_of_spectra = len(spectrum_list)
         self.logger.info("Running MS1 enrichment on %d spectra", number_of_spectra)
 
+        # Cluster-aware dispatch: if the MS1 graph enhancer ran (roles are stamped),
+        # only anchors + singletons get the LOTUS mass-search; satellites inherit
+        # their anchor's resolved molecule afterwards (no redundant search). With no
+        # roles stamped, every feature is searched (unchanged behaviour).
+        graph_ran = any(s.ms1_cluster_role is not None for s in spectrum_list)
+        search_spectra = (
+            [s for s in spectrum_list if s.ms1_cluster_role != "satellite"]
+            if graph_ran
+            else list(spectrum_list)
+        )
+        if graph_ran:
+            self.logger.info(
+                "MS1 graph roles present: searching %d anchors/singletons, "
+                "%d satellites will inherit their anchor's molecule",
+                len(search_spectra),
+                number_of_spectra - len(search_spectra),
+            )
+
         # Adducts are rebuilt on every enhance() call
         self.logger.info("Initializing LOTUS objects and adducts")
         start = time()
-        lotus_grouped_by_formula = self.initialize_lotus_objects(spectrum_list=spectrum_list)
+        lotus_grouped_by_formula = self.initialize_lotus_objects(spectrum_list=search_spectra)
         self.logger.info("Initialized LOTUS objects in %.2f seconds", time() - start)
         start = time()
         self._adducts = self.initialize_adducts(lotus_grouped_by_formula)
@@ -161,9 +180,9 @@ class MS1Enhancer(Enhancer):
         tol = self.configuration.spectral_match_params.parent_mz_tol
 
         for spectrum in tqdm(
-            spectrum_list,
+            search_spectra,
             leave=False,
-            total=number_of_spectra,
+            total=len(search_spectra),
             desc="Filtering precursor adducts",
             dynamic_ncols=True,
         ):
@@ -176,5 +195,10 @@ class MS1Enhancer(Enhancer):
             left = bisect_left(adduct_masses, lower)
             right = bisect_right(adduct_masses, upper)
             spectrum.ms1_annotations = self._adducts[left:right]
+
+        # Satellites inherit their anchor's resolved molecule (re-cast under their
+        # own adduct form) rather than a redundant precursor-mass search.
+        if graph_ran:
+            inherit_satellite_annotations(spectrum_list, self.logger)
 
         return analysis
