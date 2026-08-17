@@ -7,6 +7,7 @@ layer (it only reads SIRIUS output); the RDF serializer consumes the parsed
 results downstream once SIRIUS ingestion is wired onto the data model.
 """
 
+import csv
 import re
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -85,7 +86,16 @@ class SiriusOutputParser:
             field = base if base == stem else f"{base}_top"
             if field not in valid_fields:
                 continue                          # unrecognized file -> skip
-            setattr(results, field, pd.read_csv(path, sep="\t"))
+            # SIRIUS's `name` column (compound names from PubChem/COCONUT/LOTUS/
+            # etc.) sometimes carries a literal, unescaped `"` (e.g. a database
+            # entry like `"Juruenolic Acid`, missing its closing quote). These
+            # files are tab-delimited with no quoting/escaping convention of
+            # their own, so CSV-style quote interpretation only misreads them —
+            # pandas' default QUOTE_MINIMAL treats that `"` as opening a quoted
+            # field and consumes every subsequent tab/newline hunting for a
+            # close, raising "EOF inside string" once it runs off the end of
+            # the file. QUOTE_NONE takes every field at face value instead.
+            setattr(results, field, pd.read_csv(path, sep="\t", quoting=csv.QUOTE_NONE))
         parser.results = results
         return parser
 
