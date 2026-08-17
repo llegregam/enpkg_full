@@ -97,12 +97,26 @@ class SiriusEnhancer(Enhancer):
                 "Path to Sirius executable is not configured. "
                 "Please set the PATH_TO_SIRIUS environment variable or configure it in the SiriusEnhancerConfig."
             )
-        return subprocess.run(
-            [sirius_path, *args],
-            check=True,
-            env=os.environ.copy(),
-            shell=False,
-        )
+        try:
+            return subprocess.run(
+                [sirius_path, *args],
+                check=True,
+                env=os.environ.copy(),
+                shell=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.CalledProcessError as e:
+            # Previously uncaptured: sirius.exe's own stdout/stderr (the only
+            # place it explains a non-zero exit) went to the inherited console
+            # and was lost, leaving only the bare exit code in the batch log.
+            self._logger.error(
+                "Sirius exited with status %d.\n--- stdout ---\n%s\n--- stderr ---\n%s",
+                e.returncode, e.stdout, e.stderr,
+            )
+            raise
 
     def _get_results(self, output_path: str) -> Optional[SiriusResults]:
         """Parse the SIRIUS summary TSVs written to the summaries directory.

@@ -108,7 +108,42 @@ bounded regardless of dataset size.
 
 ---
 
-## 4. What comes out
+## 4. Adduct gating — only annotate base-ion features
+
+Before the funnel runs, the enhancer decides **which features are even worth matching**, using
+the cluster roles the [MS1 graph enhancer](MS1_GRAPH_ENHANCER.md) stamped on each feature.
+
+The reason is the same one §6 spells out: the ISDB stores **base ions** (`[M+H]⁺` in positive
+mode, `[M-H]⁻` in negative). A feature the graph resolved as a *non-base* adduct — a
+**satellite** like `[M+Na]⁺`/`[M+K]⁺` — has a precursor m/z that will never line up with a
+base-ion library entry, so it could only ever be discarded at Stage 1 (or, rarely, produce a
+spurious cross-adduct match). Its molecule's base ion is already represented by the cluster's
+**anchor**. Skipping satellites up front saves that wasted Stage-1 work and removes the
+coincidental-match risk.
+
+Which features pass the gate is controlled by `ms2_adduct_filter` (on the shared
+`MSEnhancerConfig`, read only by MS2):
+
+| `ms2_adduct_filter` | annotates | skips | rationale |
+|---|---|---|---|
+| `"non_satellite"` **(default)** | anchors + singletons | resolved satellites | drop the redundant `[M+Na]⁺`/`[M+K]⁺` re-detections; keep every base-ion candidate |
+| `"base_only"` | anchors only | satellites + singletons | strictest — only features *resolved* as the base ion |
+| `"all"` | every feature | nothing | legacy behaviour (no gating) |
+
+A **singleton** is a feature with no detected adduct relationships; its ionization form is
+unknown, but it may well be an `[M+H]⁺` whose Na/K siblings fell below detection. The default
+therefore keeps singletons (they are a large fraction of a run) and skips only features
+*positively* resolved as another adduct. `"base_only"` is available when you want to match
+strictly the confirmed base ions.
+
+This gate depends on the `ms1_graph` block running **before** `ms2` (it does, by registry
+order). If no cluster roles are present — the graph block was not selected — gating is
+impossible, so **every feature is annotated** and a warning is logged; MS2 behaves exactly as
+it did before this feature existed.
+
+---
+
+## 5. What comes out
 
 Every accepted match becomes an **`MS2ChemicalAnnotation`** appended to the feature's
 `ms2_annotations` list. It deliberately carries only what downstream steps need — not the full
@@ -150,7 +185,7 @@ may collect several MS2 annotations.
 
 ---
 
-## 5. MS1 vs MS2 — the channel boundary
+## 6. MS1 vs MS2 — the channel boundary
 
 This is the most important conceptual point, and a common source of confusion. The two
 enhancers are **independent channels** that never share their candidate machinery:
@@ -181,10 +216,24 @@ flowchart LR
     style O fill:#14532d,stroke:#86efac,color:#ffffff,stroke-width:2px
 ```
 
+> **Caveat — MS2 prunes MS1 at export (RDF coupling).** In the RDF serializer the two channels
+> are *coupled* on features that carry an MS2 match: only the MS1 adducts whose candidate
+> structures include an MS2-identified compound (shared 2D InChIKey) are kept, each linked from
+> the MS2 annotation via `enpkg:hasCorrespondingAdduct`; the mass-coincidence adducts are dropped.
+> A consequence to expect: **if an MS2 match's compound appears in *none* of the feature's MS1
+> adduct groups, that feature is serialized with no MS1 adduct hypotheses at all** — the MS2
+> annotation stands alone. This is **intended**, not a data-loss bug: MS1 here is mass-only
+> corroboration for the fragmentation-confirmed identity, so an MS1 set with nothing to
+> corroborate carries no information worth emitting. Features with **no** MS2 keep their full
+> top-k MS1 adducts unchanged. (See [MS2_MS1_ADDUCT_COUPLING_PLAN.md](MS2_MS1_ADDUCT_COUPLING_PLAN.md).)
+
 ---
 
-## 6. Why it's built this way
+## 7. Why it's built this way
 
+- **Adduct gating first.** Spectral libraries are base-ion only, so matching resolved non-base
+  adducts is wasted work; using the MS1 graph's roles to skip them shrinks the candidate set
+  before the funnel even starts, with a safe fallback when the graph did not run.
 - **Two-stage funnel.** Fragmentation cosine is the dominant cost; gating on precursor mass
   first means it runs on a tiny fraction of pairs instead of the full cross-product.
 - **Chunking.** Processing features in fixed-size chunks against the whole library keeps peak

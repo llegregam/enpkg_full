@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RDF KG Data Model — ENPKG</title>
+  <!-- svg-pan-zoom: classic script (global), loads before the deferred module below -->
+  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { height: 100%; margin: 0; background: #0d1117; color: #e6edf3;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    #bar { display: flex; gap: .5rem; align-items: center; padding: .5rem .75rem;
+      border-bottom: 1px solid #30363d; font-size: 13px; }
+    #bar .hint { color: #8b949e; margin-left: auto; }
+    #bar button { background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+      border-radius: 6px; padding: .35rem .6rem; cursor: pointer; font-size: 12px; }
+    #bar button:hover { background: #30363d; }
+    #container { position: absolute; top: 41px; left: 0; right: 0; bottom: 0; }
+    #container svg { width: 100%; height: 100%; }
+    #error { padding: 1rem; color: #ff7b72; white-space: pre-wrap; font-family: ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <strong>ENPKG RDF Knowledge-Graph data model</strong>
+    <button id="fit">Fit</button>
+    <button id="reset">Reset zoom</button>
+    <button id="dl">Download SVG</button>
+    <span class="hint">F11 = full screen · scroll = zoom · drag = pan</span>
+  </div>
+  <div id="container"></div>
+  <div id="error"></div>
+
+  <!-- Mermaid diagram source (literal text; not parsed as HTML inside a textarea) -->
+  <textarea id="graph" style="display:none">
+%%{init: {'theme':'dark'}}%%
+flowchart TD
+    A["LCMSAnalysis  (Pos / Neg)<br/>dcterms:identifier · emi:hasMassiveDOI"]
+    SA["ExtractSample<br/>identifier · enpkg:sourceId · sampleFilenamePos/Neg · label=taxon"]
+    FS["LCMSFeatureSet"]
+    F["LCMSFeature  (a spectrum)<br/>hasRowId · hasParentMass · hasRetentionTime · hasFeatureArea"]
+
+    MS1["AdductAnnotation — MS1<br/>enpkg:adductMass · emi:hasAdduct '[M+H]+'<br/>annotationRank / annotationScore · +PSI-MS adduct-ion class"]:::ms1
+    MS2["SpectralAnnotation — MS2<br/>emi:hasSpectralScore (cosine) · enpkg:nMatchedPeaks<br/>dcterms:source · annotationRank / annotationScore"]:::ms2
+
+    RC["AdductRecipe<br/>enpkg:charge · isPositive · multimerFactor"]
+    IG["Ingredient<br/>ingredientName · ingredientCount"]
+
+    CMP["ChemicalStructure  (compound)<br/>chemrof:inchi_key_string (full) · SMILES · formula<br/>monoisotopic_mass · xlogp · classyfire* · prefLabel/altLabel"]
+    IK2D["InChIKey2D<br/>emi:inChIKey2D — 14-char skeleton"]
+    REF["BibliographicResource<br/>dcterms:identifier — DOI"]
+
+    TX["Taxon  (organism)<br/>emi:scientificName · identifier=OTT id · has_rank"]
+    OTT["OTT Match  (Taxon)<br/>enpkg:matchScore · isApproximateMatch · isSynonym · searchString"]
+
+    EXTC(["owl:sameAs targets<br/>Wikidata · PubChem"]):::ext
+    EXTT(["owl:sameAs targets<br/>Wikidata · NCBITaxon · GBIF"]):::ext
+
+    ION["Ion  — gated: include_ions<br/>enpkg:productIonMz · enpkg:productIonIntensity"]:::gated
+    LF["LFpair  — gated: include_network (off)<br/>emi:hasCosine · emi:hasMassDifference"]:::gated
+    FBMN["FBMNComponent  — gated: include_fbmn_components (on)<br/>enpkg:componentSize"]:::cluster
+
+    A -->|"emi:hasSample"| SA
+    A -->|"emi:hasLCMSFeatureSet"| FS
+    A -->|"enpkg:hasOTTMatch"| OTT
+    FS -->|"emi:hasLCMSFeature"| F
+
+    F -->|"emi:hasAnnotation"| MS1
+    F -->|"emi:hasAnnotation"| MS2
+    F -->|"enpkg:hasIon (gated)"| ION
+
+    MS1 -->|"enpkg:hasRecipe"| RC
+    RC -->|"enpkg:hasIngredient"| IG
+    MS1 -->|"emi:hasChemicalStructure (one per isobaric isomer)"| CMP
+
+    MS2 -->|"emi:hasChemicalStructure"| IK2D
+
+    CMP -->|"emi:hasInChIKey2D"| IK2D
+    CMP -->|"prov:wasDerivedFrom"| REF
+
+    SA -->|"sosa:isSampleOf"| TX
+    CMP -->|"emi:inTaxon"| TX
+    MS2 -->|"emi:inTaxon"| TX
+
+    CMP -->|"owl:sameAs"| EXTC
+    TX  -->|"owl:sameAs"| EXTT
+    OTT -->|"owl:sameAs"| EXTT
+
+    LF -->|"emi:hasFirstMember"| F
+    LF -->|"emi:hasSecondMember"| F
+    FS -->|"enpkg:hasNetworkComponent"| FBMN
+    FBMN -->|"enpkg:hasComponentMember"| F
+    F -->|"emi:hasFBMNComponent"| FBMN
+
+    MS2 -->|"enpkg:hasCorrespondingAdduct"| MS1
+
+    classDef ms1   fill:#78350f,stroke:#fcd34d,color:#ffffff,stroke-width:2px;
+    classDef ms2   fill:#14532d,stroke:#86efac,color:#ffffff,stroke-width:2px;
+    classDef gated fill:#1f2937,stroke:#9ca3af,color:#e5e7eb,stroke-width:1px;
+    classDef ext   fill:#3730a3,stroke:#a5b4fc,color:#ffffff,stroke-width:1px;
+    classDef cluster fill:#4c1d95,stroke:#c4b5fd,color:#ffffff,stroke-width:2px;
+  </textarea>
+
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+    const container = document.getElementById('container');
+    const errorBox = document.getElementById('error');
+    const def = document.getElementById('graph').value;
+
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      securityLevel: 'loose',   // allow <br/> in node labels
+      maxTextSize: 500000,
+      flowchart: { useMaxWidth: false, htmlLabels: true },
+    });
+
+    let panZoom = null;
+    try {
+      const { svg } = await mermaid.render('rendered', def);
+      container.innerHTML = svg;
+      const svgEl = container.querySelector('svg');
+      svgEl.style.maxWidth = 'none';
+      svgEl.setAttribute('width', '100%');
+      svgEl.setAttribute('height', '100%');
+      panZoom = svgPanZoom(svgEl, {
+        controlIconsEnabled: true,
+        fit: true,
+        center: true,
+        minZoom: 0.1,
+        maxZoom: 40,
+        zoomScaleSensitivity: 0.4,
+      });
+      window.addEventListener('resize', () => { panZoom.resize(); panZoom.fit(); panZoom.center(); });
+    } catch (e) {
+      errorBox.textContent = 'Mermaid failed to render:\n' + (e && e.message ? e.message : e);
+    }
+
+    document.getElementById('fit').onclick = () => { if (panZoom) { panZoom.resize(); panZoom.fit(); panZoom.center(); } };
+    document.getElementById('reset').onclick = () => { if (panZoom) panZoom.reset(); };
+    document.getElementById('dl').onclick = () => {
+      const svgEl = container.querySelector('svg');
+      if (!svgEl) return;
+      const blob = new Blob([svgEl.outerHTML], { type: 'image/svg+xml' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'RDF_KG_DATA_MODEL.svg';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+  </script>
+</body>
+</html>

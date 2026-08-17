@@ -90,7 +90,7 @@ Type-to-widget mapping:
 
 Field `description` becomes the widget `help=` tooltip. `ge`/`le`/`gt`/`lt`
 constraints become widget bounds. The `_pattern_choices` helper picks up the
-`^(pos|neg)$` shape used for polarity-style enums.
+`^(pos|neg)$` shape used for ionization-mode-style enums.
 
 `exclude_fields` is how the app lifts the shared `general_params` out of every
 tab — the field is skipped during rendering and re-injected later.
@@ -118,20 +118,20 @@ The YAML shape is intentionally flat:
 
 ```yaml
 network:
-  general_params: { recompute: false, polarity: pos }
+  general_params: { recompute: false, ionization_mode: pos }
   mn_msms_mz_tol: 0.01
   mn_score_cutoff: 0.7
   mn_top_n: 15
   mn_max_links: 10
 ms_enhancer:
-  general_params: { recompute: false, polarity: pos }
+  general_params: { recompute: false, ionization_mode: pos }
   downloader_params: { ... }
   spectral_match_params: { ... }
 sirius:
-  general_params: { recompute: false, polarity: pos }
+  general_params: { recompute: false, ionization_mode: pos }
   sirius_params: { ... }
 weights:
-  general_params: { recompute: false, polarity: pos }
+  general_params: { recompute: false, ionization_mode: pos }
   reweighting_params: { ... }
   downloader_params: { ... }
 ```
@@ -208,9 +208,9 @@ Instead:
 5. On load, `_load_config_into_state` reads `general_params` out of the first
    section that has one and seeds the shared widget.
 
-`polarity` lives in `GeneralParams`, so it also drives
+`ionization_mode` lives in `GeneralParams`, so it also drives
 `AnalysisLoader.from_files(ionization_mode=...)` — the sidebar no longer has
-a separate polarity selector.
+a separate ionization-mode selector.
 
 #### 2.5.2 Input-folder picker
 
@@ -308,14 +308,14 @@ sequenceDiagram
     participant S as Enhancer(s)
 
     U->>A: tick "network", "ms1", "ms2"
-    U->>A: edit General params (polarity=neg)
+    U->>A: edit General params (ionization_mode=neg)
     A->>F: render_model(each config, exclude=general_params)
     F-->>A: raw form dicts
     A->>A: _inject_shared_params(raw, general_params)
     A->>I: build_configs(selected, raw)
     I-->>A: {block_id: validated model}
     U->>A: click "Run pipeline"
-    A->>R: run_pipeline(selected, configs, paths, polarity, db_dir, queue)
+    A->>R: run_pipeline(selected, configs, paths, ionization_mode, db_dir, queue)
     R->>R: AnalysisLoader.from_files(...)
     R->>DB: new DBLoader(ms_config)
     loop each selected block in canonical order

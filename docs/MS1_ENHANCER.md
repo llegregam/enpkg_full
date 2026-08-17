@@ -186,7 +186,32 @@ flowchart LR
 
 ---
 
-## 5. Why is it built this way?
+## 5. Cluster-aware dispatch (when the adduct graph ran)
+
+If the **[MS1 adduct graph enhancer](MS1_GRAPH_ENHANCER.md)** ran first, every feature carries a
+resolved **role** — `anchor` (a molecule's base ion), `satellite` (a non-base adduct of that same
+molecule), or `singleton` (no adduct relationships). The MS1 enhancer uses these roles to avoid
+redundant work:
+
+- **Anchors and singletons** are the base-ion candidates, so they get the full LOTUS mass-search
+  described above.
+- **Satellites are not searched.** A `[M+Na]⁺` satellite is, by construction, the same molecule as
+  its cluster's anchor — re-deriving candidates from its own mass would just reproduce the anchor's
+  molecule under a shifted adduct. Instead each satellite **inherits its anchor's resolved
+  molecule**: the anchor's base-form (`[M+H]⁺`/`[M−H]⁻`) formula groups, re-cast as `ChemicalAdduct`s
+  under the satellite's own resolved form (`[M+Na]⁺`, `[M+K]⁺`, `[M+H−H₂O]⁺`, …). The anchor's
+  *coincidental* non-base hypotheses are **not** propagated — only its resolved molecule.
+
+The result is per-feature candidate sets that are **non-redundant and internally consistent**: an
+adduct family points at one molecule, each feature carrying that molecule under the form it was
+actually observed as. If the graph enhancer did **not** run (no roles stamped), the MS1 enhancer
+falls back to searching every feature independently, exactly as before. See
+`inherit_satellite_annotations` in
+[`ms1_cluster_dispatch.py`](../enpkg/monolith/utils/ms1_cluster_dispatch.py).
+
+---
+
+## 6. Why is it built this way?
 
 A few deliberate design choices make this both fast and correct:
 
@@ -207,7 +232,7 @@ A few deliberate design choices make this both fast and correct:
 
 ---
 
-## 6. What comes out
+## 7. What comes out
 
 After `enhance()`, each spectrum holds a list of **`ChemicalAdduct`** objects in its
 `ms1_annotations` slot (defined on
@@ -254,7 +279,7 @@ once. Deciding which is most credible — by combining taxonomic plausibility an
 
 ---
 
-## 7. A concrete worked example
+## 8. A concrete worked example
 
 Suppose we observe a peak at **m/z 301.007** in **positive** mode, with a tolerance of
 **0.01 Da**, giving the match window **[300.997, 301.017]**.

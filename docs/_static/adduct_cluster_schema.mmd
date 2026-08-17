@@ -1,0 +1,17 @@
+%%{init: {'theme':'dark'}}%%
+flowchart TD
+    subgraph cluster0["implicit cluster · cluster_id 0 · CGC 3 · CIC 0.972 · CCC 0.75"]
+      A["feature 543 (AnnotatedSpectrum)<br/>precursor_mz 181.0495 · RT 3.458 · intensity 26600<br/>ms1_cluster_role = anchor<br/>ms1_cluster_id = 0"]:::anchor
+      S1["feature 100 (AnnotatedSpectrum)<br/>precursor_mz 203.0320 · RT 3.458 · intensity 5000<br/>ms1_cluster_role = satellite<br/>ms1_cluster_id = 0"]:::sat
+      S2["feature 101 (AnnotatedSpectrum)<br/>precursor_mz 219.0060 · RT 3.458 · intensity 3000<br/>ms1_cluster_role = satellite<br/>ms1_cluster_id = 0"]:::sat
+    end
+    A -->|"ms1_adduct_graph edge: [M+H]+ to [M+Na]+"| S1
+    A -->|"ms1_adduct_graph edge: [M+H]+ to [M+K]+"| S2
+    A -->|ms1_assigned_recipe| RH["AdductRecipe<br/>proton:1 · charge 1 · positive"]:::rec
+    S1 -->|ms1_assigned_recipe| RNa["AdductRecipe<br/>sodium:1 · charge 1 · positive"]:::rec
+    S2 -->|ms1_assigned_recipe| RK["AdductRecipe<br/>potassium:1 · charge 1 · positive"]:::rec
+    SG["feature 200 (AnnotatedSpectrum) — SINGLETON<br/>precursor_mz 400.0 · RT 8.0 · intensity 1000<br/>ms1_cluster_role = singleton<br/>ms1_cluster_id = None · ms1_assigned_recipe = None"]:::single
+    classDef anchor fill:#1e3a8a,stroke:#93c5fd,color:#fff,stroke-width:2px;
+    classDef sat fill:#78350f,stroke:#fcd34d,color:#fff;
+    classDef rec fill:#374151,stroke:#9ca3af,color:#e5e7eb;
+    classDef single fill:#3f3f46,stroke:#a1a1aa,color:#e5e7eb;

@@ -76,7 +76,7 @@ Custom predicates: `hasSample`, `hasSpectrum`, `hasOTTMatch`, `hasMS1Adduct`,
 | `Analysis` | `ENPKG_RES["analysis/{run_name}"]` | — |
 | `SampleMetadata` | `ENPKG_RES["sample/{sample_id}"]` | — |
 | `AnnotatedSpectrum` | `ENPKG_RES["spectrum/{run_name}/{feature_id}"]` | — |
-| `ChemicalAdduct` (MS1) | `ENPKG_RES["adduct/{run_name}/{feature_id}/{recipe_hash}"]` | — |
+| `ChemicalAdduct` (MS1) | `ENPKG_RES["adduct/{run_name}/{feature_id}/{recipe_hash}/{formula}"]` | formula → `mass-{exact_mass:.6f}` |
 | `MS2ChemicalAnnotation` | `ENPKG_RES["ms2ann/{run_name}/{feature_id}/{idx}"]` | — |
 | `Lotus` (compound) | `INCHIKEY[structure_inchikey]` | `WD[structure_wikidata]` → project UUID |
 | `Lotus` (organism) | `WD[organism_wikidata]` | `OTT[organism_taxonomy_ottid]` → `GBIF[..]` → `NCBITAXON[..]` → project UUID |
@@ -84,7 +84,11 @@ Custom predicates: `hasSample`, `hasSpectrum`, `hasOTTMatch`, `hasMS1Adduct`,
 | Molecular-network edge | blank node | — |
 
 `recipe_hash` is a short, stable hash of the `AdductRecipe` (charge + sorted
-ingredient dict) so the same adduct hypothesis produces the same URI across runs.
+ingredient dict). It identifies the *ionization form*, not the hypothesis: a
+`ChemicalAdduct` is a **(LOTUS formula group, recipe)** pairing, so the adduct URI
+carries the group's molecular formula as a final segment too. Both halves are needed
+— keyed on the recipe alone, every molecule proposed for one feature under one form
+collapsed onto a single node.
 
 ## Triple-Emission Sketch (per entity)
 

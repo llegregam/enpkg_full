@@ -1,0 +1,184 @@
+classDiagram
+    %% ========================================================================
+    %% ROLE: the TARGET model — where the ENPKG schema is going.
+    %%
+    %% Not everything drawn here is emitted yet: MolecularFormula, Atom, the
+    %% SampleMetadata fields and several annotation attributes are still
+    %% targets. Terms carry a [live] / [target] tag in docs/vocab/enpkg.ttl —
+    %% that file, not this diagram, is the authority on what any enpkg: term
+    %% means (domain, range, and why it was minted rather than reused).
+    %%
+    %% Companion: docs/RDF_KG_DATA_MODEL.md is the AS-BUILT model — what the
+    %% serializer emits today. Neither supersedes the other.
+    %% Walkthrough: docs/VOCABULARY.md
+    %% ========================================================================
+    class Taxon["emi:Taxon"]{
+        +ottId: string
+    }
+    class RawMaterial["emi:RawMaterial"]
+    class SampleMetadata["enpkg:SampleMetadata"]{
+        +sampleId: string
+        +sampleName: string
+        +sampleType: string
+        +collectionDate: date
+        +collectionLocation: string
+    }
+    class LCMSAnalysis["emi:LCMSAnalysis"]{
+        +ionizationMode: string
+        +operator: string
+        +instrument: string
+    }
+    class ExtractSample["emi:ExtractSample"]{
+        +extractionMethod: string
+        +extractionSolvent: string
+    }
+    class LCMSFeatureSet["emi:LCMSFeatureSet"]
+    class AdductCluster["enpkg:AdductCluster"]{
+        +clusterConnectivity: float
+        +clusterIntensityCoverage: float
+        +clusterCountCoverage: float
+    }
+    class LCMSFeature["emi:LCMSFeature"]{
+        +hasRowId: int
+        +parentMass: float
+        +retentionTime: float
+        +featureArea: float
+        +resolvedAdduct: string
+        +clusterRole: string
+    }
+    class Ion["CHEBI:24870(Ion)"]{
+        +mz: float
+        +intensity: float
+    }
+    %% class Adduct["MS:1003055(Adduct)"]{
+    %%     +adductType: string
+    %% }
+
+    %% Annotation types
+    class AdductAnnotation["enpkg:AdductAnnotation"]{
+        +adductNeutralMass: float
+        +adductForm: string
+        +annotationRank: int
+        +annotationScore: float
+        +annotationMethod: string
+    }
+    class SpectralAnnotation["enpkg:SpectralAnnotation"]{
+        +libraryName: string
+        +algorithm: string
+        +numberMatchedPeaks: int
+        +annotationRank: int
+        +annotationScore: float
+    }
+    class SiriusAnnotation["enpkg:SiriusAnnotation"]{
+        +siriusVersion: string
+        +molecularFormula: string
+        +adductForm: string
+        +annotationRank: int
+    }
+
+    %% Chemical Structures
+    class ChemicalStructure["emi:ChemicalStructure"]{
+        +inchi: string
+        +smiles: string
+        +monoisotopicMass: float
+        +xlogP: float
+    }
+    class InchiKey2D["emi:InChIKey2D"]{
+        value: string
+    }
+    class AdductRecipe["enpkg:AdductRecipe"]{
+        +charge: int
+        +multimerFactor: int
+        +adductFormula: string
+    }
+    class Ingredient["enpkg:Ingredient"]{
+        +ingredientName: string
+        +ingredientCount: float
+    }
+    class MolecularFormula["enpkg:MolecularFormula"]{
+        +formula: string
+    }
+    class Atom["CHEBI:33250(Atom)"]{
+        +element: string
+        +atomCount: int
+        +isotope: string
+    }
+
+    %% Molecular network
+    class LFpair["emi:LFpair"]{
+        +hasCosine: float
+        +hasMassDifference: float
+    }
+    class FBMNComponent["emi:FBMNComponent"]{
+        +componentSize: int
+    }
+
+    %% Taxonomy resolution & provenance
+    class OTTMatch["emi:Taxon"]{
+        +matchScore: float
+        +isApproximateMatch: boolean
+        +isSynonym: boolean
+        +nomenclatureCode: string
+        +searchString: string
+    }
+    class BibliographicResource["emi:BibliographicResource"]{
+        +identifier: string
+    }
+    class ExternalChemicalRef["owl:sameAs target: Wikidata / PubChem"]
+    class ExternalTaxonRef["owl:sameAs target: Wikidata / NCBITaxon / GBIF"]
+
+    %% RELATIONS
+    %% xxx
+    Taxon <-- RawMaterial : sosa_isSampleOf
+    RawMaterial <-- ExtractSample  : sosa_isSampleOf
+    ExtractSample --> SampleMetadata : enpkg_hasSampleMetadata
+    ExtractSample --> LCMSAnalysis : enpkg_hasLabProcess
+    LCMSAnalysis --> LCMSFeatureSet : emi_hasLCMSFeatureSet
+    LCMSAnalysis --> OTTMatch : enpkg_hasOTTMatch
+    OTTMatch --> ExternalTaxonRef : owl_sameAs
+    Taxon --> ExternalTaxonRef : owl_sameAs
+    
+    %% Adduct Relation Subgraph
+    LCMSFeatureSet --> AdductCluster : enpkg_hasAdductCluster
+    AdductCluster --> LCMSFeature : enpkg_hasAnchor
+    AdductCluster --> LCMSFeature : enpkg_hasClusterMember
+    LCMSFeature --> AdductCluster : enpkg_inAdductCluster
+
+    %% MS1 Feature Relation Subgraph
+    LCMSFeatureSet --> LCMSFeature : emi_hasLCMSFeature
+    LCMSFeature --> Ion : enpkg_hasIon
+
+    %% Molecular Network Relation Subgraph
+    LCMSFeatureSet --> FBMNComponent : enpkg_hasNetworkComponent
+    FBMNComponent --> LCMSFeature : enpkg_hasComponentMember
+    LCMSFeature --> FBMNComponent : emi_hasFBMNComponent
+    LFpair --> LCMSFeature : emi_hasFirstMember
+    LFpair --> LCMSFeature : emi_hasSecondMember
+
+    %% Annotation Relation Subgraph
+    LCMSFeature --> AdductAnnotation : emi_hasAnnotation
+    LCMSFeature --> SpectralAnnotation : emi_hasAnnotation
+    LCMSFeature --> SiriusAnnotation : emi_hasAnnotation
+    SpectralAnnotation --> ChemicalStructure : emi_hasChemicalStructure
+    SiriusAnnotation --> ChemicalStructure : emi_hasChemicalStructure
+    AdductAnnotation --> ChemicalStructure : enpkg_hasCandidateStructure
+    AdductAnnotation --> MolecularFormula : emi_hasMolecularFormula
+    SpectralAnnotation --> InchiKey2D : emi_hasInchiKey2D
+    SiriusAnnotation --> InchiKey2D : emi_hasInchiKey2D
+    ChemicalStructure --> InchiKey2D : emi_hasInchiKey2D
+    ChemicalStructure --> MolecularFormula : emi_hasMolecularFormula
+    MolecularFormula --> Atom : enpkg_hasAtom
+
+
+    %% Chemical Entities Relation Subgraph
+
+    AdductAnnotation --> AdductRecipe : enpkg_hasRecipe
+    AdductRecipe --> Ingredient : enpkg_hasIngredient
+    AdductAnnotation <-- SpectralAnnotation : enpkg_hasCorrespondingAdduct
+
+    %% Taxonomy & Provenance Subgraph
+    ChemicalStructure --> Taxon : emi_inTaxon
+    SpectralAnnotation --> Taxon : emi_inTaxon
+    ChemicalStructure --> BibliographicResource : prov_wasDerivedFrom
+    ChemicalStructure --> ExternalChemicalRef : owl_sameAs
+
