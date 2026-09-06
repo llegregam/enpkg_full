@@ -128,15 +128,18 @@ def _load_config_into_state(path: Path) -> None:
     rendered, since it writes the widget keys those read.
     """
     data = config_io.load_unified_yaml(path)
-    selection = config_io.get_selection(data)
+    selection = config_io.get_selection(data) # Get list of selected block ID's
     shared = None
     for block in BLOCKS:
         # For blocks with no config_cls, we skip loading since they have no parameters to populate.
         if block.config_cls is None:
             continue
+        # Get the parameters for this block from the loaded config data.
         section = config_io.get_section(data, block.id)
+        # Check for shared fields ("general parameters" for example")
         if shared is None and isinstance(section.get(SHARED_FIELD), dict):
             shared = section[SHARED_FIELD]
+        # Update the session state form_state for this block with the loaded section.
         st.session_state.form_state[block.id] = section
     # If no section carried general_params (an empty or pre-general_params file):
     # use the default general parameters.
