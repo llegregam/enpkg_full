@@ -1,6 +1,6 @@
 """Shared helpers for the per-block log summary functions.
 
-The block summary functions in :mod:`enpkg.monolith.gui.blocks` produce the
+The block summary functions in :mod:`enpkg.monolith.pipeline.blocks` produce the
 post-run report.  Small, reusable helpers that several summaries can share live
 here so that ``blocks.py`` stays focused on the block registry itself.
 """

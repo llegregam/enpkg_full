@@ -46,7 +46,7 @@
 >
 > **Updated a sixth time 2026-08-07** — Group F mostly settled. `enpkg` kept as the namespace name
 > despite being a legacy artifact (it's the one constant users' separately-generated KGs all share
-> — see the new [CLAUDE.md](../CLAUDE.md)); D2 decided (hand-authored TTL); the w3id.org redirect
+> — see [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)); D2 decided (hand-authored TTL); the w3id.org redirect
 > target confirmed as `llegregam/enpkg_full` (the actual `origin`, not the `enpkg/enpkg_full` org
 > `pyproject.toml` names but that isn't configured as a remote here). Filing the actual
 > `perma-id/w3id.org` PR is deliberately deferred to after Phase 2, since the target
@@ -404,7 +404,7 @@ the one thing that is expensive to undo. Registering a w3id redirect is a PR to
 
 ✅ **Name confirmed 2026-08-07: keep `enpkg`.** It's a legacy name from the pipeline's first
 version, but renaming a published vocabulary prefix defeats the same reuse goal that makes the
-vocabulary worth stabilizing in the first place — see [CLAUDE.md](../CLAUDE.md).
+vocabulary worth stabilizing in the first place — see [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
 
 ✅ **Redirect target confirmed: `llegregam/enpkg_full` on GitHub** (the repo actually configured
 as `origin` — checked via `git remote -v`, `main` branch confirmed via `git symbolic-ref
@@ -424,7 +424,7 @@ it, if that's ever worth the setup).
 hand-authored `docs/vocab/enpkg.ttl`**, with a thin Python-side registry (names only, no
 domain/range) purely to drift-test the serializer against it. Confirmed important precisely
 *because* the ontology must be reused unchanged across every user's separately-generated KG (see
-[CLAUDE.md](../CLAUDE.md)) — under a Python-source-of-truth model the "ontology" reshapes itself
+[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)) — under a Python-source-of-truth model the "ontology" reshapes itself
 on every unrelated code edit; under a hand-authored TTL it's a deliberate, independently-versioned
 artifact, the same relationship the pipeline already has with EMI's own `EMI-vocab.owl`.
 
@@ -770,7 +770,7 @@ All four `test_serializer.py` additions pass; full suite: **134 passed**.
 ### Group F — Namespace & governance (Part 4, D1–D3) — mostly settled 2026-08-07
 
 - [x] Namespace **name** confirmed: `enpkg` (kept, despite being a legacy name — see
-      [CLAUDE.md](../CLAUDE.md)).
+      [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)).
 - [x] Redirect **target** confirmed: `https://raw.githubusercontent.com/llegregam/enpkg_full/main/docs/vocab/enpkg.ttl`
       (not the `enpkg/enpkg_full` org in `pyproject.toml` — not an actual remote here).
 - [ ] **Filing the `perma-id/w3id.org` PR itself.** `docs/vocab/enpkg.ttl` exists as of Phase 2

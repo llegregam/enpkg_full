@@ -26,7 +26,7 @@ though they describe identical experiments.
 > terms are the shared contract.
 
 That is why the `enpkg:` prefix is kept even though the name is a legacy artifact of the pipeline's
-first version (see [CLAUDE.md](../CLAUDE.md)): renaming a published vocabulary breaks every graph
+first version (see [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)): renaming a published vocabulary breaks every graph
 that already commits to it. The name is inherited; the *stability* is deliberate.
 
 ```mermaid

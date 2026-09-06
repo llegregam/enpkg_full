@@ -1,10 +1,13 @@
-"""Pipeline runner for the GUI.
+"""Single-analysis pipeline runner.
 
-Drives the pipeline from the set of blocks selected in the GUI: each block from
-the [blocks.py](blocks.py) registry is bound to its config and the run's shared
-resources, then executed in canonical order via the uniform
-``enhance(analysis) -> Analysis`` contract. A ``logging.Handler`` pushes log
-records onto a queue that the Streamlit app can drain into the UI.
+Drives the pipeline from a set of selected block ids: each block from the
+[blocks.py](blocks.py) registry is bound to its config and the run's shared
+resources, then executed in registry order via the uniform
+``enhance(analysis) -> Analysis`` contract.
+
+The module depends on no front-end. A ``logging.Handler`` pushes log records
+onto a queue so a caller that wants live output — the Streamlit app does — can
+drain it; a headless caller can pass a queue it never reads.
 """
 from __future__ import annotations
 
@@ -18,10 +21,16 @@ from typing import Any, Optional
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.exceptions import DBLoaderError
-from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID, BlockSpec, BuildContext
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.pipeline.blocks import (
+    BLOCKS,
+    BLOCKS_BY_ID,
+    BlockSpec,
+    BuildContext,
+    required_resources,
+)
 from enpkg.monolith.rdf import serialize_to_turtle
 
 LOG_DIR = Path("gui_workspace") / "logs"
@@ -260,6 +269,10 @@ def build_shared_steps(
     are omitted from the returned map — the batch runner uses this to build
     Sirius per-analysis (its config carries per-experiment paths).
 
+    Which shared resources get built is decided by the selected blocks'
+    ``BlockSpec.requires``, so a block only receives a resource it asked for and
+    a run only pays for what it uses.
+
     Args:
         selected_ids: Block ids the caller wants to run.
         configs: Validated config objects keyed by block id.
@@ -267,42 +280,43 @@ def build_shared_steps(
         logger: Runtime logger shared with the built steps.
         skip: Optional set of block ids to exclude from the returned step map.
 
+    Raises:
+        DBLoaderError: If a selected block needs the ``lotus_store`` but the
+            resolved MSEnhancerConfig carries no DuckDB path.
+
     Returns:
         ``(steps, db_loader)`` — a map from block id to step instance, and the
-        shared ``DBLoader`` (or ``None`` if neither MS1/MS2 nor weights was
-        selected).
+        shared ``DBLoader`` (or ``None`` when no selected block required it).
     """
     skip = skip or set()
-    selected_set = set(selected_ids)
 
-    # Shared DBLoader covers MS1, MS2, and weights — only build it once.
     db_loader: Optional[DBLoader] = None
     lotus_store: Optional[LotusStore] = None
-    ms_config: Optional[MSEnhancerConfig] = None
-    if selected_set & {"ms1", "ms2"}:
-        ms_config = configs.get("ms1") or configs.get("ms2")
-        if ms_config is not None:
-            _apply_download_dir(ms_config, database_dir)
-            db_loader = DBLoader(configuration=ms_config, logger=logger)
-            logger.debug("DBLoader initialized for MS1/MS2")
 
-    if "weights" in selected_set and db_loader is None:
-        if ms_config is None:
-            ms_config = MSEnhancerConfig()
-            _apply_download_dir(ms_config, database_dir)
+    needed = required_resources(selected_ids)
+    if needed:
+        # Database access is configured by the MSEnhancerConfig that MS1/MS2
+        # share. A block can require the loader without either being selected,
+        # so fall back to the defaults when neither supplied one.
+        ms_config: MSEnhancerConfig = (
+            configs.get("ms1") or configs.get("ms2") or MSEnhancerConfig()
+        )
+        _apply_download_dir(ms_config, database_dir)
+
+        # The LotusStore reads the DuckDB file the loader manages, so requiring
+        # the store implies the loader.
         db_loader = DBLoader(configuration=ms_config, logger=logger)
-        logger.debug("DBLoader initialized for weights")
+        logger.debug("DBLoader initialized for: %s", ", ".join(sorted(needed)))
 
-    # LotusStore is built from the same DuckDB file DBLoader was pointed at.
-    # It owns all compound-side Lotus access (shared by MS1, MS2, weights).
-    if db_loader is not None and (selected_set & {"ms1", "ms2", "weights"}):
-        duckdb_path = ms_config.downloader_params.duckdb_path if ms_config else None
-        if not duckdb_path:
-            raise DBLoaderError(
-                "A DuckDB path is required for MS1/MS2/weights; CSV fallback is no longer supported."
-            )
-        lotus_store = LotusStore(duckdb_path=duckdb_path, logger=logger)
-        logger.debug("LotusStore initialized from %s", duckdb_path)
+        if "lotus_store" in needed:
+            duckdb_path = ms_config.downloader_params.duckdb_path
+            if not duckdb_path:
+                raise DBLoaderError(
+                    "A DuckDB path is required by the selected blocks; "
+                    "CSV fallback is not supported."
+                )
+            lotus_store = LotusStore(duckdb_path=duckdb_path, logger=logger)
+            logger.debug("LotusStore initialized from %s", duckdb_path)
 
     steps: dict[str, Any] = {}
     for block_id in selected_ids:
@@ -448,10 +462,10 @@ class _BoundBlock:
     """A registry block bound to its validated config and the run's resources.
 
     Presents the ``can_run`` / ``process`` surface the runner expects, building
-    the block's enhancer lazily in ``process`` (construction stays cheap and
-    dependency-free). Replaces the former per-block ``PipelineStep`` subclasses:
-    every enhancer honours ``enhance(analysis) -> Analysis``, so one wrapper
-    serves all blocks and the dependency wiring lives in the ``blocks`` registry.
+    the block's enhancer lazily in ``process`` so construction stays cheap and
+    dependency-free. Every enhancer honours ``enhance(analysis) -> Analysis``,
+    so one wrapper serves all blocks and the dependency wiring stays in the
+    ``blocks`` registry.
     """
 
     __slots__ = ("_spec", "_config", "_ctx")
@@ -480,8 +494,9 @@ def _build_step(
 ) -> _BoundBlock:
     """Bind a registry block to its config and shared resources.
 
-    All dependency wiring now lives in each ``BlockSpec.build_enhancer`` (see
-    ``gui/blocks.py``); the runner just supplies the shared ``BuildContext``.
+    Dependency wiring lives in each ``BlockSpec.build_enhancer`` (see
+    ``pipeline/blocks.py``); the runner just supplies the shared
+    ``BuildContext``.
     """
     spec = BLOCKS_BY_ID[block_id]
     logger.debug("Binding block %s", block_id)

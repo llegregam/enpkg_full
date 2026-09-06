@@ -14,16 +14,16 @@ import streamlit as st
 from pydantic import ValidationError
 
 from enpkg.monolith.configuration.config import GeneralParams
-from enpkg.monolith.gui import config_io
-from enpkg.monolith.gui.batch_runner import (
+from enpkg.monolith.gui.form_builder import render_model
+from enpkg.monolith.pipeline import config_io
+from enpkg.monolith.pipeline.batch_runner import (
     BatchResult,
     discover_experiments,
     find_shared_metadata,
     run_batch,
 )
-from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS, MS_SHARED_KEY
-from enpkg.monolith.gui.form_builder import render_model
-from enpkg.monolith.gui.runner import AnalysisSummary, run_pipeline
+from enpkg.monolith.pipeline.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS, MS_SHARED_KEY
+from enpkg.monolith.pipeline.runner import AnalysisSummary, run_pipeline
 
 SHARED_FIELD = "general_params"
 
@@ -128,15 +128,18 @@ def _load_config_into_state(path: Path) -> None:
     rendered, since it writes the widget keys those read.
     """
     data = config_io.load_unified_yaml(path)
-    selection = config_io.get_selection(data)
+    selection = config_io.get_selection(data) # Get list of selected block ID's
     shared = None
     for block in BLOCKS:
         # For blocks with no config_cls, we skip loading since they have no parameters to populate.
         if block.config_cls is None:
             continue
+        # Get the parameters for this block from the loaded config data.
         section = config_io.get_section(data, block.id)
+        # Check for shared fields ("general parameters" for example")
         if shared is None and isinstance(section.get(SHARED_FIELD), dict):
             shared = section[SHARED_FIELD]
+        # Update the session state form_state for this block with the loaded section.
         st.session_state.form_state[block.id] = section
     # If no section carried general_params (an empty or pre-general_params file):
     # use the default general parameters.

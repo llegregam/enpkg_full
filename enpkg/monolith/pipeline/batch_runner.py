@@ -1,6 +1,6 @@
 """Batch runner for processing many experiments in a single invocation.
 
-Companion to :mod:`enpkg.monolith.gui.runner`. The batch runner scans a parent
+Companion to :mod:`enpkg.monolith.pipeline.runner`. The batch runner scans a parent
 directory structured as::
 
     parent/
@@ -31,7 +31,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from enpkg.monolith.dev_utils import log_memory_snapshot
-from enpkg.monolith.gui.runner import (
+from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
+from enpkg.monolith.pipeline.runner import (
     LOG_DIR,
     AnalysisSummary,
     RunResult,
@@ -40,7 +41,6 @@ from enpkg.monolith.gui.runner import (
     build_shared_steps,
     make_loggers,
 )
-from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.rdf import serialize_to_turtle
 
 # Memory profiling is opt-in. A single log_memory_snapshot() costs roughly

@@ -1,16 +1,23 @@
-"""Central registry of pipeline blocks exposed to the GUI.
+"""Central registry of pipeline blocks.
 
-Adding a new block to the GUI requires exactly one entry here.  Each entry
-bundles everything the GUI needs to know about a block:
+Adding a block requires exactly one entry here.  Each entry bundles everything
+the pipeline and its front-ends need to know about a block:
 
 - display label and description (for the sidebar checkboxes / tooltips)
-- PipelineStep subclass and Pydantic config class (for the runner + forms)
-- dependency list (which other blocks must also be selected)
+- enhancer factory and Pydantic config class (for the runner + forms)
+- selection dependencies (which other blocks must also be selected)
+- ordering constraints (which blocks must run before or after it)
+- shared resources the enhancer needs (``requires``)
 - **log_summary function** (for the post-run report in the log file)
 
 Shared EnhancerConfig classes (e.g. MSEnhancerConfig for both MS1 and MS2)
 are supported by declaring a shared key and listing the associated blocks in
 a constant at the bottom of this file.
+
+``BLOCKS`` is computed, not written by hand: ``_BUILTIN_BLOCKS`` declares the
+blocks and ``order_blocks`` sorts them into execution order from their
+``after``/``before`` constraints.  Blocks with no constraint between them keep
+their ``_BUILTIN_BLOCKS`` order, so the sequence stays reproducible.
 
 The ``log_summary`` field is *required*. This is intentional: it forces every
 new block author to think about what part of the ``Analysis`` their step
@@ -29,7 +36,9 @@ says so is acceptable — see ``_log_sirius`` for an example.
 """
 from __future__ import annotations
 
+import heapq
 import logging
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Type
 
@@ -50,9 +59,9 @@ from enpkg.monolith.enhancers.network_enhancer import NetworkEnhancer
 from enpkg.monolith.enhancers.sirius_enhancer import SiriusEnhancer
 from enpkg.monolith.enhancers.taxa_enhancer import TaxaEnhancer
 from enpkg.monolith.enhancers.weights_enhancer import WeightsEnhancer
-from enpkg.monolith.gui.log_utils import has_nonzero_scores
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.pipeline.log_utils import has_nonzero_scores
 
 # Callable signature for every block's post-run log summary.
 # Each function receives the shared logger and the final Analysis, and should
@@ -69,11 +78,22 @@ class BuildContext:
     A block only reads the fields it needs (e.g. taxonomical/networking use
     none of them). ``db_loader`` and ``lotus_store`` are built once per run and
     reused across blocks.
+
+    A field is only populated when some selected block asked for it through
+    ``BlockSpec.requires``; otherwise it stays ``None``.  A block that reads a
+    resource it did not declare will therefore find nothing there.
     """
 
     logger: logging.Logger
     db_loader: Optional[DBLoader] = None
     lotus_store: Optional[LotusStore] = None
+
+
+# Resource names a block may ask for via ``BlockSpec.requires``; each maps to a
+# field of ``BuildContext`` the runner fills in when at least one selected block
+# requests it. ``lotus_store`` implies ``db_loader`` — both are built from the
+# same MSEnhancerConfig, and the store reads the DuckDB file the loader manages.
+KNOWN_RESOURCES = frozenset({"db_loader", "lotus_store"})
 
 
 # A block's enhancer factory: ``(validated_config, BuildContext) -> Enhancer``.
@@ -86,12 +106,28 @@ CanRunFn = Callable[[Analysis], bool]
 class BlockSpec:
     """Immutable descriptor for a single pipeline block.
 
-    The registry is the single source of truth: instead of a bespoke
-    ``PipelineStep`` subclass, each block carries ``build_enhancer`` (how to
-    construct its enhancer from the run's shared resources) and ``can_run`` (the
-    applicability guard). The runner wraps these into a uniform step. The
-    ``log_summary`` callable is invoked after a successful run to append a
-    per-block section to the run log.
+    The registry is the single source of truth. Each block carries
+    ``build_enhancer`` (how to construct its enhancer from the run's shared
+    resources) and ``can_run`` (the applicability guard); the runner wraps these
+    into a uniform step. The ``log_summary`` callable is invoked after a
+    successful run to append a per-block section to the run log.
+
+    ``depends_on`` and ``after``/``before`` answer different questions and are
+    not interchangeable:
+
+    * ``depends_on`` is about **selection** — "these blocks must also be ticked,
+      or I cannot run at all". A missing entry skips the block.
+    * ``after`` / ``before`` are about **order** — "whatever else is selected,
+      I run later/earlier than these". They constrain the sort in
+      ``order_blocks`` and are ignored when the named block is not selected.
+
+    A block usually needs both when it consumes another's output: ``weights``
+    requires ``network`` to be selected *and* to have run first.
+
+    Ordering constraints name blocks that may not exist (a plugin ordering
+    against a block that isn't installed), so an unknown id in ``after`` or
+    ``before`` is silently dropped. An unknown id in ``depends_on`` is a real
+    missing requirement and skips the block at runtime.
     """
 
     id: str
@@ -102,6 +138,73 @@ class BlockSpec:
     log_summary: SummaryFn
     description: str = ""
     depends_on: tuple[str, ...] = field(default_factory=tuple)
+    after: tuple[str, ...] = field(default_factory=tuple)
+    before: tuple[str, ...] = field(default_factory=tuple)
+    requires: frozenset[str] = field(default_factory=frozenset)
+
+
+class BlockOrderError(ValueError):
+    """Raised when ordering constraints cannot be satisfied."""
+
+
+def order_blocks(specs: Sequence[BlockSpec]) -> list[BlockSpec]:
+    """Sort blocks into execution order from their ``after``/``before`` edges.
+
+    Blocks that no constraint separates keep their order in ``specs``, which is
+    what makes a run reproducible: two installations holding the same blocks
+    produce the same sequence regardless of the order they were collected in.
+
+    Args:
+        specs: The blocks to order. Their position here is the tie-break.
+
+    Raises:
+        BlockOrderError: If the constraints contain a cycle, naming the blocks
+            still unplaced when the sort stalled.
+
+    Returns:
+        The same blocks, ordered so that every satisfiable constraint holds.
+    """
+    position = {spec.id: i for i, spec in enumerate(specs)}
+    successors: dict[str, set[str]] = {spec.id: set() for spec in specs}
+    indegree: dict[str, int] = {spec.id: 0 for spec in specs}
+
+    def add_edge(earlier: str, later: str) -> None:
+        # A constraint naming a block that is not present has nothing to order
+        # against; a duplicate edge must not be counted twice in the indegree.
+        if earlier not in position or later not in position:
+            return
+        if later in successors[earlier]:
+            return
+        successors[earlier].add(later)
+        indegree[later] += 1
+
+    for spec in specs:
+        for earlier in spec.after:
+            add_edge(earlier, spec.id)
+        for later in spec.before:
+            add_edge(spec.id, later)
+
+    # Kahn's algorithm over a heap of source positions: of the blocks that are
+    # ready, always take the one declared earliest.
+    ready = [position[bid] for bid, degree in indegree.items() if degree == 0]
+    heapq.heapify(ready)
+
+    ordered: list[BlockSpec] = []
+    while ready:
+        spec = specs[heapq.heappop(ready)]
+        ordered.append(spec)
+        for successor in successors[spec.id]:
+            indegree[successor] -= 1
+            if indegree[successor] == 0:
+                heapq.heappush(ready, position[successor])
+
+    if len(ordered) != len(specs):
+        unplaced = sorted(bid for bid, degree in indegree.items() if degree > 0)
+        raise BlockOrderError(
+            "Block ordering constraints contain a cycle; could not place: "
+            + ", ".join(unplaced)
+        )
+    return ordered
 
 
 # ---------------------------------------------------------------------------
@@ -381,13 +484,16 @@ def _log_weights(logger: logging.Logger, analysis: Analysis) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Block registry — canonical execution order
+# Block registry
 #
-# The runner iterates this list in order.  Adding a new pipeline block means
-# adding one entry here with all required fields (including ``log_summary``).
+# Adding a new pipeline block means adding one entry here with all required
+# fields (including ``log_summary``). Declare the ordering constraints the block
+# genuinely has rather than relying on where the entry sits: ``order_blocks``
+# derives the execution order from them, and only falls back to this list's
+# order for blocks nothing separates.
 # ---------------------------------------------------------------------------
 
-BLOCKS: list[BlockSpec] = [
+_BUILTIN_BLOCKS: list[BlockSpec] = [
     BlockSpec(
         id="taxonomical",
         label="Taxonomical enrichment",
@@ -415,6 +521,9 @@ BLOCKS: list[BlockSpec] = [
         log_summary=_log_ms1_graph,
         description="Relates features that are adducts of the same molecule and "
         "resolves each cluster's base ion. Runs before MS1 enhancement.",
+        # The MS1 enhancer reads the cluster roles this block stamps to decide
+        # which features to search, so it is only useful ahead of ms1.
+        before=("ms1",),
     ),
     BlockSpec(
         id="ms1",
@@ -427,6 +536,7 @@ BLOCKS: list[BlockSpec] = [
         "When the ms1_graph block ran first, only anchors and singletons are searched; each "
         "satellite inherits its cluster anchor's molecule under its own adduct form (no redundant "
         "search). Without the graph, every feature is searched.",
+        requires=frozenset({"db_loader", "lotus_store"}),
     ),
     BlockSpec(
         id="ms2",
@@ -436,6 +546,7 @@ BLOCKS: list[BlockSpec] = [
         config_cls=MSEnhancerConfig, # Shared with MS1
         log_summary=_log_ms2,
         description="Matches MS/MS spectra against spectral databases (ISDB).",
+        requires=frozenset({"db_loader", "lotus_store"}),
     ),
     BlockSpec(
         id="sirius",
@@ -455,10 +566,38 @@ BLOCKS: list[BlockSpec] = [
         log_summary=_log_weights,
         description="Reranks annotations using taxonomic and chemical consistency. Requires the molecular network.",
         depends_on=("network",),
+        # Reranking propagates scores over the network and rewrites the MS1/MS2
+        # annotations, so all three have to have produced their output first.
+        after=("network", "ms1", "ms2"),
+        requires=frozenset({"db_loader", "lotus_store"}),
     ),
 ]
 
+# Execution order, derived from the constraints above.
+BLOCKS: list[BlockSpec] = order_blocks(_BUILTIN_BLOCKS)
+
 BLOCKS_BY_ID: dict[str, BlockSpec] = {b.id: b for b in BLOCKS}
+
+
+def required_resources(selected_ids: Iterable[str]) -> frozenset[str]:
+    """Return the union of the shared resources the selected blocks require.
+
+    Unknown ids are ignored: the caller decides what to do about a block that is
+    not in the registry, and it cannot require anything in any case.
+
+    Args:
+        selected_ids: Block ids the caller intends to run.
+
+    Returns:
+        Resource names drawn from ``KNOWN_RESOURCES``.
+    """
+    return frozenset().union(
+        *(
+            BLOCKS_BY_ID[block_id].requires
+            for block_id in selected_ids
+            if block_id in BLOCKS_BY_ID
+        )
+    )
 
 # Blocks that share a single EnhancerConfig instance in the unified YAML should be declared here.
 # The runner and config I/O will treat these blocks as a group, loading their config from the shared

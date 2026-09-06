@@ -16,7 +16,7 @@
 ## 1. What a block is
 
 A block is described by exactly one `BlockSpec` entry in
-[`enpkg/monolith/gui/blocks.py`](../enpkg/monolith/gui/blocks.py). That entry is the
+[`enpkg/monolith/pipeline/blocks.py`](../enpkg/monolith/pipeline/blocks.py). That entry is the
 **single source of truth**: the sidebar checkbox, the config tab, the YAML section, the
 execution order, and the summary report are all derived from it by iterating `BLOCKS`.
 There is no per-block step class and no `if block_id == ...` branch in the runner.
@@ -44,7 +44,7 @@ register them:
 |---|---|---|
 | **Config** — the block's parameters | `enpkg/monolith/configuration/<name>_config.py` | `EnhancerConfig` (Pydantic) |
 | **Enhancer** — the actual work | `enpkg/monolith/enhancers/<name>_enhancer.py` | `Enhancer` (ABC) |
-| **BlockSpec** — the registration | `enpkg/monolith/gui/blocks.py` | frozen dataclass |
+| **BlockSpec** — the registration | `enpkg/monolith/pipeline/blocks.py` | frozen dataclass |
 
 ---
 
@@ -115,8 +115,8 @@ class BlankRemovalEnhancer(Enhancer):
         return analysis
 ```
 
-**3. Registration** — in [`blocks.py`](../enpkg/monolith/gui/blocks.py), add the import, a
-build factory, a log summary, and one `BLOCKS` entry at the right position:
+**3. Registration** — in [`blocks.py`](../enpkg/monolith/pipeline/blocks.py), add the import, a
+build factory, a log summary, and one `_BUILTIN_BLOCKS` entry declaring where it runs:
 
 ```python
 def _build_blank_removal(config: Any, ctx: BuildContext) -> Enhancer:
@@ -132,7 +132,7 @@ def _log_blank_removal(logger: logging.Logger, analysis: Analysis) -> None:
     logger.info("    Features flagged as blank : %d / %d", n_flagged, len(analysis.spectra))
 
 
-BLOCKS: list[BlockSpec] = [
+_BUILTIN_BLOCKS: list[BlockSpec] = [
     ...,
     BlockSpec(
         id="blank_removal",
@@ -143,14 +143,17 @@ BLOCKS: list[BlockSpec] = [
         log_summary=_log_blank_removal,
         description="Flags features whose intensity is not meaningfully above the "
                     "solvent blanks. Runs before annotation.",
+        # Annotating a blank-derived feature wastes a database lookup, so this
+        # has to happen before the annotation blocks — stated, not positional.
+        before=("ms1", "ms2"),
     ),
     ...,
 ]
 ```
 
 That is the whole integration. The checkbox, the tab with a bounded numeric widget and its
-tooltip, the `blank_removal:` YAML section, the run slot and the summary section all appear
-on their own.
+tooltip, the `blank_removal:` YAML section, the run slot, its place in the execution order
+and the summary section all appear on their own.
 
 ---
 
@@ -238,7 +241,7 @@ run against analyses your block never touched.
 
 ### Step 4 — Register the block
 
-In [`blocks.py`](../enpkg/monolith/gui/blocks.py), add:
+In [`blocks.py`](../enpkg/monolith/pipeline/blocks.py), add:
 
 1. The imports for your config and enhancer.
 2. A `_build_<name>(config, ctx) -> Enhancer` factory. It receives the validated config and
@@ -249,8 +252,10 @@ In [`blocks.py`](../enpkg/monolith/gui/blocks.py), add:
    them. **`can_run` returning `False` is a skip, not an error** — the block is logged as
    skipped and the run continues. Use it for "this analysis lacks the inputs I need", not
    for "the user configured me wrongly" (that belongs in Pydantic validation).
-4. The `BlockSpec` entry, **positioned in `BLOCKS` at the point it should execute**. The
-   list order *is* the pipeline order.
+4. The `BlockSpec` entry in `_BUILTIN_BLOCKS`, declaring the ordering constraints your
+   block genuinely has. Do **not** rely on where you put the entry: `BLOCKS` is computed
+   from the constraints by `order_blocks`, and the list position is only the tie-break
+   between blocks nothing separates.
 
 `BlockSpec` fields:
 
@@ -264,12 +269,23 @@ In [`blocks.py`](../enpkg/monolith/gui/blocks.py), add:
 | `log_summary` | yes | `(Logger, Analysis) -> None`; see step 5. |
 | `description` | no | Checkbox tooltip. Worth writing — it is where a user learns when to tick the box. |
 | `depends_on` | no | Tuple of block ids that must also be **selected**. |
+| `after` / `before` | no | Tuples of block ids this must run later / earlier than. |
+| `requires` | no | Frozenset of shared resources the enhancer needs: `"db_loader"`, `"lotus_store"`. |
 
-**What `depends_on` does and does not do.** It is checked against the *selection*, not
-against success: a block whose dependency was selected but then skipped by its own
-`can_run` will still be attempted. Guard the real precondition in your own `can_run` as
-well — that is why `weights` both declares `depends_on=("network",)` and uses
-`_has_spectra_and_network`.
+**`depends_on` and `after`/`before` are not the same question.** `depends_on` is about
+*selection* — "these must also be ticked, or I cannot run at all"; a missing entry skips
+your block. `after`/`before` are about *order* — "whatever else is selected, I run
+later/earlier than these". A block that consumes another's output usually needs both, which
+is why `weights` declares `depends_on=("network",)` *and* `after=("network", "ms1", "ms2")`.
+
+Neither is checked against success: a dependency that was selected but then skipped by its
+own `can_run` still lets your block be attempted. Guard the real precondition in your own
+`can_run` too — that is why `weights` also uses `_has_spectra_and_network`.
+
+**Declaring resources.** `BuildContext.db_loader` and `.lotus_store` are only built when
+some selected block asks for them through `requires`. A block that reads
+`ctx.lotus_store` without declaring it will find `None` there. Requiring `"lotus_store"`
+implies `"db_loader"` — declare both, as `ms1`/`ms2`/`weights` do.
 
 If your block must share one config instance with an existing block, add both ids to a
 shared-key constant at the bottom of `blocks.py` (the `MS_SHARED_BLOCKS` / `MS_SHARED_KEY`
@@ -297,7 +313,7 @@ Conventions:
   (`"    (no molecular network on analysis)"`) rather than raising.
 - **Never let a summary crash a run.** If you compute anything that can throw — a
   reranking, a lookup — wrap it and log at DEBUG on failure, the way `_log_weights` does.
-- Reusable helpers go in [`log_utils.py`](../enpkg/monolith/gui/log_utils.py), not in
+- Reusable helpers go in [`log_utils.py`](../enpkg/monolith/pipeline/log_utils.py), not in
   `blocks.py`.
 
 If your block does not yet expose its outputs on `Analysis`, a minimal stub that says so is
@@ -333,7 +349,7 @@ Pipeline output only reaches the knowledge graph if
 the registry cannot do for you, and it is the step with lasting consequences:
 
 > **The `enpkg:` vocabulary is the constant across every graph this tool builds.** Adding a
-> term is a commitment, not an implementation detail — see [../CLAUDE.md](../CLAUDE.md) and
+> term is a commitment, not an implementation detail — see [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) and
 > [SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md](SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md). Settle the
 > term's label, domain and range before you emit it; reuse an existing term wherever one
 > fits.
@@ -344,8 +360,8 @@ serializer, and document the shape in [RDF_DATA_MODEL.md](RDF_DATA_MODEL.md). If
 should only be emitted when your block actually ran, follow the network layer's pattern —
 the runners pass `include_network="network" in result.executed` into `serialize_to_turtle`,
 so a conditional layer needs a flag threaded from both
-[`runner.py`](../enpkg/monolith/gui/runner.py) and
-[`batch_runner.py`](../enpkg/monolith/gui/batch_runner.py).
+[`runner.py`](../enpkg/monolith/pipeline/runner.py) and
+[`batch_runner.py`](../enpkg/monolith/pipeline/batch_runner.py).
 
 ### Step 8 — Write the walkthrough doc
 
@@ -374,7 +390,7 @@ Registering the `BlockSpec` is enough for all of this:
 | Validation with errors surfaced verbatim | `config_io.build_configs` → `model_validate` |
 | A `<id>:` section in the saved YAML, and correct reload | `config_io.save_unified_yaml` / `load_unified_yaml` |
 | Membership in `selected_blocks`, so a config file reproduces the run | `save_unified_yaml` derives it from the validated configs |
-| Execution in registry order, dependency and `can_run` skipping | `runner._run_analysis` |
+| Execution in the computed order, dependency and `can_run` skipping | `blocks.order_blocks`, `runner._run_analysis` |
 | A section in the end-of-run summary | `runner._log_analysis_summary` calls `block.log_summary` |
 | Batch mode across many experiments | `batch_runner` reuses `build_shared_steps` |
 | The registry integrity tests | `test_blocks_registry.py`, `test_build_step.py` |
@@ -383,27 +399,21 @@ Registering the `BlockSpec` is enough for all of this:
 
 ## 5. What you do **not** get for free
 
-The registry covers the common case. These are the four places where a block still needs
+The registry covers the common case. These are the three places where a block still needs
 hand-written wiring — check them against your block before assuming "one entry" is enough:
 
-**1. Shared resources are gated by a hard-coded id set.** `BuildContext` offers
-`db_loader` and `lotus_store`, but `runner.build_shared_steps` only *constructs* them when
-`ms1`, `ms2` or `weights` is selected. A new block that reads `ctx.lotus_store` will get
-`None` unless one of those blocks happens to be ticked too. Add your id to those sets in
-[`runner.py`](../enpkg/monolith/gui/runner.py) if you need database access.
-
-**2. Extra input files need GUI work.** Blocks whose config points at a file the sidebar
+**1. Extra input files need GUI work.** Blocks whose config points at a file the sidebar
 does not already list need their own picker. Sirius is the precedent: `app.py` adds a
 "Spectra for Sirius" selectbox when the block is ticked, excludes
 `sirius_params.path_to_input_spectra` from the rendered form, and writes the resolved path
 into the config just before the run.
 
-**3. Per-experiment config in batch mode.** `build_shared_steps` builds each step **once**
+**2. Per-experiment config in batch mode.** `build_shared_steps` builds each step **once**
 and reuses it for every experiment. If your config carries per-experiment paths, it must be
 excluded via the `skip=` argument and rebuilt inside the batch loop — again, see how
 `batch_runner` handles `sirius` (`skip={"sirius"}` plus `_sirius_config_for(...)` per run).
 
-**4. Exotic field types fall back to a text box.** `form_builder._render_field` handles
+**3. Exotic field types fall back to a text box.** `form_builder._render_field` handles
 `bool`, `int`, `float`, `str`, `list`/`tuple`, `Optional[T]` and nested `BaseModel`.
 Anything else renders as free-form text and is validated only by Pydantic afterwards. Keep
 config fields to those types, or extend `_render_field` — it is a single function.
@@ -425,9 +435,11 @@ config fields to those types, or extend `_render_field` — it is a single funct
 [ ] Data-model fields added (if any), defaulting to None/empty
     [ ] integrity validator if it must stay in step with the spectra
 [ ] BlockSpec entry in blocks.py
-    [ ] placed at the correct position (list order = execution order)
+    [ ] after/before declare the real ordering constraints (never rely on
+        where the entry sits in the list)
+    [ ] requires declares any shared resource the enhancer reads from ctx
     [ ] build_enhancer factory + can_run predicate
-    [ ] depends_on set, AND the precondition guarded in can_run
+    [ ] depends_on set for co-selection, AND the precondition guarded in can_run
 [ ] log_summary written, handling the empty case and never raising
 [ ] Tests: registry tests pass, plus an enhancer test using make_analysis
 [ ] RDF serialization + vocabulary terms (if the output belongs in the graph)

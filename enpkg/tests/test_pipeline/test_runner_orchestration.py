@@ -7,7 +7,7 @@ stub steps, so they hold regardless of how individual steps are built.
 
 import logging
 
-from enpkg.monolith.gui.runner import RunResult, _run_analysis
+from enpkg.monolith.pipeline.runner import RunResult, _run_analysis
 
 
 class _StubStep:

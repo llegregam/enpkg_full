@@ -24,8 +24,8 @@ scripts. The current design:
   that each implement one uniform contract, `enhance(analysis) -> Analysis`:
   MS1 adducting, MS2 (ISDB) cosine matching, molecular networking, taxonomy
   resolution, SIRIUS, and taxonomy/network-aware reweighting (label propagation).
-- **Registry + runner** ([`gui/blocks.py`](enpkg/monolith/gui/blocks.py),
-  [`gui/runner.py`](enpkg/monolith/gui/runner.py)) — a single `BLOCKS` registry
+- **Registry + runner** ([`pipeline/blocks.py`](enpkg/monolith/pipeline/blocks.py),
+  [`pipeline/runner.py`](enpkg/monolith/pipeline/runner.py)) — a single `BLOCKS` registry
   is the source of truth for which blocks exist, how to build each enhancer, and
   when it can run; the runner executes selected blocks in canonical order.
 - **Reference data** — LOTUS compound/taxonomy metadata and the ISDB spectral

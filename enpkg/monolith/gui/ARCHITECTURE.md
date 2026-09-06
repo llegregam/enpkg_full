@@ -11,14 +11,14 @@ configs and pipeline steps.
 The GUI is a thin shell around the existing pipeline. It must not:
 
 - re-declare any configuration schema (all validation stays in Pydantic),
-- hard-code the list of pipeline blocks (one registry, [blocks.py](blocks.py)),
-- duplicate orchestration logic (it all lives in [runner.py](runner.py)).
+- hard-code the list of pipeline blocks (one registry, [blocks.py](../pipeline/blocks.py)),
+- duplicate orchestration logic (it all lives in [runner.py](../pipeline/runner.py)).
 
 Everything the user sees — the block checkboxes, the tabs, the form fields,
 the validated JSON preview, the runner — is derived from three sources of
 truth:
 
-1. `BLOCKS` in [blocks.py](blocks.py) — which pipeline blocks exist, and for
+1. `BLOCKS` in [blocks.py](../pipeline/blocks.py) — which pipeline blocks exist, and for
    each one, how to build its `Enhancer` (`build_enhancer`) and when it applies
    (`can_run`).
 2. `model_cls.model_fields` on each Pydantic config — which fields that block
@@ -29,19 +29,29 @@ truth:
 ## 2. Module map
 
 ```
-enpkg/monolith/gui/
+enpkg/monolith/gui/          ← Streamlit only; imports the pipeline, never the reverse
 ├── __init__.py
 ├── app.py            Streamlit entry point (layout, session state, glue)
-├── blocks.py         Pipeline-block registry (id → enhancer builder, can_run, config, deps)
-├── form_builder.py   Pydantic BaseModel → Streamlit widget tree
+└── form_builder.py   Pydantic BaseModel → Streamlit widget tree
+
+enpkg/monolith/pipeline/     ← front-end agnostic; usable headlessly
+├── __init__.py
+├── blocks.py         Block registry (id → enhancer builder, can_run, config,
+│                     deps, ordering, required resources) + order_blocks
+├── runner.py         Single-analysis execution, resource sharing, log streaming
+├── batch_runner.py   Many experiments, resources built once and reused
 ├── config_io.py      Unified YAML load/save + config instantiation
-└── runner.py         Pipeline execution, DBLoader sharing, log streaming
+└── log_utils.py      Helpers shared by the per-block log summaries
 ```
 
-### 2.1 [blocks.py](blocks.py) — the registry
+The split is load-bearing: `streamlit` is an optional dependency group, so
+nothing under `pipeline/` may import it. Everything the GUI does is available to
+a headless caller through the same entry points.
 
-A single `BLOCKS` list of `BlockSpec` frozen dataclasses. Each entry pins
-together:
+### 2.1 [blocks.py](../pipeline/blocks.py) — the registry
+
+A single `_BUILTIN_BLOCKS` list of `BlockSpec` frozen dataclasses. Each entry
+pins together:
 
 - `id` — short string key used in YAML, session state and widget keys;
 - `label` — human-readable name shown in sidebar and tabs;
@@ -54,11 +64,21 @@ together:
 - `log_summary` — post-run report function (see the module docstring);
 - `description` — tooltip text;
 - `depends_on` — block ids that must also be selected (e.g. `weights` →
-  `network`).
+  `network`);
+- `after` / `before` — ordering constraints against other block ids;
+- `requires` — shared resources the enhancer reads from its `BuildContext`
+  (`"db_loader"`, `"lotus_store"`).
 
-The list is **ordered** — it defines the canonical pipeline execution order.
-`BLOCKS_BY_ID` gives O(1) lookup. `MS_SHARED_BLOCKS`/`MS_SHARED_KEY` mark the
-MS1/MS2 pair that shares a single `MSEnhancerConfig`.
+`BLOCKS` is **computed**, not hand-ordered: `order_blocks` topologically sorts
+`_BUILTIN_BLOCKS` by the `after`/`before` constraints, falling back to
+declaration order for blocks nothing separates, and raises `BlockOrderError` on
+a cycle. Ordering constraints naming an absent block are dropped; a block's
+position in the source list is only the tie-break.
+
+`BLOCKS_BY_ID` gives O(1) lookup. `required_resources(selected_ids)` returns the
+union of the selection's `requires`, which is what the runner builds.
+`MS_SHARED_BLOCKS`/`MS_SHARED_KEY` mark the MS1/MS2 pair that shares a single
+`MSEnhancerConfig`.
 
 Because every enhancer honours the uniform `enhance(analysis) -> Analysis`
 contract, there is **no per-block step class** — the runner wraps
@@ -99,7 +119,7 @@ tab — the field is skipped during rendering and re-injected later.
 the user can type; Pydantic still runs the authoritative validation when the
 dict is turned back into a model instance.
 
-### 2.3 [config_io.py](config_io.py) — YAML ↔ configs
+### 2.3 [config_io.py](../pipeline/config_io.py) — YAML ↔ configs
 
 Five functions:
 
@@ -162,7 +182,7 @@ which `build_configs` fills for *every* selected block (storing `None` for the
 config-less ones) — so no extra argument is needed to thread the selection
 through.
 
-### 2.4 [runner.py](runner.py) — execution
+### 2.4 [runner.py](../pipeline/runner.py) — execution
 
 `run_pipeline(selected_ids, configs, spectra_path, metadata_path, quant_path,
 ionization_mode, database_dir, log_queue) -> RunResult`.
@@ -172,11 +192,12 @@ Steps:
 1. Attach a `QueueLogHandler` to a named logger so every log record is pushed
    onto a thread-safe queue that the Streamlit app can drain.
 2. Call `AnalysisLoader.from_files(...)` to build an `Analysis`.
-3. If any MS block is selected, build a single `DBLoader` from the
-   `MSEnhancerConfig` and force its `downloader_params.download_dir` to
-   `DATABASE_DIR`. The same `DBLoader` is reused by `ms1`, `ms2` and
-   `weights` (all three need database access).
-4. Iterate `BLOCKS` in canonical order. For each selected block:
+3. Take the union of the selected blocks' `requires` and build only those
+   shared resources — a single `DBLoader` from the `MSEnhancerConfig` with its
+   `downloader_params.download_dir` forced to `DATABASE_DIR`, and the
+   `LotusStore` reading the DuckDB file that loader manages. Both are built
+   once and reused by every block that asked for them.
+4. Iterate `BLOCKS` in its computed order. For each selected block:
    - skip if any `depends_on` entry is not also selected,
    - bind the block to its config + shared resources via `_build_step` — a
      generic `_BoundBlock` that wraps the registry's `build_enhancer` /
@@ -412,11 +433,12 @@ sequenceDiagram
 
 - **Add a new pipeline block**: create the enhancer (honouring
   `enhance(analysis) -> Analysis`) + its config, then add one `BlockSpec` entry
-  to `BLOCKS` with a `build_enhancer` closure and a `can_run` predicate. No step
+  to `_BUILTIN_BLOCKS` with a `build_enhancer` closure, a `can_run` predicate,
+  and whatever `after`/`before`/`requires` the block genuinely needs. No step
   file and no `_build_step` branch are needed — the sidebar checkbox, tab, form,
-  YAML section, execution slot and runner wiring all appear automatically.
-  Full walkthrough, including the cases the registry does *not* cover
-  (shared DB resources, extra input files, per-experiment batch config):
+  YAML section, execution slot, resource wiring and place in the run order all
+  follow from that entry. Full walkthrough, including the cases the registry
+  does *not* cover (extra input files, per-experiment batch config):
   [../../../docs/ADDING_A_BLOCK.md](../../../docs/ADDING_A_BLOCK.md).
 - **Add a new shared sub-config**: render it above the tabs like
   `general_params`, store it in session state, add it to the

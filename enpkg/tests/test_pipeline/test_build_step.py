@@ -4,8 +4,8 @@ import logging
 
 import pytest
 
-from enpkg.monolith.gui.blocks import BLOCKS_BY_ID
-from enpkg.monolith.gui.runner import _BoundBlock, _build_step
+from enpkg.monolith.pipeline.blocks import BLOCKS_BY_ID
+from enpkg.monolith.pipeline.runner import _BoundBlock, _build_step
 
 
 @pytest.fixture

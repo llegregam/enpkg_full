@@ -1,4 +1,4 @@
-"""Unified YAML load/save for the GUI.
+"""Unified YAML load/save for a pipeline run's configuration.
 
 The YAML is a single file with top-level keys matching block ids, plus a
 shared ``ms_enhancer`` key for the MSEnhancerConfig used by both MS1 and MS2.
@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS, MS_SHARED_KEY
+from enpkg.monolith.pipeline.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS, MS_SHARED_KEY
 
 # Top-level YAML key holding the list of selected block ids. Not a block id, so
 # ``get_section`` (which looks sections up by block id) never collides with it.
