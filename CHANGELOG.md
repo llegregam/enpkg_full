@@ -53,4 +53,4 @@ to version numbers.
 
 - Added this changelog. Rationale, design decisions, and the history of how the pipeline
   got to its current shape now live here rather than in docstrings and code comments,
-  which should only describe the code as it currently is (see `CLAUDE.md`).
+  which should only describe the code as it currently is.

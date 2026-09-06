@@ -161,3 +161,6 @@ enpkg/monolith/enhancers/test_isdb
 
 # Large downloaded vocabulary reference, not meant for version control
 docs/vocab/chebi-vocab.owl
+# Personal Claude Code instructions — local working notes, not project docs.
+# The project rationale this file used to carry lives in docs/PROJECT_CONTEXT.md.
+CLAUDE.md

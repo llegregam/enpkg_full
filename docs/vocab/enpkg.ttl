@@ -22,7 +22,7 @@
 # definition, this file (not the serializer that emits triples against it)
 # is the source of truth for what an `enpkg:` term means. See
 # docs/SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md for the review and decisions
-# this file transcribes, and CLAUDE.md for the reuse rationale.
+# this file transcribes, and docs/PROJECT_CONTEXT.md for the reuse rationale.
 #
 # Status markers — every term below carries exactly one, in its rdfs:comment:
 #   [live]   already emitted by enpkg/monolith/rdf/serializer.py

@@ -349,7 +349,7 @@ Pipeline output only reaches the knowledge graph if
 the registry cannot do for you, and it is the step with lasting consequences:
 
 > **The `enpkg:` vocabulary is the constant across every graph this tool builds.** Adding a
-> term is a commitment, not an implementation detail — see [../CLAUDE.md](../CLAUDE.md) and
+> term is a commitment, not an implementation detail — see [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) and
 > [SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md](SCHEMA_REVIEW_AND_VOCABULARY_PLAN.md). Settle the
 > term's label, domain and range before you emit it; reuse an existing term wherever one
 > fits.
