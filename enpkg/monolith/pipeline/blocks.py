@@ -1,11 +1,12 @@
-"""Central registry of pipeline blocks exposed to the GUI.
+"""Central registry of pipeline blocks.
 
-Adding a new block to the GUI requires exactly one entry here.  Each entry
-bundles everything the GUI needs to know about a block:
+Adding a block requires exactly one entry here.  Each entry bundles everything
+the pipeline and its front-ends need to know about a block:
 
 - display label and description (for the sidebar checkboxes / tooltips)
-- PipelineStep subclass and Pydantic config class (for the runner + forms)
-- dependency list (which other blocks must also be selected)
+- enhancer factory and Pydantic config class (for the runner + forms)
+- selection dependencies (which other blocks must also be selected)
+- shared resources the enhancer needs (``requires``)
 - **log_summary function** (for the post-run report in the log file)
 
 Shared EnhancerConfig classes (e.g. MSEnhancerConfig for both MS1 and MS2)
@@ -30,6 +31,7 @@ says so is acceptable — see ``_log_sirius`` for an example.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Type
 
@@ -69,11 +71,22 @@ class BuildContext:
     A block only reads the fields it needs (e.g. taxonomical/networking use
     none of them). ``db_loader`` and ``lotus_store`` are built once per run and
     reused across blocks.
+
+    A field is only populated when some selected block asked for it through
+    ``BlockSpec.requires``; otherwise it stays ``None``.  A block that reads a
+    resource it did not declare will therefore find nothing there.
     """
 
     logger: logging.Logger
     db_loader: Optional[DBLoader] = None
     lotus_store: Optional[LotusStore] = None
+
+
+# Resource names a block may ask for via ``BlockSpec.requires``; each maps to a
+# field of ``BuildContext`` the runner fills in when at least one selected block
+# requests it. ``lotus_store`` implies ``db_loader`` — both are built from the
+# same MSEnhancerConfig, and the store reads the DuckDB file the loader manages.
+KNOWN_RESOURCES = frozenset({"db_loader", "lotus_store"})
 
 
 # A block's enhancer factory: ``(validated_config, BuildContext) -> Enhancer``.
@@ -86,12 +99,15 @@ CanRunFn = Callable[[Analysis], bool]
 class BlockSpec:
     """Immutable descriptor for a single pipeline block.
 
-    The registry is the single source of truth: instead of a bespoke
-    ``PipelineStep`` subclass, each block carries ``build_enhancer`` (how to
-    construct its enhancer from the run's shared resources) and ``can_run`` (the
-    applicability guard). The runner wraps these into a uniform step. The
-    ``log_summary`` callable is invoked after a successful run to append a
-    per-block section to the run log.
+    The registry is the single source of truth. Each block carries
+    ``build_enhancer`` (how to construct its enhancer from the run's shared
+    resources) and ``can_run`` (the applicability guard); the runner wraps these
+    into a uniform step. The ``log_summary`` callable is invoked after a
+    successful run to append a per-block section to the run log.
+
+    ``requires`` names the shared resources the enhancer reads off its
+    ``BuildContext``. Only what some selected block asks for gets built, so a
+    block that reads a resource it did not declare will find ``None`` there.
     """
 
     id: str
@@ -102,6 +118,7 @@ class BlockSpec:
     log_summary: SummaryFn
     description: str = ""
     depends_on: tuple[str, ...] = field(default_factory=tuple)
+    requires: frozenset[str] = field(default_factory=frozenset)
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +444,7 @@ BLOCKS: list[BlockSpec] = [
         "When the ms1_graph block ran first, only anchors and singletons are searched; each "
         "satellite inherits its cluster anchor's molecule under its own adduct form (no redundant "
         "search). Without the graph, every feature is searched.",
+        requires=frozenset({"db_loader", "lotus_store"}),
     ),
     BlockSpec(
         id="ms2",
@@ -436,6 +454,7 @@ BLOCKS: list[BlockSpec] = [
         config_cls=MSEnhancerConfig, # Shared with MS1
         log_summary=_log_ms2,
         description="Matches MS/MS spectra against spectral databases (ISDB).",
+        requires=frozenset({"db_loader", "lotus_store"}),
     ),
     BlockSpec(
         id="sirius",
@@ -455,10 +474,32 @@ BLOCKS: list[BlockSpec] = [
         log_summary=_log_weights,
         description="Reranks annotations using taxonomic and chemical consistency. Requires the molecular network.",
         depends_on=("network",),
+        requires=frozenset({"db_loader", "lotus_store"}),
     ),
 ]
 
 BLOCKS_BY_ID: dict[str, BlockSpec] = {b.id: b for b in BLOCKS}
+
+
+def required_resources(selected_ids: Iterable[str]) -> frozenset[str]:
+    """Return the union of the shared resources the selected blocks require.
+
+    Unknown ids are ignored: the caller decides what to do about a block that is
+    not in the registry, and it cannot require anything in any case.
+
+    Args:
+        selected_ids: Block ids the caller intends to run.
+
+    Returns:
+        Resource names drawn from ``KNOWN_RESOURCES``.
+    """
+    return frozenset().union(
+        *(
+            BLOCKS_BY_ID[block_id].requires
+            for block_id in selected_ids
+            if block_id in BLOCKS_BY_ID
+        )
+    )
 
 # Blocks that share a single EnhancerConfig instance in the unified YAML should be declared here.
 # The runner and config I/O will treat these blocks as a group, loading their config from the shared

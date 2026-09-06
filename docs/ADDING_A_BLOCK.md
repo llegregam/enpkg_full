@@ -264,12 +264,18 @@ In [`blocks.py`](../enpkg/monolith/pipeline/blocks.py), add:
 | `log_summary` | yes | `(Logger, Analysis) -> None`; see step 5. |
 | `description` | no | Checkbox tooltip. Worth writing — it is where a user learns when to tick the box. |
 | `depends_on` | no | Tuple of block ids that must also be **selected**. |
+| `requires` | no | Frozenset of shared resources the enhancer needs: `"db_loader"`, `"lotus_store"`. |
 
 **What `depends_on` does and does not do.** It is checked against the *selection*, not
 against success: a block whose dependency was selected but then skipped by its own
 `can_run` will still be attempted. Guard the real precondition in your own `can_run` as
 well — that is why `weights` both declares `depends_on=("network",)` and uses
 `_has_spectra_and_network`.
+
+**Declaring resources.** `BuildContext.db_loader` and `.lotus_store` are only built when
+some selected block asks for them through `requires`. A block that reads
+`ctx.lotus_store` without declaring it will find `None` there. Requiring `"lotus_store"`
+implies `"db_loader"` — declare both, as `ms1`/`ms2`/`weights` do.
 
 If your block must share one config instance with an existing block, add both ids to a
 shared-key constant at the bottom of `blocks.py` (the `MS_SHARED_BLOCKS` / `MS_SHARED_KEY`
@@ -383,27 +389,21 @@ Registering the `BlockSpec` is enough for all of this:
 
 ## 5. What you do **not** get for free
 
-The registry covers the common case. These are the four places where a block still needs
+The registry covers the common case. These are the three places where a block still needs
 hand-written wiring — check them against your block before assuming "one entry" is enough:
 
-**1. Shared resources are gated by a hard-coded id set.** `BuildContext` offers
-`db_loader` and `lotus_store`, but `runner.build_shared_steps` only *constructs* them when
-`ms1`, `ms2` or `weights` is selected. A new block that reads `ctx.lotus_store` will get
-`None` unless one of those blocks happens to be ticked too. Add your id to those sets in
-[`runner.py`](../enpkg/monolith/pipeline/runner.py) if you need database access.
-
-**2. Extra input files need GUI work.** Blocks whose config points at a file the sidebar
+**1. Extra input files need GUI work.** Blocks whose config points at a file the sidebar
 does not already list need their own picker. Sirius is the precedent: `app.py` adds a
 "Spectra for Sirius" selectbox when the block is ticked, excludes
 `sirius_params.path_to_input_spectra` from the rendered form, and writes the resolved path
 into the config just before the run.
 
-**3. Per-experiment config in batch mode.** `build_shared_steps` builds each step **once**
+**2. Per-experiment config in batch mode.** `build_shared_steps` builds each step **once**
 and reuses it for every experiment. If your config carries per-experiment paths, it must be
 excluded via the `skip=` argument and rebuilt inside the batch loop — again, see how
 `batch_runner` handles `sirius` (`skip={"sirius"}` plus `_sirius_config_for(...)` per run).
 
-**4. Exotic field types fall back to a text box.** `form_builder._render_field` handles
+**3. Exotic field types fall back to a text box.** `form_builder._render_field` handles
 `bool`, `int`, `float`, `str`, `list`/`tuple`, `Optional[T]` and nested `BaseModel`.
 Anything else renders as free-form text and is validated only by Pydantic afterwards. Keep
 config fields to those types, or extend `_render_field` — it is a single function.
@@ -427,6 +427,7 @@ config fields to those types, or extend `_render_field` — it is a single funct
 [ ] BlockSpec entry in blocks.py
     [ ] placed at the correct position (list order = execution order)
     [ ] build_enhancer factory + can_run predicate
+    [ ] requires declares any shared resource the enhancer reads from ctx
     [ ] depends_on set, AND the precondition guarded in can_run
 [ ] log_summary written, handling the empty case and never raising
 [ ] Tests: registry tests pass, plus an enhancer test using make_analysis

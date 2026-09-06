@@ -63,11 +63,15 @@ together:
 - `log_summary` — post-run report function (see the module docstring);
 - `description` — tooltip text;
 - `depends_on` — block ids that must also be selected (e.g. `weights` →
-  `network`).
+  `network`);
+- `requires` — shared resources the enhancer reads from its `BuildContext`
+  (`"db_loader"`, `"lotus_store"`).
 
 The list is **ordered** — it defines the canonical pipeline execution order.
-`BLOCKS_BY_ID` gives O(1) lookup. `MS_SHARED_BLOCKS`/`MS_SHARED_KEY` mark the
-MS1/MS2 pair that shares a single `MSEnhancerConfig`.
+`BLOCKS_BY_ID` gives O(1) lookup. `required_resources(selected_ids)` returns the
+union of the selection's `requires`, which is what the runner builds.
+`MS_SHARED_BLOCKS`/`MS_SHARED_KEY` mark the MS1/MS2 pair that shares a single
+`MSEnhancerConfig`.
 
 Because every enhancer honours the uniform `enhance(analysis) -> Analysis`
 contract, there is **no per-block step class** — the runner wraps
@@ -181,10 +185,11 @@ Steps:
 1. Attach a `QueueLogHandler` to a named logger so every log record is pushed
    onto a thread-safe queue that the Streamlit app can drain.
 2. Call `AnalysisLoader.from_files(...)` to build an `Analysis`.
-3. If any MS block is selected, build a single `DBLoader` from the
-   `MSEnhancerConfig` and force its `downloader_params.download_dir` to
-   `DATABASE_DIR`. The same `DBLoader` is reused by `ms1`, `ms2` and
-   `weights` (all three need database access).
+3. Take the union of the selected blocks' `requires` and build only those
+   shared resources — a single `DBLoader` from the `MSEnhancerConfig` with its
+   `downloader_params.download_dir` forced to `DATABASE_DIR`, and the
+   `LotusStore` reading the DuckDB file that loader manages. Both are built
+   once and reused by every block that asked for them.
 4. Iterate `BLOCKS` in canonical order. For each selected block:
    - skip if any `depends_on` entry is not also selected,
    - bind the block to its config + shared resources via `_build_step` — a
@@ -425,7 +430,7 @@ sequenceDiagram
   file and no `_build_step` branch are needed — the sidebar checkbox, tab, form,
   YAML section, execution slot and runner wiring all appear automatically.
   Full walkthrough, including the cases the registry does *not* cover
-  (shared DB resources, extra input files, per-experiment batch config):
+  (extra input files, per-experiment batch config):
   [../../../docs/ADDING_A_BLOCK.md](../../../docs/ADDING_A_BLOCK.md).
 - **Add a new shared sub-config**: render it above the tabs like
   `general_params`, store it in session state, add it to the

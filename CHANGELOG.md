@@ -22,6 +22,15 @@ to version numbers.
 
 ### 2026-09-06
 
+- Blocks declare the shared resources they need via `BlockSpec.requires`
+  (`"db_loader"`, `"lotus_store"`), and the runner builds the union of what the
+  selected blocks asked for. Previously `build_shared_steps` decided this from a
+  hard-coded `{"ms1", "ms2", "weights"}` id set, so any other block reading
+  `ctx.lotus_store` silently got `None`. This also removes an asymmetry in the old
+  code, where the weights path fell back to a default `MSEnhancerConfig` when none was
+  supplied but the MS1/MS2 path left the loader unbuilt; all resource-needing blocks
+  now take the same fallback.
+
 - Moved the five front-end-agnostic modules — `blocks`, `runner`, `batch_runner`,
   `config_io`, `log_utils` — out of `enpkg/monolith/gui/` into
   `enpkg/monolith/pipeline/`. None of them ever imported streamlit; only `app.py` and
