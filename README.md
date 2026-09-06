@@ -66,6 +66,9 @@ cd enpkg_full
 
 ### Install the required environment
 
+**Requires Python 3.13 or 3.14.** Note that CPython 3.14.1 specifically is not supported —
+`networkx` declares `!=3.14.1` for that release — so use 3.13, 3.14.0, or 3.14.2 and later.
+
 We offer both `Mamba` or `Poetry` installation solutions, see below:
 
 #### Mamba
