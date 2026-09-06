@@ -2,7 +2,7 @@
 
 Drives the pipeline from a set of selected block ids: each block from the
 [blocks.py](blocks.py) registry is bound to its config and the run's shared
-resources, then executed in canonical order via the uniform
+resources, then executed in registry order via the uniform
 ``enhance(analysis) -> Analysis`` contract.
 
 The module depends on no front-end. A ``logging.Handler`` pushes log records

@@ -36,7 +36,8 @@ enpkg/monolith/gui/          ← Streamlit only; imports the pipeline, never the
 
 enpkg/monolith/pipeline/     ← front-end agnostic; usable headlessly
 ├── __init__.py
-├── blocks.py         Block registry (id → enhancer builder, can_run, config, deps)
+├── blocks.py         Block registry (id → enhancer builder, can_run, config,
+│                     deps, ordering, required resources) + order_blocks
 ├── runner.py         Single-analysis execution, resource sharing, log streaming
 ├── batch_runner.py   Many experiments, resources built once and reused
 ├── config_io.py      Unified YAML load/save + config instantiation
@@ -49,8 +50,8 @@ a headless caller through the same entry points.
 
 ### 2.1 [blocks.py](../pipeline/blocks.py) — the registry
 
-A single `BLOCKS` list of `BlockSpec` frozen dataclasses. Each entry pins
-together:
+A single `_BUILTIN_BLOCKS` list of `BlockSpec` frozen dataclasses. Each entry
+pins together:
 
 - `id` — short string key used in YAML, session state and widget keys;
 - `label` — human-readable name shown in sidebar and tabs;
@@ -64,10 +65,16 @@ together:
 - `description` — tooltip text;
 - `depends_on` — block ids that must also be selected (e.g. `weights` →
   `network`);
+- `after` / `before` — ordering constraints against other block ids;
 - `requires` — shared resources the enhancer reads from its `BuildContext`
   (`"db_loader"`, `"lotus_store"`).
 
-The list is **ordered** — it defines the canonical pipeline execution order.
+`BLOCKS` is **computed**, not hand-ordered: `order_blocks` topologically sorts
+`_BUILTIN_BLOCKS` by the `after`/`before` constraints, falling back to
+declaration order for blocks nothing separates, and raises `BlockOrderError` on
+a cycle. Ordering constraints naming an absent block are dropped; a block's
+position in the source list is only the tie-break.
+
 `BLOCKS_BY_ID` gives O(1) lookup. `required_resources(selected_ids)` returns the
 union of the selection's `requires`, which is what the runner builds.
 `MS_SHARED_BLOCKS`/`MS_SHARED_KEY` mark the MS1/MS2 pair that shares a single
@@ -190,7 +197,7 @@ Steps:
    `downloader_params.download_dir` forced to `DATABASE_DIR`, and the
    `LotusStore` reading the DuckDB file that loader manages. Both are built
    once and reused by every block that asked for them.
-4. Iterate `BLOCKS` in canonical order. For each selected block:
+4. Iterate `BLOCKS` in its computed order. For each selected block:
    - skip if any `depends_on` entry is not also selected,
    - bind the block to its config + shared resources via `_build_step` — a
      generic `_BoundBlock` that wraps the registry's `build_enhancer` /
@@ -426,11 +433,12 @@ sequenceDiagram
 
 - **Add a new pipeline block**: create the enhancer (honouring
   `enhance(analysis) -> Analysis`) + its config, then add one `BlockSpec` entry
-  to `BLOCKS` with a `build_enhancer` closure and a `can_run` predicate. No step
+  to `_BUILTIN_BLOCKS` with a `build_enhancer` closure, a `can_run` predicate,
+  and whatever `after`/`before`/`requires` the block genuinely needs. No step
   file and no `_build_step` branch are needed — the sidebar checkbox, tab, form,
-  YAML section, execution slot and runner wiring all appear automatically.
-  Full walkthrough, including the cases the registry does *not* cover
-  (extra input files, per-experiment batch config):
+  YAML section, execution slot, resource wiring and place in the run order all
+  follow from that entry. Full walkthrough, including the cases the registry
+  does *not* cover (extra input files, per-experiment batch config):
   [../../../docs/ADDING_A_BLOCK.md](../../../docs/ADDING_A_BLOCK.md).
 - **Add a new shared sub-config**: render it above the tabs like
   `general_params`, store it in session state, add it to the

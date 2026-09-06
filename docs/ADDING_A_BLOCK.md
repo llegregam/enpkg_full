@@ -116,7 +116,7 @@ class BlankRemovalEnhancer(Enhancer):
 ```
 
 **3. Registration** — in [`blocks.py`](../enpkg/monolith/pipeline/blocks.py), add the import, a
-build factory, a log summary, and one `BLOCKS` entry at the right position:
+build factory, a log summary, and one `_BUILTIN_BLOCKS` entry declaring where it runs:
 
 ```python
 def _build_blank_removal(config: Any, ctx: BuildContext) -> Enhancer:
@@ -132,7 +132,7 @@ def _log_blank_removal(logger: logging.Logger, analysis: Analysis) -> None:
     logger.info("    Features flagged as blank : %d / %d", n_flagged, len(analysis.spectra))
 
 
-BLOCKS: list[BlockSpec] = [
+_BUILTIN_BLOCKS: list[BlockSpec] = [
     ...,
     BlockSpec(
         id="blank_removal",
@@ -143,14 +143,17 @@ BLOCKS: list[BlockSpec] = [
         log_summary=_log_blank_removal,
         description="Flags features whose intensity is not meaningfully above the "
                     "solvent blanks. Runs before annotation.",
+        # Annotating a blank-derived feature wastes a database lookup, so this
+        # has to happen before the annotation blocks — stated, not positional.
+        before=("ms1", "ms2"),
     ),
     ...,
 ]
 ```
 
 That is the whole integration. The checkbox, the tab with a bounded numeric widget and its
-tooltip, the `blank_removal:` YAML section, the run slot and the summary section all appear
-on their own.
+tooltip, the `blank_removal:` YAML section, the run slot, its place in the execution order
+and the summary section all appear on their own.
 
 ---
 
@@ -249,8 +252,10 @@ In [`blocks.py`](../enpkg/monolith/pipeline/blocks.py), add:
    them. **`can_run` returning `False` is a skip, not an error** — the block is logged as
    skipped and the run continues. Use it for "this analysis lacks the inputs I need", not
    for "the user configured me wrongly" (that belongs in Pydantic validation).
-4. The `BlockSpec` entry, **positioned in `BLOCKS` at the point it should execute**. The
-   list order *is* the pipeline order.
+4. The `BlockSpec` entry in `_BUILTIN_BLOCKS`, declaring the ordering constraints your
+   block genuinely has. Do **not** rely on where you put the entry: `BLOCKS` is computed
+   from the constraints by `order_blocks`, and the list position is only the tie-break
+   between blocks nothing separates.
 
 `BlockSpec` fields:
 
@@ -264,13 +269,18 @@ In [`blocks.py`](../enpkg/monolith/pipeline/blocks.py), add:
 | `log_summary` | yes | `(Logger, Analysis) -> None`; see step 5. |
 | `description` | no | Checkbox tooltip. Worth writing — it is where a user learns when to tick the box. |
 | `depends_on` | no | Tuple of block ids that must also be **selected**. |
+| `after` / `before` | no | Tuples of block ids this must run later / earlier than. |
 | `requires` | no | Frozenset of shared resources the enhancer needs: `"db_loader"`, `"lotus_store"`. |
 
-**What `depends_on` does and does not do.** It is checked against the *selection*, not
-against success: a block whose dependency was selected but then skipped by its own
-`can_run` will still be attempted. Guard the real precondition in your own `can_run` as
-well — that is why `weights` both declares `depends_on=("network",)` and uses
-`_has_spectra_and_network`.
+**`depends_on` and `after`/`before` are not the same question.** `depends_on` is about
+*selection* — "these must also be ticked, or I cannot run at all"; a missing entry skips
+your block. `after`/`before` are about *order* — "whatever else is selected, I run
+later/earlier than these". A block that consumes another's output usually needs both, which
+is why `weights` declares `depends_on=("network",)` *and* `after=("network", "ms1", "ms2")`.
+
+Neither is checked against success: a dependency that was selected but then skipped by its
+own `can_run` still lets your block be attempted. Guard the real precondition in your own
+`can_run` too — that is why `weights` also uses `_has_spectra_and_network`.
 
 **Declaring resources.** `BuildContext.db_loader` and `.lotus_store` are only built when
 some selected block asks for them through `requires`. A block that reads
@@ -380,7 +390,7 @@ Registering the `BlockSpec` is enough for all of this:
 | Validation with errors surfaced verbatim | `config_io.build_configs` → `model_validate` |
 | A `<id>:` section in the saved YAML, and correct reload | `config_io.save_unified_yaml` / `load_unified_yaml` |
 | Membership in `selected_blocks`, so a config file reproduces the run | `save_unified_yaml` derives it from the validated configs |
-| Execution in registry order, dependency and `can_run` skipping | `runner._run_analysis` |
+| Execution in the computed order, dependency and `can_run` skipping | `blocks.order_blocks`, `runner._run_analysis` |
 | A section in the end-of-run summary | `runner._log_analysis_summary` calls `block.log_summary` |
 | Batch mode across many experiments | `batch_runner` reuses `build_shared_steps` |
 | The registry integrity tests | `test_blocks_registry.py`, `test_build_step.py` |
@@ -425,10 +435,11 @@ config fields to those types, or extend `_render_field` — it is a single funct
 [ ] Data-model fields added (if any), defaulting to None/empty
     [ ] integrity validator if it must stay in step with the spectra
 [ ] BlockSpec entry in blocks.py
-    [ ] placed at the correct position (list order = execution order)
-    [ ] build_enhancer factory + can_run predicate
+    [ ] after/before declare the real ordering constraints (never rely on
+        where the entry sits in the list)
     [ ] requires declares any shared resource the enhancer reads from ctx
-    [ ] depends_on set, AND the precondition guarded in can_run
+    [ ] build_enhancer factory + can_run predicate
+    [ ] depends_on set for co-selection, AND the precondition guarded in can_run
 [ ] log_summary written, handling the empty case and never raising
 [ ] Tests: registry tests pass, plus an enhancer test using make_analysis
 [ ] RDF serialization + vocabulary terms (if the output belongs in the graph)
