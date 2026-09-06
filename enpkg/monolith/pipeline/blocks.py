@@ -50,9 +50,9 @@ from enpkg.monolith.enhancers.network_enhancer import NetworkEnhancer
 from enpkg.monolith.enhancers.sirius_enhancer import SiriusEnhancer
 from enpkg.monolith.enhancers.taxa_enhancer import TaxaEnhancer
 from enpkg.monolith.enhancers.weights_enhancer import WeightsEnhancer
-from enpkg.monolith.gui.log_utils import has_nonzero_scores
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.pipeline.log_utils import has_nonzero_scores
 
 # Callable signature for every block's post-run log summary.
 # Each function receives the shared logger and the final Analysis, and should

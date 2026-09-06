@@ -1,10 +1,13 @@
-"""Pipeline runner for the GUI.
+"""Single-analysis pipeline runner.
 
-Drives the pipeline from the set of blocks selected in the GUI: each block from
-the [blocks.py](blocks.py) registry is bound to its config and the run's shared
+Drives the pipeline from a set of selected block ids: each block from the
+[blocks.py](blocks.py) registry is bound to its config and the run's shared
 resources, then executed in canonical order via the uniform
-``enhance(analysis) -> Analysis`` contract. A ``logging.Handler`` pushes log
-records onto a queue that the Streamlit app can drain into the UI.
+``enhance(analysis) -> Analysis`` contract.
+
+The module depends on no front-end. A ``logging.Handler`` pushes log records
+onto a queue so a caller that wants live output — the Streamlit app does — can
+drain it; a headless caller can pass a queue it never reads.
 """
 from __future__ import annotations
 
@@ -18,10 +21,10 @@ from typing import Any, Optional
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.exceptions import DBLoaderError
-from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID, BlockSpec, BuildContext
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.pipeline.blocks import BLOCKS, BLOCKS_BY_ID, BlockSpec, BuildContext
 from enpkg.monolith.rdf import serialize_to_turtle
 
 LOG_DIR = Path("gui_workspace") / "logs"
@@ -481,7 +484,7 @@ def _build_step(
     """Bind a registry block to its config and shared resources.
 
     All dependency wiring now lives in each ``BlockSpec.build_enhancer`` (see
-    ``gui/blocks.py``); the runner just supplies the shared ``BuildContext``.
+    ``pipeline/blocks.py``); the runner just supplies the shared ``BuildContext``.
     """
     spec = BLOCKS_BY_ID[block_id]
     logger.debug("Binding block %s", block_id)

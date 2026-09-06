@@ -14,16 +14,16 @@ import streamlit as st
 from pydantic import ValidationError
 
 from enpkg.monolith.configuration.config import GeneralParams
-from enpkg.monolith.gui import config_io
-from enpkg.monolith.gui.batch_runner import (
+from enpkg.monolith.gui.form_builder import render_model
+from enpkg.monolith.pipeline import config_io
+from enpkg.monolith.pipeline.batch_runner import (
     BatchResult,
     discover_experiments,
     find_shared_metadata,
     run_batch,
 )
-from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS, MS_SHARED_KEY
-from enpkg.monolith.gui.form_builder import render_model
-from enpkg.monolith.gui.runner import AnalysisSummary, run_pipeline
+from enpkg.monolith.pipeline.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS, MS_SHARED_KEY
+from enpkg.monolith.pipeline.runner import AnalysisSummary, run_pipeline
 
 SHARED_FIELD = "general_params"
 

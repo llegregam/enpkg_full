@@ -22,6 +22,14 @@ to version numbers.
 
 ### 2026-09-06
 
+- Moved the five front-end-agnostic modules — `blocks`, `runner`, `batch_runner`,
+  `config_io`, `log_utils` — out of `enpkg/monolith/gui/` into
+  `enpkg/monolith/pipeline/`. None of them ever imported streamlit; only `app.py` and
+  `form_builder.py` do. Keeping the registry and runners under a package named for the
+  GUI meant the pipeline nominally depended on an *optional* dependency group, and it
+  put the block registry — the pipeline's source of truth — behind a front-end. The
+  boundary is now real: nothing under `pipeline/` may import streamlit.
+
 - Added this changelog. Rationale, design decisions, and the history of how the pipeline
   got to its current shape now live here rather than in docstrings and code comments,
   which should only describe the code as it currently is (see `CLAUDE.md`).

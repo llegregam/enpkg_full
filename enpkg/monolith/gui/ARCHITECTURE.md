@@ -11,14 +11,14 @@ configs and pipeline steps.
 The GUI is a thin shell around the existing pipeline. It must not:
 
 - re-declare any configuration schema (all validation stays in Pydantic),
-- hard-code the list of pipeline blocks (one registry, [blocks.py](blocks.py)),
-- duplicate orchestration logic (it all lives in [runner.py](runner.py)).
+- hard-code the list of pipeline blocks (one registry, [blocks.py](../pipeline/blocks.py)),
+- duplicate orchestration logic (it all lives in [runner.py](../pipeline/runner.py)).
 
 Everything the user sees — the block checkboxes, the tabs, the form fields,
 the validated JSON preview, the runner — is derived from three sources of
 truth:
 
-1. `BLOCKS` in [blocks.py](blocks.py) — which pipeline blocks exist, and for
+1. `BLOCKS` in [blocks.py](../pipeline/blocks.py) — which pipeline blocks exist, and for
    each one, how to build its `Enhancer` (`build_enhancer`) and when it applies
    (`can_run`).
 2. `model_cls.model_fields` on each Pydantic config — which fields that block
@@ -29,16 +29,25 @@ truth:
 ## 2. Module map
 
 ```
-enpkg/monolith/gui/
+enpkg/monolith/gui/          ← Streamlit only; imports the pipeline, never the reverse
 ├── __init__.py
 ├── app.py            Streamlit entry point (layout, session state, glue)
-├── blocks.py         Pipeline-block registry (id → enhancer builder, can_run, config, deps)
-├── form_builder.py   Pydantic BaseModel → Streamlit widget tree
+└── form_builder.py   Pydantic BaseModel → Streamlit widget tree
+
+enpkg/monolith/pipeline/     ← front-end agnostic; usable headlessly
+├── __init__.py
+├── blocks.py         Block registry (id → enhancer builder, can_run, config, deps)
+├── runner.py         Single-analysis execution, resource sharing, log streaming
+├── batch_runner.py   Many experiments, resources built once and reused
 ├── config_io.py      Unified YAML load/save + config instantiation
-└── runner.py         Pipeline execution, DBLoader sharing, log streaming
+└── log_utils.py      Helpers shared by the per-block log summaries
 ```
 
-### 2.1 [blocks.py](blocks.py) — the registry
+The split is load-bearing: `streamlit` is an optional dependency group, so
+nothing under `pipeline/` may import it. Everything the GUI does is available to
+a headless caller through the same entry points.
+
+### 2.1 [blocks.py](../pipeline/blocks.py) — the registry
 
 A single `BLOCKS` list of `BlockSpec` frozen dataclasses. Each entry pins
 together:
@@ -99,7 +108,7 @@ tab — the field is skipped during rendering and re-injected later.
 the user can type; Pydantic still runs the authoritative validation when the
 dict is turned back into a model instance.
 
-### 2.3 [config_io.py](config_io.py) — YAML ↔ configs
+### 2.3 [config_io.py](../pipeline/config_io.py) — YAML ↔ configs
 
 Five functions:
 
@@ -162,7 +171,7 @@ which `build_configs` fills for *every* selected block (storing `None` for the
 config-less ones) — so no extra argument is needed to thread the selection
 through.
 
-### 2.4 [runner.py](runner.py) — execution
+### 2.4 [runner.py](../pipeline/runner.py) — execution
 
 `run_pipeline(selected_ids, configs, spectra_path, metadata_path, quant_path,
 ionization_mode, database_dir, log_queue) -> RunResult`.

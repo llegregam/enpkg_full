@@ -16,7 +16,7 @@
 ## 1. What a block is
 
 A block is described by exactly one `BlockSpec` entry in
-[`enpkg/monolith/gui/blocks.py`](../enpkg/monolith/gui/blocks.py). That entry is the
+[`enpkg/monolith/pipeline/blocks.py`](../enpkg/monolith/pipeline/blocks.py). That entry is the
 **single source of truth**: the sidebar checkbox, the config tab, the YAML section, the
 execution order, and the summary report are all derived from it by iterating `BLOCKS`.
 There is no per-block step class and no `if block_id == ...` branch in the runner.
@@ -44,7 +44,7 @@ register them:
 |---|---|---|
 | **Config** — the block's parameters | `enpkg/monolith/configuration/<name>_config.py` | `EnhancerConfig` (Pydantic) |
 | **Enhancer** — the actual work | `enpkg/monolith/enhancers/<name>_enhancer.py` | `Enhancer` (ABC) |
-| **BlockSpec** — the registration | `enpkg/monolith/gui/blocks.py` | frozen dataclass |
+| **BlockSpec** — the registration | `enpkg/monolith/pipeline/blocks.py` | frozen dataclass |
 
 ---
 
@@ -115,7 +115,7 @@ class BlankRemovalEnhancer(Enhancer):
         return analysis
 ```
 
-**3. Registration** — in [`blocks.py`](../enpkg/monolith/gui/blocks.py), add the import, a
+**3. Registration** — in [`blocks.py`](../enpkg/monolith/pipeline/blocks.py), add the import, a
 build factory, a log summary, and one `BLOCKS` entry at the right position:
 
 ```python
@@ -238,7 +238,7 @@ run against analyses your block never touched.
 
 ### Step 4 — Register the block
 
-In [`blocks.py`](../enpkg/monolith/gui/blocks.py), add:
+In [`blocks.py`](../enpkg/monolith/pipeline/blocks.py), add:
 
 1. The imports for your config and enhancer.
 2. A `_build_<name>(config, ctx) -> Enhancer` factory. It receives the validated config and
@@ -297,7 +297,7 @@ Conventions:
   (`"    (no molecular network on analysis)"`) rather than raising.
 - **Never let a summary crash a run.** If you compute anything that can throw — a
   reranking, a lookup — wrap it and log at DEBUG on failure, the way `_log_weights` does.
-- Reusable helpers go in [`log_utils.py`](../enpkg/monolith/gui/log_utils.py), not in
+- Reusable helpers go in [`log_utils.py`](../enpkg/monolith/pipeline/log_utils.py), not in
   `blocks.py`.
 
 If your block does not yet expose its outputs on `Analysis`, a minimal stub that says so is
@@ -344,8 +344,8 @@ serializer, and document the shape in [RDF_DATA_MODEL.md](RDF_DATA_MODEL.md). If
 should only be emitted when your block actually ran, follow the network layer's pattern —
 the runners pass `include_network="network" in result.executed` into `serialize_to_turtle`,
 so a conditional layer needs a flag threaded from both
-[`runner.py`](../enpkg/monolith/gui/runner.py) and
-[`batch_runner.py`](../enpkg/monolith/gui/batch_runner.py).
+[`runner.py`](../enpkg/monolith/pipeline/runner.py) and
+[`batch_runner.py`](../enpkg/monolith/pipeline/batch_runner.py).
 
 ### Step 8 — Write the walkthrough doc
 
@@ -390,7 +390,7 @@ hand-written wiring — check them against your block before assuming "one entry
 `db_loader` and `lotus_store`, but `runner.build_shared_steps` only *constructs* them when
 `ms1`, `ms2` or `weights` is selected. A new block that reads `ctx.lotus_store` will get
 `None` unless one of those blocks happens to be ticked too. Add your id to those sets in
-[`runner.py`](../enpkg/monolith/gui/runner.py) if you need database access.
+[`runner.py`](../enpkg/monolith/pipeline/runner.py) if you need database access.
 
 **2. Extra input files need GUI work.** Blocks whose config points at a file the sidebar
 does not already list need their own picker. Sirius is the precedent: `app.py` adds a

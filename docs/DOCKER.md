@@ -47,7 +47,7 @@ FAILS: URLError <urlopen error unknown url type: c>
 the missing Windows path as a URI. On Linux it surfaces as a plain missing-file error.
 Either way it raises.)
 
-Both `gui/runner.py:236` and `gui/batch_runner.py:407` call `serialize_to_turtle` at the
+Both `pipeline/runner.py:236` and `pipeline/batch_runner.py:407` call `serialize_to_turtle` at the
 end of every run, so this is not an edge case — it is the pipeline's main output path.
 
 > **Fix before building.** Cherry-pick `docs/vocab/enpkg.ttl` from `0e91f28` onto the
@@ -124,7 +124,7 @@ boilerplate.
 ```python
 # gui/app.py:34
 WORKSPACE_DIR: Path = Path("gui_workspace")
-# gui/runner.py:27
+# pipeline/runner.py:27
 LOG_DIR = Path("gui_workspace") / "logs"
 # configuration/sirius_enhancer_config.py — default
 output_directory: str = "sirius_output"
@@ -166,7 +166,7 @@ you get everything else deployed first.
 The batch runner falls back to the environment variable **for validation only**:
 
 ```python
-# gui/batch_runner.py:288-291
+# pipeline/batch_runner.py:288-291
 sirius_path_raw = (
     (sirius_shared_cfg.sirius_params.path_to_sirius or "").strip()
     or os.environ.get("PATH_TO_SIRIUS", "")

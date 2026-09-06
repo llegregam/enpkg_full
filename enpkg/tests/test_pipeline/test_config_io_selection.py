@@ -11,9 +11,9 @@ reset the other blocks' parameters while leaving them ticked and about to run.
 import pytest
 import yaml
 
-from enpkg.monolith.gui import config_io
-from enpkg.monolith.gui.blocks import BLOCKS_BY_ID
-from enpkg.monolith.gui.config_io import SELECTION_KEY
+from enpkg.monolith.pipeline import config_io
+from enpkg.monolith.pipeline.blocks import BLOCKS_BY_ID
+from enpkg.monolith.pipeline.config_io import SELECTION_KEY
 
 
 def _configs(selected_ids):

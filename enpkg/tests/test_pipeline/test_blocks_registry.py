@@ -1,6 +1,6 @@
 """Integrity tests for the block registry (the single source of truth)."""
 
-from enpkg.monolith.gui.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS
+from enpkg.monolith.pipeline.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS
 
 
 def test_block_ids_are_unique():
