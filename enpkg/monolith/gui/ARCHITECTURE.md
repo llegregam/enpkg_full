@@ -101,14 +101,17 @@ dict is turned back into a model instance.
 
 ### 2.3 [config_io.py](config_io.py) — YAML ↔ configs
 
-Three functions:
+Five functions:
 
 - `load_unified_yaml(path)` — reads the YAML into a `{block_id: section}`
   dict. No validation.
 - `get_section(data, block_id)` — looks up a block's section, mapping the
   MS1/MS2 pair onto the shared `ms_enhancer` key.
+- `get_selection(data)` — returns the `selected_blocks` list, or `None` for a
+  file written before that key existed.
 - `save_unified_yaml(path, validated_configs)` — dumps validated Pydantic
-  models back to YAML, deduplicating MS1/MS2 into `ms_enhancer`.
+  models back to YAML, deduplicating MS1/MS2 into `ms_enhancer`, and records
+  the selection under `selected_blocks`.
 - `build_configs(selected_ids, form_state)` — calls
   `config_cls.model_validate(form_state[block_id])` for every selected block
   and returns `{block_id: BaseModel}`. Raises `pydantic.ValidationError` on
@@ -117,6 +120,7 @@ Three functions:
 The YAML shape is intentionally flat:
 
 ```yaml
+selected_blocks: [taxonomical, network, ms1, sirius]
 network:
   general_params: { recompute: false, ionization_mode: pos }
   mn_msms_mz_tol: 0.01
@@ -138,6 +142,25 @@ weights:
 
 `general_params` is written into each section by the app before saving, so
 the YAML stays self-contained even though the GUI edits it in one place.
+
+#### 2.3.1 Why `selected_blocks` is stored explicitly
+
+The section keys cannot stand in for the selection. `taxonomical` has no
+`config_cls`, so it never produces a section; MS1 and MS2 collapse into one
+`ms_enhancer` key, so ms1-only, ms2-only and both are indistinguishable. Three
+of the seven blocks are therefore unrecoverable from the section names alone.
+
+This matters because loading is a **full replace** (see 2.5.2): a block absent
+from the file resets to its Pydantic defaults. Without a recorded selection, a
+file saved with one block ticked would reset the other blocks' parameters while
+leaving them ticked — silently arming a run with settings the user never chose.
+With it, those blocks are simply unticked, and a config file fully determines
+the run it describes.
+
+`save_unified_yaml` derives the list from the keys of `validated_configs`,
+which `build_configs` fills for *every* selected block (storing `None` for the
+config-less ones) — so no extra argument is needed to thread the selection
+through.
 
 ### 2.4 [runner.py](runner.py) — execution
 
@@ -175,7 +198,8 @@ that touches `st.session_state`. The session-state slots:
 | Key                | Purpose                                                |
 |--------------------|--------------------------------------------------------|
 | `form_state`       | `{block_id: raw dict from render_model}`               |
-| `selected_blocks`  | `{block_id: bool}` checkbox state                       |
+| `selected_blocks`  | `{block_id: bool}` mirror of the `select.<id>` widgets  |
+| `form_rev`         | Form widget key generation; bumped on config load      |
 | `general_params`   | Shared `GeneralParams` dict, edited above the tabs     |
 | `input_dir`        | Current input folder (user-chosen in sidebar)          |
 | `log_buffer`       | Drained log lines from the last run                    |
@@ -206,13 +230,48 @@ Instead:
 4. The validated configs therefore all carry **the same** `general_params`,
    and `save_unified_yaml` writes that identical dict under every section.
 5. On load, `_load_config_into_state` reads `general_params` out of the first
-   section that has one and seeds the shared widget.
+   section that has one and seeds the shared widget. A file with no
+   `general_params` anywhere resets it to the `GeneralParams` defaults, in
+   keeping with the full-replace semantics of 2.5.2.
 
 `ionization_mode` lives in `GeneralParams`, so it also drives
 `AnalysisLoader.from_files(ionization_mode=...)` — the sidebar no longer has
 a separate ionization-mode selector.
 
-#### 2.5.2 Input-folder picker
+#### 2.5.2 Loading a config — `form_rev` and keyed widgets
+
+Streamlit >= 1.50 computes a keyed widget's identity from its `key` alone
+(`key_as_main_identity` in `streamlit/elements/widgets/*.py`): once a key has
+been registered, a changed `value=` argument is **ignored**. Writing loaded
+values into `st.session_state.form_state` therefore has no visible effect on
+its own — worse, `_render_forms` then writes the stale widget values straight
+back over `form_state`, so the loaded config is discarded within the same
+script run.
+
+`form_rev` is the fix. Every form widget's key prefix embeds it
+(`f"{tid}#{st.session_state.form_rev}"`, `f"ms_enhancer#{...}"`,
+`f"shared.general_params#{...}"`), so bumping the counter moves the entire form
+into a fresh key namespace. Those are new widgets, they honour `value=`, and
+Streamlit garbage-collects the orphaned keys.
+
+The counter is the general primitive here, not a patch for the load path:
+**any** code that writes `form_state` programmatically — a future "reset to
+defaults" button, a batch-mode auto-fill — must bump `form_rev` for the change
+to reach the screen. It is preferred over deleting individual widget keys
+because it cannot miss one, at any nesting depth, for any block added later.
+
+The block checkboxes are handled differently: they pass **no** `value=` and
+read `st.session_state["select.<id>"]` (seeded in `_init_state`) as their only
+source of truth, so a load can move them by assigning that key directly. Doing
+both — passing `value=` *and* assigning the key — triggers a Streamlit warning
+about a widget with a default value also being set via the Session State API.
+
+Loading is a full replace of `form_state`, `general_params` and the selection;
+see 2.3.1 for why. `_load_config_into_state` must therefore run before the
+sidebar checkboxes and the block tabs are rendered, since it writes the widget
+keys they read — which is why the Load button sits at the top of the sidebar.
+
+#### 2.5.3 Input-folder picker
 
 `DATABASE_DIR` is still fixed (`gui_workspace/databases/`). The input folder
 is user-editable:
@@ -356,6 +415,9 @@ sequenceDiagram
   to `BLOCKS` with a `build_enhancer` closure and a `can_run` predicate. No step
   file and no `_build_step` branch are needed — the sidebar checkbox, tab, form,
   YAML section, execution slot and runner wiring all appear automatically.
+  Full walkthrough, including the cases the registry does *not* cover
+  (shared DB resources, extra input files, per-experiment batch config):
+  [../../../docs/ADDING_A_BLOCK.md](../../../docs/ADDING_A_BLOCK.md).
 - **Add a new shared sub-config**: render it above the tabs like
   `general_params`, store it in session state, add it to the
   `exclude_fields` set of affected tabs, and inject it back in

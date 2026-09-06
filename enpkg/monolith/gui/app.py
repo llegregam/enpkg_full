@@ -104,26 +104,64 @@ def _init_state() -> None:
         st.session_state.batch_dir = str(DEFAULT_BATCH_DIR)
     if "batch_mode" not in st.session_state:
         st.session_state.batch_mode = False
+    if "form_rev" not in st.session_state:
+        st.session_state.form_rev = 0
+    # The block checkboxes read their value from these keys alone (no ``value=``
+    # argument), which is what lets _load_config_into_state move them.
+    for block in BLOCKS:
+        if f"select.{block.id}" not in st.session_state:
+            st.session_state[f"select.{block.id}"] = False
 
 
 def _load_config_into_state(path: Path) -> None:
-    """
-    Load a unified YAML config from the given path and populate the session state form_state and general_params.
+    """Replace the form state, shared params and block selection with a YAML file.
+
+    The load is a **full replace**, not a merge: a block the file does not
+    mention falls back to its Pydantic defaults rather than keeping whatever was
+    in the form. That is what makes a config file reproducible — the run it
+    describes does not depend on what the session happened to hold beforehand.
+    The ``selected_blocks`` key is what makes the replace safe: without it, a
+    file saved with only one block ticked would silently wipe the other blocks'
+    settings while leaving them ticked and about to run.
+
+    Must be called before the sidebar's block checkboxes and the block tabs are
+    rendered, since it writes the widget keys those read.
     """
     data = config_io.load_unified_yaml(path)
+    selection = config_io.get_selection(data)
     shared = None
     for block in BLOCKS:
         # For blocks with no config_cls, we skip loading since they have no parameters to populate.
         if block.config_cls is None:
             continue
-        #
-
         section = config_io.get_section(data, block.id)
         if shared is None and isinstance(section.get(SHARED_FIELD), dict):
             shared = section[SHARED_FIELD]
         st.session_state.form_state[block.id] = section
-    if shared is not None:
-        st.session_state.general_params = shared
+    # If no section carried general_params (an empty or pre-general_params file):
+    # use the default general parameters.
+    st.session_state.general_params = (
+        shared if shared is not None else GeneralParams().model_dump()
+    )
+
+    # ``None`` means the file predates SELECTION_KEY; leave the checkboxes alone
+    # rather than guessing a selection from the section names, which cannot see
+    # taxonomical (no config_cls) or tell ms1 from ms2 (one shared section).
+    if selection is not None:
+        for block in BLOCKS:
+            picked = block.id in selection
+            st.session_state.selected_blocks[block.id] = picked
+            st.session_state[f"select.{block.id}"] = picked
+
+    # Form widgets are keyed, and Streamlit >=1.50 computes a keyed widget's
+    # identity from the key alone -- a changed ``value=`` is ignored for a key it
+    # has already registered, so the loaded values would never reach the screen
+    # and _render_forms would then write the stale widget values straight back
+    # over form_state. Bumping the revision moves every form widget into a fresh
+    # key namespace, so they are new widgets and do honour ``value=``. Streamlit
+    # garbage-collects the orphaned keys. Any other code that writes form_state
+    # programmatically must bump this too.
+    st.session_state.form_rev += 1
     st.success(f"Loaded config from {path}")
 
 
@@ -147,9 +185,11 @@ def _render_sidebar() -> tuple[list[str], dict]:
 
     st.sidebar.subheader("Blocks to run")
     for block in BLOCKS:
+        # No ``value=``: the seeded ``select.<id>`` key is the single source of
+        # truth, so a load can move the checkbox (passing both triggers a
+        # Streamlit "default value but also set via Session State API" warning).
         st.session_state.selected_blocks[block.id] = st.sidebar.checkbox(
             block.label,
-            value=st.session_state.selected_blocks.get(block.id, False),
             key=f"select.{block.id}",
             help=block.description,
         )
@@ -264,7 +304,7 @@ def _render_general_params() -> dict:
     values = render_model(
         GeneralParams,
         st.session_state.general_params,
-        key_prefix="shared.general_params",
+        key_prefix=f"shared.general_params#{st.session_state.form_rev}",
     )
     st.session_state.general_params = values
     return values
@@ -301,7 +341,7 @@ def _render_forms(selected: list[str]) -> dict[str, dict]:
                 values = render_model(
                     block.config_cls,
                     current,
-                    key_prefix="ms_enhancer",
+                    key_prefix=f"ms_enhancer#{st.session_state.form_rev}",
                     exclude_fields={SHARED_FIELD},
                 )
                 st.session_state.form_state["ms1"] = values
@@ -320,7 +360,7 @@ def _render_forms(selected: list[str]) -> dict[str, dict]:
                 values = render_model(
                     block.config_cls,
                     current,
-                    key_prefix=tid,
+                    key_prefix=f"{tid}#{st.session_state.form_rev}",
                     exclude_fields=exclude,
                 )
                 st.session_state.form_state[tid] = values
