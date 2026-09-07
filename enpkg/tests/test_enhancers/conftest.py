@@ -1,5 +1,4 @@
 import logging
-import os
 from pathlib import Path
 
 import pytest
@@ -24,17 +23,21 @@ def pytest_configure():
 
 load_dotenv()
 
-# Honour PROJECT_ROOT only when it points at an existing directory; otherwise
-# fall back to the repository-relative path. This keeps the suite runnable when
-# a machine's .env carries a PROJECT_ROOT copied from another host.
-_env_root = os.environ.get("PROJECT_ROOT")
-if _env_root and Path(_env_root).is_dir():
-    PROJECT_ROOT = Path(_env_root)
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Fixture locations are resolved from this file rather than from an environment
+# variable: both directories are gitignored, and a PROJECT_ROOT copied from
+# another host would otherwise scatter multi-GB downloads outside them.
+# Build their contents with `python -m enpkg.scripts.build_test_fixtures`.
+TESTS_ROOT = Path(__file__).resolve().parents[1]
 
-DATABASE_DIR = PROJECT_ROOT / "tests" / ".databases"
-TEST_DATA_DIR = PROJECT_ROOT / "tests" / "data"
+DATABASE_DIR = TESTS_ROOT / ".databases"
+TEST_DATA_DIR = TESTS_ROOT / "data"
+
+# The sampled fixture, not a full production database: the builder writes it
+# under its own name so an existing enpkg.duckdb in the same directory is
+# never overwritten.
+FIXTURE_DB = DATABASE_DIR / "enpkg_fixture.duckdb"
+# The dataset the fixture database was sampled around.
+FIXTURE_DATASET = TEST_DATA_DIR / "arnica_0_125_pos_merged"
 
 
 @pytest.fixture(scope="session")
@@ -67,7 +70,7 @@ def ms_enhancer_config(common_urls: Urls) -> MSEnhancerConfig:
             download_dir=str(DATABASE_DIR),
             urls=common_urls,
             paths=Paths(),
-            duckdb_path=str(DATABASE_DIR / "enpkg.duckdb"),
+            duckdb_path=str(FIXTURE_DB),
         ),
     )
 
@@ -84,7 +87,7 @@ def reweighting_config(common_urls: Urls) -> ReweightingConfig:
             download_dir=str(DATABASE_DIR),
             urls=common_urls,
             paths=Paths(),
-            duckdb_path=str(DATABASE_DIR / "enpkg.duckdb"),
+            duckdb_path=str(FIXTURE_DB),
         ),
     )
 

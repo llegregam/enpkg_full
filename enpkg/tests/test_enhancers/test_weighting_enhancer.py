@@ -6,16 +6,16 @@ from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.enhancers.weights_enhancer import WeightsEnhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
-from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
+from enpkg.tests.test_enhancers.conftest import FIXTURE_DATASET
 
 
 @pytest.fixture(scope="class")
 def analysis():
     """Load a test analysis."""
     return AnalysisLoader.from_files(
-        path_to_spectra=TEST_DATA_DIR / "enpkg_toy_dataset/msdata/processed/VGF151_E05_pos.mgf",
-        path_to_metadata=TEST_DATA_DIR / "enpkg_toy_dataset/metadata/metadata.tsv",
-        path_to_quant_table=TEST_DATA_DIR / "enpkg_toy_dataset/msdata/processed/VGF151_E05_pos_quant.csv",
+        path_to_spectra=FIXTURE_DATASET / "msdata/processed/arnica_0_125_pos_merged.mgf",
+        path_to_metadata=FIXTURE_DATASET / "metadata/metadata.tsv",
+        path_to_quant_table=FIXTURE_DATASET / "msdata/processed/arnica_0_125_pos_merged_quant.csv",
         ionization_mode="pos",
     )
 
@@ -29,11 +29,13 @@ def lotus_store(reweighting_config, logger) -> LotusStore:
 
 @pytest.fixture(scope="class")
 def taxa_enhanced_analysis(analysis, taxa_enhancer, network_enhancer) -> Analysis:
-    genus, species = analysis.genus_and_species
-    new_matches = taxa_enhancer.enhance(genus, species)
-    analysis.ott_matches += new_matches
-    molecular_network = network_enhancer.enhance(analysis)
-    return analysis.model_copy(update={"molecular_network": molecular_network})
+    """Chain the taxa and network enhancers over the fixture analysis.
+
+    Both follow the uniform enhancer contract — take an Analysis, return an
+    enriched copy — so the network enhancer receives the taxa-enriched analysis
+    and attaches the molecular network to it.
+    """
+    return network_enhancer.enhance(taxa_enhancer.enhance(analysis))
 
 @pytest.fixture(scope="class")
 def weights_enhancer(reweighting_config, logger, lotus_store) -> WeightsEnhancer:

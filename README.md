@@ -41,6 +41,23 @@ notes under [`docs/`](docs/). Run the tests with `pytest`: unit tests
 (`enpkg/tests/test_data`, `enpkg/tests/test_pipeline`) need no external data;
 tests marked `@pytest.mark.integration` need the DuckDB file and network access.
 
+The integration suite runs against a sampled fixture database and one dataset,
+both built by a single command from a full database you already have:
+
+```bash
+poetry run python -m enpkg.scripts.build_test_fixtures
+```
+
+That writes `enpkg/tests/.databases/enpkg_fixture.duckdb` (~58 MB, sampled from
+the ~1.7 GB production database) and `enpkg/tests/data/`, both gitignored. Pass
+`--source-db` / `--batch-dir` / `--sample-name` to build from somewhere else, and
+`--force` to rebuild. Then:
+
+```bash
+poetry run pytest -m integration        # needs the fixtures above + network
+poetry run pytest -m "not integration"  # the fast suite CI runs
+```
+
 > ⚠️ The shell-script instructions in the **Launching the Workflow** section
 > below describe the **legacy** per-sample workflow and are retained for
 > reference while the port completes. The installation steps that follow still

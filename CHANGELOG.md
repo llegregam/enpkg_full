@@ -20,6 +20,46 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-07 — Integration-test fixtures
+
+- Added `enpkg/scripts/build_test_fixtures.py`, which builds everything the
+  integration suite needs from a full database you already have: a sampled
+  DuckDB fixture and one dataset laid out the way `AnalysisLoader.from_files`
+  expects. The suite previously depended on a ~1.7 GB production database plus
+  several GB of Zenodo downloads that nothing in the repo produced, so the nine
+  DB-backed tests could only run on a machine that happened to have them.
+- The fixture is ~58 MB. Mass-filtering alone does not shrink this database —
+  the dataset's precursors span m/z 81-822 and reach 201k of the 220k compounds —
+  so the sample is taken by taxonomy instead: every compound of the dataset's own
+  genus (so taxonomically weighted scoring keeps real signal), then a slice of the
+  surrounding family and a slice of everything else. Selection is ordered by
+  `hash()` of the row key rather than seeded randomness, so a given source
+  database always yields a byte-identical fixture.
+- `_meta_columns` is copied whole. Its rows name the columns behind the pathway,
+  superclass and class probability arrays (7 + 77 + 696), so a partial copy would
+  silently misalign every score rather than fail.
+- The fixture database is written as `enpkg_fixture.duckdb`, not `enpkg.duckdb`,
+  so building it can never overwrite a full database sitting in the same
+  directory.
+- Test fixture paths are now resolved from the test package's own location rather
+  than from `$PROJECT_ROOT`. Honouring the environment variable meant a `.env`
+  copied between machines silently redirected fixtures to a path outside the two
+  gitignored directories — on this machine it had scattered 6.1 GB of downloads
+  into an untracked `tests/` at the repository root.
+- Fixed three test fixtures that had gone stale against the uniform
+  `enhance(analysis) -> Analysis` contract: two called
+  `TaxaEnhancer.enhance(genus, species)`, which has taken a single `Analysis`
+  since the enhancer contract was unified, and both then assigned the *analysis*
+  returned by `NetworkEnhancer.enhance` to a `molecular_network` field. They now
+  chain the two enhancers. These failures were invisible because the tests
+  errored earlier on the missing database.
+- Rewrote the SIRIUS argv assertion, which fixing the above unmasked. It compared
+  the command line to one literal list, but the implementation resolves `--input`
+  to an absolute path and writes the project under a run-timestamped directory —
+  so the assertion could not hold on Windows or across runs. It now checks the
+  argv structurally: the resolved input path, the project file's name and parent,
+  the configuration flags as a set, and that the tool subcommands appear in order.
+
 ### 2026-09-06 — Python 3.13/3.14 support
 
 - Raised the supported interpreter from `>=3.11,<3.12` to `>=3.13,!=3.14.1,<3.15`. The old
