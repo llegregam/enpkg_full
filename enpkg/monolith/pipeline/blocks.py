@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import heapq
 import logging
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Type
@@ -363,13 +364,29 @@ def _log_sirius(logger: logging.Logger, analysis: Analysis) -> None:
 
     Counts how many spectra received at least one SIRIUS annotation and the total
     number of candidate structures attached across all spectra (reads
-    ``AnnotatedSpectrum.sirius_annotations``, populated by ``attach_sirius_annotations``).
+    ``AnnotatedSpectrum.sirius_annotations``, populated by ``attach_sirius_annotations``),
+    then the CANOPUS class-prediction coverage (``canopus_classification``, populated by
+    ``attach_canopus_classifications``).
+
+    CANOPUS coverage is reported as a ratio on purpose. It only classifies features SIRIUS
+    could assign a molecular formula to, so a figure well below the spectrum count is
+    normal; stating the denominator stops it reading as data loss.
     """
     n_spectra = len(analysis.spectra)
     n_annotated = sum(1 for s in analysis.spectra if s.has_sirius_annotations())
     total = sum(len(s.sirius_annotations) for s in analysis.spectra)
     logger.info("    Spectra with SIRIUS annotations : %d / %d", n_annotated, n_spectra)
     logger.info("    Total SIRIUS annotations        : %d", total)
+    n_classified = sum(1 for s in analysis.spectra if s.has_canopus_classification())
+    logger.info("    Spectra with CANOPUS classes    : %d / %d", n_classified, n_spectra)
+    if n_classified:
+        pathways = Counter(
+            s.canopus_classification.pathway.label
+            for s in analysis.spectra
+            if s.has_canopus_classification() and s.canopus_classification.pathway is not None
+        )
+        for label, count in pathways.most_common():
+            logger.info("        %-28s: %d", label, count)
 
 
 # Number of example reranked spectra to show per level (MS1 / MS2) in the

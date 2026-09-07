@@ -29,6 +29,25 @@ class SiriusParams(BaseModel):
         default="sirius_output",
         description="Directory where Sirius outputs will be stored."
     )
+    attach_canopus: bool = Field(
+        default=True,
+        description=(
+            "Attach CANOPUS chemical-class predictions (NPClassifier pathway/superclass/"
+            "class) to each feature. SIRIUS already computes these as part of the run, so "
+            "this only controls whether they are ingested into the graph."
+        ),
+    )
+    canopus_source: str = Field(
+        default="formula",
+        pattern="^(formula|structure)$",
+        description=(
+            "Which CANOPUS summary to read. 'formula' classifies the top-ranked molecular "
+            "formula and covers every feature SIRIUS could assign one to; 'structure' "
+            "classifies the formula behind the best structure hit, so it agrees with the "
+            "structure annotations but skips features with no database match. The two "
+            "disagree on the predicted pathway for roughly a fifth of shared features."
+        ),
+    )
     top_k_sirius: int = Field(
         default=10,
         description="Number of top Sirius candidates to export in summary."

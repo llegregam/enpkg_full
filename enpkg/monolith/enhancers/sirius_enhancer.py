@@ -14,6 +14,7 @@ from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.enhancers.sirius_parser import (
     SiriusOutputParser,
+    attach_canopus_classifications,
     SiriusResults,
     attach_sirius_annotations,
 )
@@ -243,4 +244,19 @@ class SiriusEnhancer(Enhancer):
             "Attached SIRIUS structure identifications: %d annotations across %d/%d spectra.",
             total, n_annotated, len(analysis.spectra),
         )
+        # CANOPUS ran as part of the same invocation (the `classes` subcommand above), so
+        # this only reads summaries that already exist -- it costs no extra SIRIUS work.
+        if self.config.sirius_params.attach_canopus:
+            source = self.config.sirius_params.canopus_source
+            analysis = attach_canopus_classifications(analysis, results, source=source)
+            n_classified = sum(
+                1 for spectrum in analysis.spectra if spectrum.has_canopus_classification()
+            )
+            # CANOPUS only classifies what SIRIUS could assign a formula to, so this is
+            # normally well under 100%. Reported as a ratio so a low number reads as
+            # coverage rather than as data loss.
+            self._logger.info(
+                "Attached CANOPUS class predictions (%s summary): %d/%d spectra classified.",
+                source, n_classified, len(analysis.spectra),
+            )
         return analysis
