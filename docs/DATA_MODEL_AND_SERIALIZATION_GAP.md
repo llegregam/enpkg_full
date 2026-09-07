@@ -321,15 +321,28 @@ Plus `analysis.ms1_adduct_graph` — the directed graph of adduct relationships 
 > to D1. It composes with the **MS2 adduct gate** (MS2 only annotates base-ion anchors/singletons),
 > which already narrows which features reach this step.
 
-### D3. NPC classification vectors (`emi:ChemicalTaxonAnnotation`)
+### D3. NPC classification (`emi:ChemicalTaxonAnnotation`)
 
-The pathway/superclass/class probability arrays are computed and used for ranking but never
-emitted. EMI already provides the home: `emi:ChemicalTaxonAnnotation` with
-`emi:hasPathway/hasSuperClass/hasClass` (→ `emi:Pathway`/`Superclass`/`Class`) and the matching
-`…Probability` datatype properties (mapped worksheet §NPC). **Decisions:** (a) emit the *reference
-structure's* own NPC (on the compound) and/or the *feature's propagated* NPC (on the feature); (b)
-gate for size — these are full vectors, so likely emit only the argmax/top class per level, or gate
-behind a flag like `include_ions`.
+**CANOPUS: done.** SIRIUS/CANOPUS class predictions are emitted per feature as
+`emi:ChemicalTaxonAnnotation` nodes carrying `emi:hasPathway/hasSuperClass/hasClass` (→ `npc:`
+IRIs) and the matching `…Probability` literals — see
+[SIRIUS_ENHANCER.md §5.1 and §6.1](SIRIUS_ENHANCER.md). No new `enpkg:` terms were needed; EMI
+models this end to end, and its own `vann:example` blocks for these properties are CANOPUS
+annotations.
+
+The size concern that put this last did not apply to CANOPUS: it reports one argmax label plus
+one probability per rank, not a vector, so it costs a flat **10 triples per classified feature**
+(~1.3% growth on a real graph) and needs no gating flag. The serializer additionally inlines the
+`npc:` terms it used, with their `rdfs:label` and `skos:broader` ancestry (~590 triples,
++0.065%), without which the emitted IRIs are bare and every class query silently returns nothing.
+
+**Still open — the probability *vectors*.** The MS1/MS2 pathway/superclass/class arrays
+(`spectrum.ms1_pathway_scores` and friends, from LOTUS + label propagation) remain computed for
+ranking and never emitted. These *are* full vectors, so the original decisions still stand: (a)
+emit the *reference structure's* own NPC (on the compound) and/or the *feature's propagated* NPC
+(on the feature); (b) gate for size — emit only the argmax per level, or hide behind a flag like
+`include_ions`. Note that emitting a feature-level propagated NPC alongside the CANOPUS node
+would put two `ChemicalTaxonAnnotation`s on one feature, so it needs a way to tell them apart.
 
 ### D4. Smaller gaps
 
@@ -349,7 +362,8 @@ behind a flag like `include_ions`.
 1. ~~Decide D1's shape and implement it~~ — **done** (Option A, `enpkg:AdductCluster`).
 2. **D2** (MS2↔MS1 coupling) — self-contained, already specced.
 3. **D4 quick wins** (`charge`, `sample_type` subclass) — trivial, additive.
-4. **D3** (NPC vectors) — last, and gated, because of size.
+4. **D3** (NPC vectors) — last, and gated, because of size. *(The CANOPUS half is done; what
+   remains is the MS1/MS2 propagated vectors.)*
 5. **Verify** each step with `smoke_serialize.py` on a real batch (round-trip + node-count checks)
    and a couple of SPARQL sanity queries (e.g. "all adducts of one resolved molecule",
    "did MS1/MS2/SIRIUS agree on a 2D structure").

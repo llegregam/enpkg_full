@@ -191,6 +191,17 @@ class DatabaseManager:
     def __exit__(self, *args) -> None:
         self.close()
 
+    @property
+    def connection(self) -> duckdb.DuckDBPyConnection:
+        """The underlying DuckDB connection.
+
+        An escape hatch for maintenance tasks that need statements this class
+        does not wrap — ``ATTACH`` and cross-database copies, for instance.
+        Pipeline code should use the query methods below instead, so the SQL
+        stays in one place.
+        """
+        return self._conn
+
     def close(self) -> None:
         """Close the DuckDB connection."""
         if self._conn is not None:

@@ -16,6 +16,7 @@ from typing import List, Optional
 import pandas as pd
 
 from enpkg.monolith.data.analysis import Analysis
+from enpkg.monolith.data.canopus_classification import CanopusClassification, ChemicalTaxonRank
 from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 
 # SIRIUS top-k summaries end in "_top-N" (most) or "-N" (canopus_formula_summary);
@@ -196,4 +197,138 @@ def attach_sirius_annotations(
         annotations = by_feature.get(spectrum.feature_id)
         if annotations:
             spectrum.sirius_annotations = sorted(annotations, key=lambda annotation: annotation.rank)
+    return analysis
+
+
+# Columns of the CANOPUS summaries consumed when attaching class predictions. Unlike
+# _STRUCTURE_ID_COLUMNS these are NOT valid Python identifiers ("NPC#pathway", and the
+# probability columns carry a space), so `itertuples()` renames them to positional _1,
+# _2, ... and attribute access would silently read the wrong column. Hence name=None
+# below and positional unpacking, whose order must match this list exactly.
+_CANOPUS_COLUMNS = [
+    "mappingFeatureId",              # join key -> AnnotatedSpectrum.feature_id
+    "formulaRank",                   # 1 = best; only used to break duplicate-feature ties
+    "molecularFormula",
+    "adduct",
+    "NPC#pathway",
+    "NPC#pathway Probability",
+    "NPC#superclass",
+    "NPC#superclass Probability",
+    "NPC#class",
+    "NPC#class Probability",
+]
+
+# Which parsed frame each `source` selects. SIRIUS writes one row per feature in both.
+# They are not interchangeable: the formula summary classifies the top-ranked *formula*,
+# the structure summary classifies the formula backing the top *structure* hit, and on
+# real data they disagree on the pathway for ~22% of shared features. "formula" is the
+# default because classifying features that no database structure matches is the whole
+# point of CANOPUS, and it covers strictly more features.
+_CANOPUS_SOURCE_FIELDS = {
+    "formula": "canopus_formula_summary",
+    "structure": "canopus_structure_summary",
+}
+
+
+def _as_float(value: object) -> Optional[float]:
+    """Coerce a pandas cell to ``float``, or ``None`` for None/NaN/unparseable.
+
+    Note that ``0.0`` is a legitimate CANOPUS probability that occurs in real output, so
+    callers must test the result against ``None`` rather than for truthiness.
+    """
+    if value is None or (isinstance(value, float) and value != value):  # None/NaN
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _taxon_rank(label: object, probability: object) -> Optional[ChemicalTaxonRank]:
+    """Build one NPClassifier rank, or ``None`` when CANOPUS predicted nothing.
+
+    Only a missing *label* means "no prediction". A missing or zero probability still
+    describes a real prediction, so it is kept as-is.
+    """
+    text = _clean_str(label)
+    if not text:
+        return None
+    return ChemicalTaxonRank(label=text, probability=_as_float(probability))
+
+
+def attach_canopus_classifications(
+    analysis: Analysis, results: SiriusResults, *, source: str = "formula"
+) -> Analysis:
+    """Attach CANOPUS NPClassifier predictions onto the analysis's spectra.
+
+    Reads one of the CANOPUS summaries (see ``_CANOPUS_SOURCE_FIELDS``), builds one
+    :class:`CanopusClassification` per feature, and attaches it to the matching spectrum by
+    joining ``mappingFeatureId`` onto each spectrum's ``feature_id`` -- the same join
+    :func:`attach_sirius_annotations` uses. Mutates the spectra in place and returns the
+    same ``analysis``.
+
+    CANOPUS only classifies features SIRIUS could assign a formula to, so a substantial
+    minority of spectra (~15% on real data) are left with no classification. That is
+    expected, not data loss.
+
+    Args:
+        analysis: The analysis whose spectra receive the classifications.
+        results: Parsed SIRIUS summaries (from :meth:`SiriusOutputParser.digest_paths`).
+        source: ``"formula"`` or ``"structure"``, selecting which summary to read.
+
+    Returns:
+        The same ``analysis`` instance, with ``spectrum.canopus_classification`` populated.
+
+    Raises:
+        ValueError: If ``source`` is unknown, or the frame lacks a required column.
+    """
+    if source not in _CANOPUS_SOURCE_FIELDS:
+        raise ValueError(
+            f"Unknown CANOPUS source {source!r}; expected one of "
+            f"{sorted(_CANOPUS_SOURCE_FIELDS)}."
+        )
+    frame = getattr(results, _CANOPUS_SOURCE_FIELDS[source])
+    if frame is None or frame.empty:
+        return analysis
+
+    missing = [column for column in _CANOPUS_COLUMNS if column not in frame.columns]
+    if missing:
+        raise ValueError(
+            f"SIRIUS CANOPUS {source} summary is missing columns {missing}; "
+            f"present columns: {list(frame.columns)}"
+        )
+
+    # feature id -> (formulaRank, classification). SIRIUS writes one row per feature in
+    # these summaries, but tie-break on formulaRank rather than trusting that.
+    best: dict[int, tuple[Optional[int], CanopusClassification]] = {}
+    for row in frame[_CANOPUS_COLUMNS].itertuples(index=False, name=None):
+        (
+            feature_id_cell, formula_rank_cell, formula, adduct,
+            pathway, pathway_probability,
+            superclass, superclass_probability,
+            chemical_class, chemical_class_probability,
+        ) = row
+        feature_id = _as_int(feature_id_cell)
+        if feature_id is None:
+            continue  # no join key -> unusable
+        classification = CanopusClassification(
+            molecular_formula=_clean_str(formula),
+            adduct=_normalize_adduct(adduct),
+            pathway=_taxon_rank(pathway, pathway_probability),
+            superclass=_taxon_rank(superclass, superclass_probability),
+            chemical_class=_taxon_rank(chemical_class, chemical_class_probability),
+        )
+        if not classification.ranks():
+            continue  # no prediction at any rank -> nothing worth attaching
+        formula_rank = _as_int(formula_rank_cell)
+        previous = best.get(feature_id)
+        if previous is None:
+            best[feature_id] = (formula_rank, classification)
+        elif formula_rank is not None and (previous[0] is None or formula_rank < previous[0]):
+            best[feature_id] = (formula_rank, classification)
+
+    for spectrum in analysis.spectra:
+        found = best.get(spectrum.feature_id)
+        if found is not None:
+            spectrum.canopus_classification = found[1]
     return analysis

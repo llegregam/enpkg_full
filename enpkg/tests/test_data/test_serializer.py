@@ -2,14 +2,15 @@
 
 import networkx as nx
 import numpy as np
+import pytest
 from rdflib import BNode, Graph, Literal, URIRef
-from rdflib.namespace import OWL, RDF, RDFS
+from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.sample_metadata import SampleMetadata
 from enpkg.monolith.rdf import AnalysisSerializer, serialize_to_turtle
-from enpkg.monolith.rdf.namespaces import CHEMROF, EMI, EMI_RES, ENPKG
+from enpkg.monolith.rdf.namespaces import CHEMROF, EMI, EMI_RES, ENPKG, NPC
 from enpkg.monolith.rdf.uris import AnalysisURIs, CompoundURIs
 
 
@@ -687,3 +688,123 @@ def test_fbmn_component_terms_declared_once(make_analysis):
     before = len(g)
     serializer.add_analysis(analysis)
     assert len(g) == before
+
+
+# --------------------------------------------------------------- CANOPUS classification
+def _canopus_graph(make_analysis, make_canopus_classification, **kwargs):
+    """Serialize a one-spectrum analysis carrying a CANOPUS classification."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    analysis.spectra[0].canopus_classification = make_canopus_classification(**kwargs)
+    serializer = AnalysisSerializer()
+    serializer.add_analysis(analysis)
+    return analysis, serializer.graph
+
+
+def test_canopus_emits_a_chemical_taxon_annotation(make_analysis, make_canopus_classification):
+    analysis, g = _canopus_graph(make_analysis, make_canopus_classification)
+    uri = AnalysisURIs.canopus_annotation_uri(analysis, analysis.spectra[0])
+
+    assert (uri, RDF.type, EMI.ChemicalTaxonAnnotation) in g
+    assert (AnalysisURIs.spectrum_uri(analysis, analysis.spectra[0]), EMI.hasAnnotation, uri) in g
+    assert (uri, CHEMROF.generalized_empirical_formula, Literal("C18H24O13")) in g
+    assert (uri, EMI.hasAdduct, Literal("[M+H]+")) in g
+    assert (uri, EMI.hasPathway, NPC["TERPENOIDS"]) in g
+    assert (uri, EMI.hasSuperClass, NPC["MONOTERPENOIDS"]) in g
+    assert (uri, EMI.hasClass, NPC["IRIDOIDS_MONOTERPENOIDS"]) in g
+    assert (uri, EMI.hasPathwayProbability, Literal(0.982, datatype=XSD.double)) in g
+
+
+def test_canopus_node_is_not_also_a_structural_annotation(make_analysis, make_canopus_classification,
+                                                          make_sirius_annotation):
+    """emi:ChemicalTaxonAnnotation is owl:disjointWith emi:StructuralAnnotation.
+
+    Hanging the class predicates on the spectrum's SIRIUS annotation node instead of
+    minting a separate one would make the graph inconsistent under any reasoner --
+    invalidating every entailment over it, not merely the CANOPUS part.
+    """
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    spectrum.canopus_classification = make_canopus_classification()
+    spectrum.sirius_annotations = [make_sirius_annotation(rank=1)]
+    serializer = AnalysisSerializer()
+    serializer.add_analysis(analysis)
+    g = serializer.graph
+
+    canopus_uri = AnalysisURIs.canopus_annotation_uri(analysis, spectrum)
+    sirius_uri = AnalysisURIs.sirius_annotation_uri(analysis, spectrum, spectrum.sirius_annotations[0])
+
+    assert canopus_uri != sirius_uri
+    assert (canopus_uri, RDF.type, EMI.StructuralAnnotation) not in g
+    assert (sirius_uri, RDF.type, EMI.ChemicalTaxonAnnotation) not in g
+    # no node anywhere carries both types
+    both = set(g.subjects(RDF.type, EMI.ChemicalTaxonAnnotation)) & set(
+        g.subjects(RDF.type, EMI.StructuralAnnotation)
+    )
+    assert both == set()
+    # both still hang off the same feature via the shared predicate
+    spectrum_uri = AnalysisURIs.spectrum_uri(analysis, spectrum)
+    assert {canopus_uri, sirius_uri} <= set(g.objects(spectrum_uri, EMI.hasAnnotation))
+
+
+def test_canopus_inlines_the_npc_terms_it_uses(make_analysis, make_canopus_classification):
+    """Without this the graph carries bare IRIs and class queries silently return nothing.
+
+    _declare_vocabulary inlines enpkg.ttl only; enpkg.ttl declares owl:imports emi:, but an
+    import is a pointer, not content.
+    """
+    _, g = _canopus_graph(make_analysis, make_canopus_classification)
+
+    assert (NPC["IRIDOIDS_MONOTERPENOIDS"], RDF.type, NPC["Class"]) in g
+    assert (NPC["IRIDOIDS_MONOTERPENOIDS"], RDFS.label, Literal("Iridoids monoterpenoids")) in g
+    # the skos:broader chain must reach the pathway, or roll-up queries stop short
+    assert (NPC["IRIDOIDS_MONOTERPENOIDS"], SKOS.broader, NPC["MONOTERPENOIDS"]) in g
+    assert (NPC["MONOTERPENOIDS"], SKOS.broader, NPC["TERPENOIDS"]) in g
+    assert (NPC["TERPENOIDS"], RDF.type, NPC["Pathway"]) in g
+
+
+# rdflib's SPARQL parser trips pyparsing deprecation warnings on every parse (hundreds of
+# them, from library internals we do not control). Scoped here so the one test that runs
+# a real query does not drown the suite output.
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_canopus_hierarchy_roll_up_is_queryable(make_analysis, make_canopus_classification):
+    """The query the inlining exists to make possible."""
+    _, g = _canopus_graph(make_analysis, make_canopus_classification)
+    rows = list(g.query(
+        """SELECT (COUNT(DISTINCT ?f) AS ?n) WHERE {
+             ?f emi:hasAnnotation ?a . ?a emi:hasClass ?c . ?c skos:broader+ npc:TERPENOIDS }""",
+        initNs={"emi": EMI, "npc": NPC, "skos": SKOS},
+    ))
+    assert int(rows[0][0]) == 1
+
+
+def test_canopus_keeps_a_zero_probability(make_analysis, make_canopus_classification):
+    """0.0 is a probability CANOPUS really emits, and it is falsy.
+
+    Dropping it would leave the graph asserting a rank with no confidence attached, which
+    is worse than emitting neither.
+    """
+    analysis, g = _canopus_graph(
+        make_analysis, make_canopus_classification,
+        superclass=("γ-lactam-β-lactones", 0.0),
+    )
+    uri = AnalysisURIs.canopus_annotation_uri(analysis, analysis.spectra[0])
+    assert (uri, EMI.hasSuperClassProbability, Literal(0.0, datatype=XSD.double)) in g
+
+
+def test_canopus_is_absent_when_unclassified(make_analysis):
+    """A feature CANOPUS could not classify contributes no node at all."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    serializer = AnalysisSerializer()
+    serializer.add_analysis(analysis)
+    assert set(serializer.graph.subjects(RDF.type, EMI.ChemicalTaxonAnnotation)) == set()
+
+
+def test_canopus_serialization_is_idempotent(make_analysis, make_canopus_classification):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    analysis.spectra[0].canopus_classification = make_canopus_classification()
+    serializer = AnalysisSerializer()
+    serializer.add_analysis(analysis)
+    before = len(serializer.graph)
+    serializer.add_analysis(analysis)
+    assert len(serializer.graph) == before
+

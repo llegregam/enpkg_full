@@ -5,7 +5,6 @@ from re import match as regex_match
 from typing import Dict, Optional
 
 import requests
-from opentree import OT
 
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.otl_class import LineageItem, Match
@@ -27,6 +26,12 @@ def _sanitize_github_username(username: str) -> str:
 class TaxaEnhancer(Enhancer):
     """Enhancer that adds taxa information to the analysis."""
 
+    OTL_ENDPOINT: str = "https://api.opentreeoflife.org/v3"
+    # The Open Tree of Life API answers every call as a JSON POST, and is
+    # occasionally slow to respond on a cold cache. The timeout matches the
+    # Wikidata one below: long enough to absorb that, short enough that a
+    # wedged endpoint cannot stall a whole batch run indefinitely.
+    OTL_TIMEOUT: int = 30
     WIKIDATA_ENDPOINT: str = "https://query.wikidata.org/sparql"
     # Wikidata's SPARQL endpoint requires an identifying User-Agent; the
     # default `python-requests/x.y.z` is rate-limited and now (2024+)
@@ -72,15 +77,51 @@ class TaxaEnhancer(Enhancer):
         """Returns the name of the enhancer."""
         return "Taxonomical Enhancer"
 
+    def _call_open_tree(self, fragment: str, payload: Dict) -> Dict:
+        """POST a payload to an Open Tree of Life v3 endpoint and return the decoded body.
+
+        Args:
+            fragment: Path fragment below the v3 root, e.g. ``"tnrs/match_names"``.
+            payload: JSON body of the call.
+
+        Returns:
+            The decoded JSON response.
+
+        Raises:
+            EnrichmentError: The endpoint was unreachable, timed out, or answered
+                with a non-200 status.
+        """
+        try:
+            response = requests.post(
+                f"{self.OTL_ENDPOINT}/{fragment}",
+                json=payload,
+                headers={"content-type": "application/json", "accept": "application/json"},
+                timeout=self.OTL_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            raise EnrichmentError(
+                f"Open Tree of Life request to '{fragment}' failed "
+                f"({type(exc).__name__}: {exc})"
+            ) from exc
+
+        if response.status_code != 200:
+            raise EnrichmentError(
+                f"Open Tree of Life returned HTTP {response.status_code} for '{fragment}'"
+            )
+
+        return response.json()
+
     def retrieve_matches(self, genus: str, species: str) -> list[Match]:
         """Retrieves OTT matches for the source taxon."""
 
-        ott_match: Dict = OT.tnrs_match(
-            [f"{genus} {species}"],
-            context_name=None,
-            do_approximate_matching=True,
-            include_suppressed=False,
-        ).response_dict
+        ott_match: Dict = self._call_open_tree(
+            "tnrs/match_names",
+            {
+                "names": [f"{genus} {species}"],
+                "do_approximate_matching": True,
+                "include_suppressed": False,
+            },
+        )
 
         if "results" not in ott_match:
             raise EnrichmentError(f"No OTT results found searching for '{genus} {species}'")
@@ -101,7 +142,15 @@ class TaxaEnhancer(Enhancer):
         for match in matches:
             match.set_lineage(
                 LineageItem.from_dict(
-                    OT.taxon_info(match.open_tree_taxon_id, include_lineage=True).response_dict
+                    self._call_open_tree(
+                        "taxonomy/taxon_info",
+                        {
+                            "ott_id": match.open_tree_taxon_id,
+                            "include_lineage": True,
+                            "include_children": False,
+                            "include_terminal_descendants": False,
+                        },
+                    )
                 )
             )
 

@@ -17,6 +17,7 @@ from rdflib.namespace import OWL, RDF, RDFS, XSD  # re-exported for one-stop imp
 # --- Vocabulary: classes & predicates ---------------------------------------
 EMI       = Namespace("https://w3id.org/emi#")                # Earth Metabolome Ontology (backbone)
 ENPKG     = Namespace("https://w3id.org/enpkg#")              # our minted terms — TODO: confirm an IRI we control
+NPC       = Namespace("https://w3id.org/emi/npc#")            # NPClassifier terms, vendored inside EMI-vocab.owl
 SOSA      = Namespace("http://www.w3.org/ns/sosa/")           # samples / observations
 MS        = Namespace("http://purl.obolibrary.org/obo/MS_")   # PSI-MS: adduct family, product ions, charge
 CHEMROF   = Namespace("https://w3id.org/chemrof/")            # ChEBI structural annotation properties
@@ -41,7 +42,7 @@ MASSIVE   = Namespace("https://massive.ucsd.edu/ProteoSAFe/dataset.jsp?accession
 
 __all__ = [
     "RDF", "RDFS", "OWL", "XSD",
-    "EMI", "ENPKG", "SOSA", "MS", "CHEMROF", "NCBITAXON", "NCBITAXON_PROP",
+    "EMI", "ENPKG", "NPC", "SOSA", "MS", "CHEMROF", "NCBITAXON", "NCBITAXON_PROP",
     "PROV", "DCTERMS", "SKOS",
     "EMI_RES",
     "WD", "INCHIKEY", "PUBCHEM", "GBIF", "DOI", "MASSIVE",

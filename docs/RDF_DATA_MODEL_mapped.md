@@ -172,7 +172,7 @@ rank — see §4/§5/§8a/§8b.
 | score | lit | xsd:double | ✅ `emi:hasSpectralScore` |
 | n_matched_peaks | lit | xsd:integer | ⛏ custom `enpkg:nMatchedPeaks` |
 | queried_against | lit/obj | library | ✅ `dcterms:source` (the spectral library, e.g. ISDB) |
-| pathway/superclass/class_scores | obj | → ChemicalTaxonAnnotation | ✅ via `emi:ChemicalTaxonAnnotation` (§ NPC) — gate for size |
+| pathway/superclass/class_scores | obj | → ChemicalTaxonAnnotation | 🟡 via `emi:ChemicalTaxonAnnotation` (§ NPC) — still unemitted; gate for size. CANOPUS's argmax prediction *is* emitted. |
 | (corresponding MS1 adduct) | obj | → `enpkg:AdductAnnotation` (§4) | ⛏ custom `enpkg:hasCorrespondingAdduct` — the MS1 adduct proposing the same compound (shared 2D InChIKey); emitted only on MS2-identified features, which also prunes the non-corresponding MS1 adducts. See D2. |
 
 ## 7. AnnotationOrganism — `organism_uri`
@@ -228,12 +228,25 @@ rank — see §4/§5/§8a/§8b.
 | reference_wikidata | obj | owl:sameAs WD | ✅ `owl:sameAs` |
 
 ## NPC classification (Compound / annotation → chemical taxonomy)
+
+**Live for CANOPUS** (`canopus_annotation_uri`, one node per classified feature); still
+unemitted for the MS1/MS2 propagated score vectors — see D3 in
+[DATA_MODEL_AND_SERIALIZATION_GAP.md](DATA_MODEL_AND_SERIALIZATION_GAP.md).
+
+Note the ranges are in EMI's **`npc:`** sub-namespace (`https://w3id.org/emi/npc#`), not `emi:`
+itself — an earlier revision of this table had that wrong. The 770 NPClassifier terms are
+vendored inside `EMI-vocab.owl` as SKOS concepts with `rdfs:label` and `skos:broader`.
+
 | Element | Shape | Target / type | Vocab term |
 |---|---|---|---|
-| rdf:type | type | — | ✅ `emi:ChemicalTaxonAnnotation` |
-| pathway prob / link | lit/obj | double / → Pathway | ✅ `emi:hasPathwayProbability` · `emi:hasPathway` → `emi:Pathway` |
-| superclass prob / link | lit/obj | double / → Superclass | ✅ `emi:hasSuperClassProbability` · `emi:hasSuperClass` → `emi:Superclass` |
-| class prob / link | lit/obj | double / → Class | ✅ `emi:hasClassProbability` · `emi:hasClass` → `emi:Class` |
+| rdf:type | type | — | ✅ `emi:ChemicalTaxonAnnotation` (`owl:disjointWith emi:StructuralAnnotation` — a separate node from the SIRIUS annotation) |
+| attach to feature | obj | ← LCMSFeature | ✅ `emi:hasAnnotation` (shared with MS1/MS2/SIRIUS) |
+| molecular formula | lit | string | ✅ `chemrof:generalized_empirical_formula` |
+| adduct | lit | string | ✅ `emi:hasAdduct` |
+| pathway prob / link | lit/obj | double / → Pathway | ✅ `emi:hasPathwayProbability` · `emi:hasPathway` → `npc:Pathway` |
+| superclass prob / link | lit/obj | double / → Superclass | ✅ `emi:hasSuperClassProbability` · `emi:hasSuperClass` → `npc:Superclass` |
+| class prob / link | lit/obj | double / → Class | ✅ `emi:hasClassProbability` · `emi:hasClass` → `npc:Class` |
+| term self-description | type/lit/obj | — | ✅ `rdf:type` · `rdfs:label` · `skos:broader` inlined for each term used, plus its ancestry (a DAG: 23 terms have two parents) |
 
 ## 9. Match / Taxon — `ott_match_uri`
 | Element | Shape | Target / type | Vocab term |

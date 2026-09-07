@@ -10,6 +10,7 @@ from enpkg.monolith.data.lotus_class import (
     Lotus,
 )
 from enpkg.monolith.data.ms1_data_classes import AdductRecipe, ChemicalAdduct
+from enpkg.monolith.data.canopus_classification import CanopusClassification
 from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 
 
@@ -41,6 +42,9 @@ class AnnotatedSpectrum(Spectrum):
         self.retention_time: float = retention_time
         self.intensity: float = intensity
         self._sirius_annotations: list[SiriusChemicalAnnotation] = []
+        # At most one per feature: CANOPUS emits a single classification per
+        # feature, unlike the ranked list of structure candidates above.
+        self._canopus_classification: Optional[CanopusClassification] = None
         self._ms2_annotations: list[MS2ChemicalAnnotation] = []
         self._ms1_annotations: list[ChemicalAdduct] = []
         self._ms1_pathway_scores: Optional[np.ndarray] = None
@@ -240,6 +244,25 @@ class AnnotatedSpectrum(Spectrum):
     def add_sirius_annotation(self, annotation: SiriusChemicalAnnotation):
         """Add a SIRIUS annotation to the spectrum."""
         self._sirius_annotations.append(annotation)
+
+    # CANOPUS CLASSIFICATION
+    @property
+    def canopus_classification(self) -> Optional[CanopusClassification]:
+        """Return the CANOPUS NPClassifier prediction, or None if unclassified."""
+        return self._canopus_classification
+
+    @canopus_classification.setter
+    def canopus_classification(self, classification: Optional[CanopusClassification]):
+        """Set the CANOPUS NPClassifier prediction."""
+        self._canopus_classification = classification
+
+    def has_canopus_classification(self) -> bool:
+        """Returns whether the spectrum has a CANOPUS classification.
+
+        False is expected for a sizeable minority of features -- CANOPUS only classifies
+        what SIRIUS could assign a molecular formula to.
+        """
+        return self._canopus_classification is not None
 
     def get_top_k_lotus_annotation(self, k: int = 1) -> Optional[list[Lotus]]:
         """Returns the top k best LOTUS annotations from the MS1 adduct annotations.

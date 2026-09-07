@@ -229,7 +229,7 @@ wholesale keeps `enpkg.ttl` available to the `COPY` in the Dockerfile.
 ### 7.2 `Dockerfile`
 
 ```dockerfile
-FROM python:3.11-slim AS base
+FROM python:3.14-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -270,11 +270,12 @@ Notes on the non-obvious lines:
 
 - `--with gui` is **required**: the `gui` group is marked `optional = true`, so Streamlit
   is otherwise not installed.
-- `--without dev` drops `pytest`, `ruff`, `lz4`, `joblib`.
+- `--without dev` drops `pytest`, `ruff` and `pre-commit`.
 - `POETRY_VIRTUALENVS_CREATE=false` installs into the system interpreter, which is what
   you want in a container.
-- Python is pinned to 3.11 because `pyproject.toml` requires `>=3.11,<3.12` and
-  `poetry.lock` is resolved against exactly that.
+- Python 3.14 matches `pyproject.toml`, which requires `>=3.13,!=3.14.1,<3.15`. A
+  `python:3.13-slim` base works equally well. Avoid a 3.14.1 base image specifically:
+  `networkx` declares `!=3.14.1`, so the install will fail to resolve there.
 
 ### 7.3 `docker-compose.yml`
 

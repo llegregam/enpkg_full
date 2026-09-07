@@ -1,5 +1,5 @@
 import logging
-import os
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -9,27 +9,29 @@ from enpkg.monolith.configuration.config import GeneralParams
 from enpkg.monolith.configuration.sirius_enhancer_config import SiriusEnhancerConfig, SiriusParams
 from enpkg.monolith.enhancers.sirius_enhancer import SiriusEnhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
+from enpkg.tests.test_enhancers.conftest import FIXTURE_DATASET
 
 
 @pytest.fixture(scope="class")
 def analysis():
     """Load a test analysis."""
     return AnalysisLoader.from_files(
-        path_to_spectra=TEST_DATA_DIR / "enpkg_toy_dataset/msdata/processed/VGF151_E05_pos.mgf",
-        path_to_metadata=TEST_DATA_DIR / "enpkg_toy_dataset/metadata/metadata.tsv",
-        path_to_quant_table=TEST_DATA_DIR / "enpkg_toy_dataset/msdata/processed/VGF151_E05_pos_quant.csv",
+        path_to_spectra=FIXTURE_DATASET / "msdata/processed/arnica_0_125_pos_merged.mgf",
+        path_to_metadata=FIXTURE_DATASET / "metadata/metadata.tsv",
+        path_to_quant_table=FIXTURE_DATASET / "msdata/processed/arnica_0_125_pos_merged_quant.csv",
         ionization_mode="pos",
     )
 
 
 @pytest.fixture(scope="class")
 def network_and_taxa_enhanced_analysis(analysis, taxa_enhancer, network_enhancer):
-    genus, species = analysis.genus_and_species
-    new_matches = taxa_enhancer.enhance(genus, species)
-    analysis.ott_matches += new_matches
-    molecular_network = network_enhancer.enhance(analysis)
-    return analysis.model_copy(update={"molecular_network": molecular_network})
+    """Chain the taxa and network enhancers over the fixture analysis.
+
+    Both follow the uniform enhancer contract — take an Analysis, return an
+    enriched copy — so the network enhancer receives the taxa-enriched analysis
+    and attaches the molecular network to it.
+    """
+    return network_enhancer.enhance(taxa_enhancer.enhance(analysis))
 
 @pytest.fixture
 def sirius_config() -> SiriusEnhancerConfig:
@@ -113,8 +115,13 @@ class TestSiriusEnhancer:
             "--password-env", "SIRIUS_PASSWORD", "--show"
         ]
 
-        # Check actual Sirius run call
+        # Check the actual Sirius run call. The argv is asserted structurally
+        # rather than as one literal list: the project directory carries a run
+        # timestamp and --input is resolved to an absolute path, so both differ
+        # between runs and between platforms.
         run_args, _ = mock_run.call_args_list[1]
+        argv = run_args[0]
+        params = sirius_config.sirius_params
 
         db_list = (
             "public_spectra_2506,METACYC,BloodExposome,CHEBI,COCONUT,FooDB,"
@@ -123,30 +130,46 @@ class TestSiriusEnhancer:
             "PUBCHEMANNOTATIONSAFETYANDTOXIC,SUPERNATURAL,TeroMol,YMDB"
         )
         sample_stem = network_and_taxa_enhanced_analysis.metadata.sample_filename_pos.split(".")[0]
-        expected_run_args = [
-            "/mock/path/to/sirius",
-            "--input", "/mock/input.mgf",
-            "-o", os.path.join("/mock/out", sample_stem),
-            "config",
+
+        assert argv[0] == params.path_to_sirius
+        assert argv[1] == "--input"
+        assert argv[2] == str(Path(params.path_to_input_spectra).resolve())
+
+        # SIRIUS 6 stores each project as a single .sirius file inside a
+        # timestamped directory under the configured output directory.
+        assert argv[3] == "-o"
+        project_file = Path(argv[4])
+        assert project_file.name == f"{sample_stem}.sirius"
+        assert project_file.parent.parent == Path(params.output_directory).resolve()
+
+        # Configuration options are passed through the `config` subcommand.
+        assert argv[5] == "config"
+        assert set(argv[6:]) >= {
             "--AlgorithmProfile=orbitrap",
-            "--MS2MassDeviation.allowedMassDeviation=5.0ppm",
+            f"--MS2MassDeviation.allowedMassDeviation={params.ms2_mass_deviation}ppm",
             f"--SpectralSearchDB={db_list}",
             "--AdductSettings.fallback=[[M+H]+,[M+Na]+,[M+K]+]",
+            f"--NumberOfCandidates={params.top_k_sirius}",
             "--FormulaSettings.enforced=H,C,N,O,P",
-            "--IdentitySearchSettings.precursorDeviation=20.0ppm",
+            f"--IdentitySearchSettings.precursorDeviation={params.identity_search_precursor_deviation}ppm",
             "--FormulaSearchSettings.performBottomUpAboveMz=0",
             "--ExpansiveSearchConfidenceMode.confidenceScoreSimilarityMode=EXACT",
             "--FormulaSearchDB=",
             f"--StructureSearchDB={db_list}",
             "--SpectralSearchLog=0",
-            "spectra-search",
-            "formulas",
-            "fingerprints",
-            "classes",
-            "structures",
-            "write-summaries",
-            "--output", "/mock/out/summaries/",
-        ]
+        }
 
-        assert run_args[0] == expected_run_args
+        # Tool subcommands run after the configuration block, in this order.
+        tool_positions = [
+            argv.index(tool)
+            for tool in ("spectra-search", "formulas", "fingerprints",
+                         "classes", "structures", "write-summaries")
+        ]
+        assert tool_positions == sorted(tool_positions)
+
+        assert argv[-3:] == [
+            "--output",
+            params.output_directory + "/summaries/",
+            f"--top-k-summary={params.top_k_sirius}",
+        ]
 

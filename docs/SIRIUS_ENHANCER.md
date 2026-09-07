@@ -79,8 +79,9 @@ flowchart TD
 - **CANOPUS:** predicts **compound classes** (NPC / ClassyFire) directly from the spectrum,
   even when no database structure matches (the `canopus_*` summaries).
 
-> Only the **structure identifications** are ingested today (§5). The formula, ZODIAC, and
-> CANOPUS frames are parsed into `SiriusResults` but not yet mapped into the graph.
+> The **structure identifications** (§5) and the **CANOPUS class predictions** (§5.1) are both
+> ingested. The formula and ZODIAC frames are parsed into `SiriusResults` but not yet mapped
+> into the graph.
 
 ---
 
@@ -200,6 +201,38 @@ to serialize output from a previous SIRIUS run without re-running the tool.
 
 ---
 
+### 5.1 CANOPUS: class predictions
+
+CANOPUS runs as part of the same invocation (the `classes` subcommand in §3), so ingesting it
+costs no extra SIRIUS work — only reading a file that is already on disk.
+[`attach_canopus_classifications`](../enpkg/monolith/enhancers/sirius_parser.py) joins on the
+same `mappingFeatureId`, and sets `spectrum.canopus_classification` to a single
+[`CanopusClassification`](../enpkg/monolith/data/canopus_classification.py). One per feature,
+not a ranked list — CANOPUS commits to one answer per rank.
+
+| Column | Meaning | Used as |
+|---|---|---|
+| `NPC#pathway` / `Probability` | Broadest NPClassifier rank (7 exist) | `pathway` |
+| `NPC#superclass` / `Probability` | Intermediate rank | `superclass` |
+| `NPC#class` / `Probability` | Most specific rank | `chemical_class` |
+| `mappingFeatureId` | Join key | → `feature_id` |
+
+Two things about this step are easy to get wrong.
+
+**Which summary.** SIRIUS writes two, with identical columns.
+`canopus_formula_summary.tsv` classifies the top-ranked *formula*;
+`canopus_structure_summary.tsv` classifies the formula behind the best *structure* hit. They
+are not interchangeable — on real data they disagree on the pathway for about a fifth of
+shared features. The default is the formula summary, because classifying features that no
+database structure matches is the whole point of CANOPUS, and it covers strictly more
+features. `sirius_params.canopus_source` switches it.
+
+**Coverage is partial by design.** CANOPUS only classifies features SIRIUS could assign a
+molecular formula to — around 85% of them in practice. The rest carry no classification, and
+`_log_sirius` reports the figure as a ratio so it reads as coverage rather than as data loss.
+
+---
+
 ## 6. Serialization: data model → knowledge graph
 
 The [serializer](../enpkg/monolith/rdf/serializer.py) links each feature to its SIRIUS
@@ -252,6 +285,62 @@ SIRIUS's chosen top-X.
 
 ---
 
+### 6.1 CANOPUS: the class-prediction node
+
+The CANOPUS prediction becomes its **own node**, typed `emi:ChemicalTaxonAnnotation` and hung
+off the same feature through the same `emi:hasAnnotation` predicate. It is deliberately *not*
+extra properties on the SIRIUS annotation node: EMI declares
+
+```turtle
+emi:ChemicalTaxonAnnotation owl:disjointWith emi:StructuralAnnotation .
+```
+
+so a node typed as both would make the graph inconsistent under any reasoner — invalidating
+every entailment over it, not just this part. The two annotations meet at the feature, which is
+the thing they genuinely have in common.
+
+This needed **no new `enpkg:` terms**. EMI already models exactly this, and its own worked
+examples for these properties are CANOPUS annotations:
+
+```turtle
+<https://w3id.org/emi/resource/canopus/RUN1/12> a emi:ChemicalTaxonAnnotation ;
+    chemrof:generalized_empirical_formula "C18H24O13" ;
+    emi:hasAdduct "[M+H]+" ;
+    emi:hasPathway               npc:TERPENOIDS ;
+    emi:hasPathwayProbability    "0.982"^^xsd:double ;
+    emi:hasSuperClass            npc:MONOTERPENOIDS ;
+    emi:hasSuperClassProbability "0.998"^^xsd:double ;
+    emi:hasClass                 npc:IRIDOIDS_MONOTERPENOIDS ;
+    emi:hasClassProbability      "0.944"^^xsd:double .
+```
+
+Ten triples per classified feature, flat — about 1.3% growth on a real graph.
+
+**The terms are nodes, not strings**, which is what makes them worth emitting.
+[`npc_vocabulary.py`](../enpkg/monolith/rdf/npc_vocabulary.py) resolves each CANOPUS label to
+its `npc:` IRI against the vendored `EMI-vocab.owl`, keyed on **(rank, label)** — two labels
+exist at two ranks at once, and EMI disambiguates the Class reading with a `_CLASS` suffix, so
+a plain string transform would silently file a Class under its own Superclass.
+
+The serializer also **inlines the terms it used** — their `rdf:type`, `rdfs:label` and
+`skos:broader` ancestry (~590 triples, +0.065%). Without that the graph carries bare IRIs:
+`_declare_vocabulary` inlines `enpkg.ttl` only, and while `enpkg.ttl` declares
+`owl:imports emi:`, an import is a pointer rather than content. The failure mode is silent —
+queries return an empty result set that reads like "no such compounds here". With it, roll-up
+works:
+
+```sparql
+SELECT (COUNT(DISTINCT ?f) AS ?n) WHERE {
+  ?f emi:hasAnnotation ?a . ?a emi:hasClass ?c . ?c skos:broader+ npc:TERPENOIDS }
+```
+
+On one real sample that returns **81 features**, against only **64** whose argmax *pathway* is
+Terpenoids — the extra 17 are features whose finer-grained class is unambiguously terpenoid
+even though the pathway call went elsewhere. Note the ancestry is walked as a **DAG, not a
+tree**: 23 terms have two parents (Meroterpenoids is both a polyketide and a terpenoid).
+
+---
+
 ## 7. SIRIUS vs MS1 vs MS2 — the three channels
 
 | | **MS1** | **MS2** | **SIRIUS** |
@@ -261,7 +350,7 @@ SIRIUS's chosen top-X.
 | Needs a library? | reference masses (LOTUS) | pre-computed spectra (ISDB) | **no reference spectrum** — computes from the data |
 | Ranking | reweighted at output (NPC) | reweighted at output (NPC / cosine) | **SIRIUS's own** `structurePerIdRank` (kept as-is) |
 | Runs as | in-process Python | in-process Python | **external subprocess** |
-| Output slot | `spectrum.ms1_annotations` | `spectrum.ms2_annotations` | `spectrum.sirius_annotations` |
+| Output slot | `spectrum.ms1_annotations` | `spectrum.ms2_annotations` | `spectrum.sirius_annotations` + `spectrum.canopus_classification` |
 | Structure link | full compound + `hasInChIKey2D` | `hasChemicalStructure` → InChIKey2D | `hasChemicalStructure` → InChIKey2D |
 
 The practical point for a talk: SIRIUS is the channel that can identify **novel** structures

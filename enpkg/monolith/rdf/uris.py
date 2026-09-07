@@ -180,6 +180,19 @@ class AnalysisURIs:
             f"sirius/{analysis.run_name}/{spectrum.feature_id}/{annotation.inchikey_2d}"
         ]
 
+    # CANOPUS CLASSIFICATION URIs
+    @staticmethod
+    def canopus_annotation_uri(analysis: Analysis, spectrum: AnnotatedSpectrum) -> URIRef:
+        """Mint the URI for the CANOPUS class prediction on a spectrum.
+
+        Run-scoped and per-spectrum, and — unlike the SIRIUS structure annotation above —
+        needing no candidate key: CANOPUS emits exactly one classification per feature, so
+        the feature identifies it. The predicted terms ride along as npc: object
+        properties, not as part of the URI, so re-running CANOPUS with a newer model
+        updates the same node rather than orphaning it.
+        """
+        return EMI_RES[f"canopus/{analysis.run_name}/{spectrum.feature_id}"]
+
     @staticmethod
     def analysis_metadata_uri(analysis: Analysis) -> URIRef:
         """Mint the URI for the metadata of an analysis.

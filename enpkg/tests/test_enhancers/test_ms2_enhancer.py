@@ -11,16 +11,16 @@ from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
-from enpkg.tests.test_enhancers.conftest import TEST_DATA_DIR
+from enpkg.tests.test_enhancers.conftest import FIXTURE_DATASET
 
 
 @pytest.fixture(scope="class")
 def analysis():
     """Load a test analysis."""
     return AnalysisLoader.from_files(
-        path_to_spectra=TEST_DATA_DIR / "enpkg_toy_dataset/msdata/processed/VGF151_E05_pos.mgf",
-        path_to_metadata=TEST_DATA_DIR / "enpkg_toy_dataset/metadata/metadata.tsv",
-        path_to_quant_table=TEST_DATA_DIR / "enpkg_toy_dataset/msdata/processed/VGF151_E05_pos_quant.csv",
+        path_to_spectra=FIXTURE_DATASET / "msdata/processed/arnica_0_125_pos_merged.mgf",
+        path_to_metadata=FIXTURE_DATASET / "metadata/metadata.tsv",
+        path_to_quant_table=FIXTURE_DATASET / "msdata/processed/arnica_0_125_pos_merged_quant.csv",
         ionization_mode="pos",
     )
 

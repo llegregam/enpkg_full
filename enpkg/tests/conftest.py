@@ -10,6 +10,7 @@ from matchms import Spectrum
 
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
+from enpkg.monolith.data.canopus_classification import CanopusClassification, ChemicalTaxonRank
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from enpkg.monolith.data.sample_metadata import SampleMetadata
@@ -165,6 +166,36 @@ def make_sirius_annotation():
             molecular_formula=molecular_formula,
             adduct=adduct,
             inchikey_2d=inchikey_2d,
+        )
+
+    return _make
+
+
+@pytest.fixture
+def make_canopus_classification():
+    """Return a factory building a CanopusClassification (defaults to an iridoid).
+
+    The default is a real CANOPUS record: an iridoid monoterpenoid, whose three ranks all
+    exist in the vendored EMI vocabulary and form a complete skos:broader chain up to
+    npc:TERPENOIDS -- so it exercises hierarchy roll-up, not just flat lookup.
+    """
+
+    def _make(
+        molecular_formula: str = "C18H24O13",
+        adduct: str = "[M+H]+",
+        pathway: tuple[str, float] | None = ("Terpenoids", 0.982),
+        superclass: tuple[str, float] | None = ("Monoterpenoids", 0.998),
+        chemical_class: tuple[str, float] | None = ("Iridoids monoterpenoids", 0.944),
+    ) -> CanopusClassification:
+        def rank(value):
+            return None if value is None else ChemicalTaxonRank(label=value[0], probability=value[1])
+
+        return CanopusClassification(
+            molecular_formula=molecular_formula,
+            adduct=adduct,
+            pathway=rank(pathway),
+            superclass=rank(superclass),
+            chemical_class=rank(chemical_class),
         )
 
     return _make
