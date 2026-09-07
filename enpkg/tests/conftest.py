@@ -10,10 +10,10 @@ from matchms import Spectrum
 
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
+from enpkg.monolith.data.canopus_classification import CanopusClassification, ChemicalTaxonRank
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from enpkg.monolith.data.sample_metadata import SampleMetadata
-from enpkg.monolith.data.canopus_classification import CanopusClassification, ChemicalTaxonRank
 from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 
 

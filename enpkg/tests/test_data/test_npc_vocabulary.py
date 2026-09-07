@@ -7,7 +7,7 @@ the fast default suite. The vocabulary is parsed once per process and cached, so
 
 import logging
 
-from rdflib import Literal, RDFS, URIRef
+from rdflib import RDFS, Literal, URIRef
 from rdflib.namespace import RDF, SKOS
 
 from enpkg.monolith.rdf.namespaces import NPC

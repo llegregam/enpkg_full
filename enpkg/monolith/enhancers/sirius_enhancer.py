@@ -14,8 +14,8 @@ from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.enhancers.sirius_parser import (
     SiriusOutputParser,
-    attach_canopus_classifications,
     SiriusResults,
+    attach_canopus_classifications,
     attach_sirius_annotations,
 )
 
