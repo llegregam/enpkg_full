@@ -49,6 +49,7 @@ from .namespaces import (
     MS,
     NCBITAXON,
     NCBITAXON_PROP,
+    NPC,
     OWL,
     PROV,
     PUBCHEM,
@@ -57,12 +58,14 @@ from .namespaces import (
     SKOS,
     SOSA,
     WD,
+    XSD,
 )
+from .npc_vocabulary import npc_vocabulary
 from .uris import AnalysisURIs, CompoundURIs, OrganismURIs, _organism_uri
 
 # Prefixes bound on the output graph (cosmetic — controls Turtle prefix display).
 _PREFIXES = {
-    "emi": EMI, "enpkg": ENPKG, "sosa": SOSA, "ms": MS, "chemrof": CHEMROF,
+    "emi": EMI, "enpkg": ENPKG, "npc": NPC, "sosa": SOSA, "ms": MS, "chemrof": CHEMROF,
     "taxon": NCBITAXON, "ncbitaxon": NCBITAXON_PROP,
     "prov": PROV, "dcterms": DCTERMS, "skos": SKOS, "emi-res": EMI_RES,
     "wd": WD, "inchikey": INCHIKEY, "pubchem": PUBCHEM, "gbif": GBIF, "doi": DOI,
@@ -309,6 +312,7 @@ class AnalysisSerializer:
         )
         self._emit_ms1_annotations(analysis, spectrum, uri, ms2_emitted)
         self._add_sirius_annotations(analysis, spectrum, uri)
+        self._add_canopus_classification(analysis, spectrum, uri)
         if self.include_ions:
             self._add_ions(uri, spectrum)
         return uri
@@ -703,6 +707,77 @@ class AnalysisSerializer:
         # MS1 compounds (hasInChIKey2D) and MS2 matches (hasChemicalStructure) reuse.
         g.add((uri, EMI.hasChemicalStructure, self._inchikey2d_node(annotation.inchikey_2d)))
         return uri
+
+    # ---------------------------------------------------- CANOPUS classification
+    # NPClassifier rank -> (object property, probability property). Ordered broad to
+    # specific, matching the skos:broader chain the terms themselves carry.
+    _NPC_PREDICATES = {
+        "Pathway": (EMI.hasPathway, EMI.hasPathwayProbability),
+        "Superclass": (EMI.hasSuperClass, EMI.hasSuperClassProbability),
+        "Class": (EMI.hasClass, EMI.hasClassProbability),
+    }
+
+    def _add_canopus_classification(
+        self, analysis: Analysis, spectrum: AnnotatedSpectrum, spectrum_uri: URIRef
+    ) -> None:
+        """Emit the feature's CANOPUS class prediction as an emi:ChemicalTaxonAnnotation.
+
+        A *separate node* from the spectrum's enpkg:SiriusAnnotation, joined only through
+        the shared feature. This is not a stylistic choice: EMI declares
+        emi:ChemicalTaxonAnnotation owl:disjointWith emi:StructuralAnnotation, so hanging
+        these predicates on the SIRIUS node — tempting, since both describe the same
+        feature from the same SIRIUS run — would make the graph inconsistent under any
+        reasoner, invalidating every entailment over it, not just this part.
+
+        Attached with emi:hasAnnotation, the same predicate MS1/MS2/SIRIUS use;
+        emi:ChemicalTaxonAnnotation is an emi:SpectrumAnnotation, so the range holds.
+        A consumer tells the channels apart by rdf:type, as it already must.
+
+        A no-op for features CANOPUS could not classify (~15% of them: it only classifies
+        what SIRIUS assigned a molecular formula to).
+        """
+        classification = spectrum.canopus_classification
+        if classification is None:
+            return
+        ranks = classification.ranks()
+        if not ranks:
+            return
+        uri = AnalysisURIs.canopus_annotation_uri(analysis, spectrum)
+        if uri in self._emitted:
+            return
+        self._emitted.add(uri)
+        g = self.graph
+        g.add((uri, RDF.type, EMI.ChemicalTaxonAnnotation))
+        self._set(uri, CHEMROF.generalized_empirical_formula, classification.molecular_formula)
+        self._set(uri, EMI.hasAdduct, classification.adduct)   # "[M+K]+" form, as for SIRIUS
+        vocabulary = npc_vocabulary()
+        for rank_name, rank in ranks:
+            predicate, probability_predicate = self._NPC_PREDICATES[rank_name]
+            term = vocabulary.resolve(rank_name, rank.label)
+            g.add((uri, predicate, term))
+            # Guard on None, never on truthiness: 0.0 is a probability CANOPUS really
+            # emits, and dropping it would assert a rank with no confidence attached.
+            if rank.probability is not None:
+                self._set(uri, probability_predicate, float(rank.probability), datatype=XSD.double)
+            self._describe_npc_term(term)
+        g.add((spectrum_uri, EMI.hasAnnotation, uri))
+
+    def _describe_npc_term(self, term: URIRef) -> None:
+        """Inline a term's type, label and skos:broader ancestry, once per graph.
+
+        Without this the graph carries bare npc: IRIs. _declare_vocabulary inlines
+        enpkg.ttl only, and while enpkg.ttl declares owl:imports emi:, an import is a
+        pointer rather than content — nothing guarantees a consumer resolves it. The
+        failure mode is silent: grouping by rdfs:label or rolling up with skos:broader+
+        returns an empty result set that reads like "no such compounds here" rather than
+        like a missing vocabulary. Cheap insurance at ~590 triples for a 1160-feature
+        analysis (+0.065%). Minted, unvendored terms describe as nothing.
+        """
+        if term in self._emitted:
+            return
+        self._emitted.add(term)
+        for triple in npc_vocabulary().describe(term):
+            self.graph.add(triple)
 
     # ------------------------------------------------ match/network/ions (Ph 3)
     def _add_match(self, analysis: Analysis, match) -> URIRef:
