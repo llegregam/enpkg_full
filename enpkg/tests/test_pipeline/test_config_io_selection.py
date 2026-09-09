@@ -15,10 +15,15 @@ from enpkg.monolith.pipeline import config_io
 from enpkg.monolith.pipeline.blocks import BLOCKS_BY_ID
 from enpkg.monolith.pipeline.config_io import SELECTION_KEY
 
+# MSEnhancerConfig requires a database path, so the MS blocks cannot be built
+# from an empty form. Every other block's section stays empty.
+_MINIMAL_FORM_STATE = {"ms1": {"duckdb_path": "enpkg.duckdb"},
+                       "ms2": {"duckdb_path": "enpkg.duckdb"}}
+
 
 def _configs(selected_ids):
     """Build the ``{block_id: config|None}`` mapping the app hands to save."""
-    return config_io.build_configs(list(selected_ids), {})
+    return config_io.build_configs(list(selected_ids), _MINIMAL_FORM_STATE)
 
 
 def test_save_records_config_less_block(tmp_path):

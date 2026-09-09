@@ -547,12 +547,27 @@ class DatabaseManager:
         return deleted
 
     def register_library(self, **fields) -> None:
-        """Insert one ``spectral_library_registry`` row from column-keyed values."""
+        """Insert one ``spectral_library_registry`` row from column-keyed values.
+
+        Must happen *before* the library's spectra are inserted:
+        ``library_spectra.library_id`` is a foreign key into this table, so rows
+        written first would reference a library that does not yet exist. Counts
+        that are only known after the import are filled in by
+        :meth:`update_library_stats`.
+        """
         columns = ", ".join(fields)
         placeholders = ", ".join("?" for _ in fields)
         self._conn.execute(
             f"INSERT INTO spectral_library_registry ({columns}) VALUES ({placeholders})",
             list(fields.values()),
+        )
+
+    def update_library_stats(self, library_id: int, **fields) -> None:
+        """Fill in registry columns that are only known once the import has run."""
+        assignments = ", ".join(f"{column} = ?" for column in fields)
+        self._conn.execute(
+            f"UPDATE spectral_library_registry SET {assignments} WHERE library_id = ?",
+            [*fields.values(), library_id],
         )
 
     def drop_library_spectra_indexes(self) -> None:

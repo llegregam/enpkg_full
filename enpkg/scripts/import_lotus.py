@@ -44,16 +44,14 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build a DuckDB database from LOTUS CSVs and spectral pickles.",
+        description="Import the LOTUS compound tables into a DuckDB database.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--metadata",      required=True,  help="Path to taxo_db_metadata CSV")
     parser.add_argument("--pathways",      required=True,  help="Path to NPC pathways CSV")
     parser.add_argument("--superclasses",  required=True,  help="Path to NPC superclasses CSV")
     parser.add_argument("--classes",       required=True,  help="Path to NPC classes CSV")
-    parser.add_argument("--spectral-pos",  default=None,   help="Path to positive-mode spectral pickle")
-    parser.add_argument("--spectral-neg",  default=None,   help="Path to negative-mode spectral pickle")
-    parser.add_argument("--output",        required=True,  help="Output .duckdb file path")
+    parser.add_argument("--database",      required=True,  help="Path to the .duckdb file")
     parser.add_argument("--force",         action="store_true",
                         help="Re-import even if the database already appears populated")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -82,7 +80,7 @@ def main() -> None:
         logger.error("Install duckdb with: pip install duckdb")
         sys.exit(1)
 
-    output_path = args.output
+    output_path = args.database
     logger.info("Opening database: %s", output_path)
     with DatabaseManager(output_path) as db:
         db.create_schema()
@@ -109,20 +107,6 @@ def main() -> None:
             "compounds: %d rows, npc_classifications: %d rows (%.1fs total)",
             counts["compounds"], counts["npc_classifications"], elapsed,
         )
-
-        # -- Spectral databases -----------------------------------------------
-        for mode, pkl_path in [("pos", args.spectral_pos), ("neg", args.spectral_neg)]:
-            if pkl_path is None:
-                continue
-            if not Path(pkl_path).is_file():
-                logger.warning("spectral-%s file not found: %s — skipping", mode, pkl_path)
-                continue
-            logger.info("Importing %s spectral library: %s", mode, pkl_path)
-            t0 = time()
-            db.import_spectral_db(pkl_path=pkl_path, mode=mode)
-            elapsed = time() - t0
-            count = db.row_counts()["spectral_library"]
-            logger.info("spectral_library (%s): %d rows total (%.1fs)", mode, count, elapsed)
 
         # -- Final summary ----------------------------------------------------
         logger.info("Done. Final row counts:")

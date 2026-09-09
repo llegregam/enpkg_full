@@ -73,4 +73,5 @@ def test_default_mode_is_a_known_mode():
     # Guard: the config default must be one of the recognised modes.
     from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 
-    assert MSEnhancerConfig().ms2_adduct_filter in MS2_ADDUCT_FILTER_MODES
+    config = MSEnhancerConfig(duckdb_path="enpkg.duckdb")
+    assert config.ms2_adduct_filter in MS2_ADDUCT_FILTER_MODES
