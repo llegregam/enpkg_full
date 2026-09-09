@@ -13,7 +13,7 @@ directory structured as::
     └── ...
 
 and runs the selected pipeline blocks against every experiment. Expensive
-shared resources — ``DBLoader`` and every non-Sirius pipeline step — are built
+shared resources — the database stores and every non-Sirius pipeline step — are built
 **once** and reused across all experiments. Sirius is rebuilt per experiment
 with a deep-copied config whose input/output paths are rewritten to point at
 that experiment's spectra and a per-experiment output subdirectory.
@@ -115,7 +115,7 @@ class BatchResult:
 
     Holds one :class:`RunResult` per experiment plus batch-level metadata.
     ``error`` is reserved for batch-wide failures (e.g. missing shared metadata
-    file, DBLoader construction failure); per-experiment failures live on each
+    file, database store construction failure); per-experiment failures live on each
     ``RunResult.error``.
     """
 
@@ -228,13 +228,12 @@ def run_batch(
     selected_ids: list[str],
     configs: dict[str, Any],
     ionization_mode: str,
-    database_dir: Path,
     log_queue: "queue.Queue[str]",
     verbose: bool = False,
 ) -> BatchResult:
     """Run the selected pipeline blocks against every experiment in ``parent_dir``.
 
-    Shared steps (and the ``DBLoader``) are built once up front. For each
+    Shared steps and their database stores are built once up front. For each
     experiment a dedicated runtime + summary log pair is written under the
     batch folder, and — if Sirius is selected — a per-experiment Sirius step
     with rewritten input/output paths is built just before execution.
@@ -269,10 +268,9 @@ def run_batch(
     bootstrap_logger = logging.getLogger("enpkg.gui.batch.bootstrap")
     bootstrap_logger.setLevel(logging.INFO)
     try:
-        shared_steps, _ = build_shared_steps(
+        shared_steps = build_shared_steps(
             selected_ids,
             configs,
-            database_dir,
             bootstrap_logger,
             skip={"sirius"},  # Sirius is per-experiment (paths differ).
         )
@@ -372,7 +370,7 @@ def run_batch(
                     exp.run_name, exp.sirius_spectra_path, sirius_shared_cfg,
                 )
                 # Sirius is bound per-experiment (its config carries per-run paths);
-                # it needs neither DBLoader nor LotusStore.
+                # it needs neither the LotusStore nor the SpectralLibraryStore.
                 steps["sirius"] = _build_step("sirius", sirius_cfg, logger, None, None)
                 Path(sirius_cfg.sirius_params.output_directory).mkdir(parents=True, exist_ok=True)
                 logger.info("[%s] Built Sirius step with input %s and output dir %s",

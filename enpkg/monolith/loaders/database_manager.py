@@ -1,20 +1,21 @@
 """
-Persistent DuckDB wrapper for LOTUS compound metadata and spectral library.
+Persistent DuckDB wrapper for LOTUS compound metadata and the spectral libraries.
 
 This module provides a DatabaseManager class that:
   - Owns a file-backed DuckDB connection
-  - Creates the schema (compounds, npc_classifications, spectral_library tables)
-  - Exposes query methods that return Polars DataFrames or list[Spectrum]
+  - Creates the schema. Four tables: ``compounds`` and ``npc_classifications``
+    hold LOTUS; ``spectral_library_registry`` holds one row per registered
+    spectral library, and ``library_spectra`` holds that library's spectra.
+  - Exposes query methods returning Polars DataFrames or column-keyed row dicts
 
-LotusStore is the primary consumer of the compound queries exposed here;
-DBLoader now only wraps the spectral-library loader on top of this.
+LotusStore consumes the compound queries; SpectralLibraryStore consumes the
+spectral ones. Neither table is written from the pipeline: both are populated
+ahead of time by the ``import_lotus`` and ``import_spectral_library`` scripts.
 """
 
-import gc
-import json
 import logging
-import pickle
 from time import time
+from typing import Optional, Sequence
 
 import duckdb
 import numpy as np
@@ -24,7 +25,13 @@ from matchms import Spectrum
 logger = logging.getLogger(__name__)
 
 
-_DDL = """
+# Each statement is quoted separately rather than being split out of one string on
+# ';'. A text split has no model of SQL, so a semicolon inside a string literal, a
+# CHECK expression or a comment would divide a statement into two invalid fragments
+# and report the failure against the fragment rather than against the statement as
+# written.
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
 CREATE TABLE IF NOT EXISTS compounds (
     structure_smiles                        TEXT PRIMARY KEY,
     structure_inchikey                      TEXT,
@@ -63,46 +70,100 @@ CREATE TABLE IF NOT EXISTS compounds (
     reference_wikidata                      TEXT,
     reference_doi                           TEXT,
     manual_validation                       BOOLEAN
-);
-
+)
+""",
+    """
 CREATE INDEX IF NOT EXISTS idx_compounds_formula
-    ON compounds (structure_molecular_formula);
-
+    ON compounds (structure_molecular_formula)
+""",
+    """
 CREATE INDEX IF NOT EXISTS idx_compounds_short_inchikey
-    ON compounds (short_inchikey);
-
+    ON compounds (short_inchikey)
+""",
+    """
 CREATE INDEX IF NOT EXISTS idx_compounds_exact_mass
-    ON compounds (structure_exact_mass);
-
+    ON compounds (structure_exact_mass)
+""",
+    """
 CREATE TABLE IF NOT EXISTS npc_classifications (
     structure_smiles TEXT PRIMARY KEY
         REFERENCES compounds (structure_smiles),
     pathways     FLOAT[],
     superclasses FLOAT[],
     classes      FLOAT[]
-);
+)
+""",
+    # One row per registered spectral library. Every library is a FragHub export,
+    # and a FragHub bucket is homogeneous in ion mode and predicted/experimental
+    # status, so both are recorded once here rather than per spectrum. The import
+    # verifies that homogeneity rather than trusting the bucket's name.
+    """
+CREATE TABLE IF NOT EXISTS spectral_library_registry (
+    library_id         SMALLINT PRIMARY KEY,
+    name               TEXT NOT NULL UNIQUE,
+    version            TEXT NOT NULL,
+    ion_mode           TEXT NOT NULL CHECK (ion_mode IN ('pos', 'neg')),
+    predicted          BOOLEAN NOT NULL,
+    separation         TEXT,
+    fraghub_version    TEXT,
+    source_path        TEXT,
+    ms_level_filter    TEXT,
+    n_spectra          INTEGER,
+    n_without_inchikey INTEGER,
+    unknown_columns    TEXT,
+    imported_at        TIMESTAMP DEFAULT current_timestamp
+)
+""",
+    # A column here iff it is filtered on, joined on, or read to build an
+    # MS2ChemicalAnnotation; everything else FragHub carries stays in
+    # metadata_json. short_inchikey is nullable and derived from inchikey.
+    """
+CREATE TABLE IF NOT EXISTS library_spectra (
+    id                    BIGINT PRIMARY KEY,
+    library_id            SMALLINT NOT NULL REFERENCES spectral_library_registry (library_id),
+    mode                  TEXT NOT NULL CHECK (mode IN ('pos', 'neg')),
+    ms_level              UTINYINT,
+    precursor_mz          DOUBLE NOT NULL,
+    mzs                   FLOAT[] NOT NULL,
+    intensities           FLOAT[] NOT NULL,
+    inchikey              TEXT,
+    short_inchikey        TEXT,
+    smiles                TEXT,
+    molecular_formula     TEXT,
+    compound_name         TEXT,
+    exact_mass            DOUBLE,
+    adduct                TEXT,
+    splash                TEXT,
+    npc_pathway           TEXT,
+    npc_superclass        TEXT,
+    npc_class             TEXT,
+    classyfire_superclass TEXT,
+    classyfire_class      TEXT,
+    classyfire_subclass   TEXT,
+    metadata_json         JSON
+)
+""",
+    """
+CREATE INDEX IF NOT EXISTS idx_library_spectra_precursor_mz
+    ON library_spectra (precursor_mz, mode)
+""",
+    """
+CREATE INDEX IF NOT EXISTS idx_library_spectra_short_inchikey
+    ON library_spectra (short_inchikey)
+""",
+    """
+CREATE INDEX IF NOT EXISTS idx_library_spectra_library_id
+    ON library_spectra (library_id)
+""",
+)
 
-CREATE TABLE IF NOT EXISTS spectral_library (
-    id             INTEGER PRIMARY KEY,
-    short_inchikey TEXT    NOT NULL,
-    precursor_mz   DOUBLE  NOT NULL,
-    mzs            FLOAT[] NOT NULL,
-    intensities    FLOAT[] NOT NULL,
-    mode           TEXT    NOT NULL CHECK (mode IN ('pos', 'neg')),
-    compound_name  TEXT,
-    adduct         TEXT,
-    charge         INTEGER,
-    metadata_json  JSON
-);
-
-CREATE INDEX IF NOT EXISTS idx_spectral_precursor_mz
-    ON spectral_library (precursor_mz, mode);
-
-CREATE INDEX IF NOT EXISTS idx_spectral_short_inchikey
-    ON spectral_library (short_inchikey);
-"""
-
-_SPECTRAL_IMPORT_CHUNK_SIZE = 50_000
+# Indexes on library_spectra, dropped before a bulk import and recreated after:
+# every insert would otherwise have to update them as well.
+_LIBRARY_SPECTRA_INDEXES: tuple[str, ...] = (
+    "idx_library_spectra_precursor_mz",
+    "idx_library_spectra_short_inchikey",
+    "idx_library_spectra_library_id",
+)
 
 # Columns in the compounds table that map 1-to-1 to the original CSV columns.
 # Order matters: LotusStore builds its column-to-index map from this list when
@@ -214,10 +275,9 @@ class DatabaseManager:
     def create_schema(self) -> None:
         """Create all tables and indexes (idempotent — uses IF NOT EXISTS)."""
         logger.info("Creating DuckDB schema")
-        statements = [s.strip() for s in _DDL.split(";") if s.strip()]
-        for statement in statements:
+        for statement in _DDL_STATEMENTS:
             self._conn.execute(statement)
-        logger.debug("Schema ready (%d statements executed)", len(statements))
+        logger.debug("Schema ready (%d statements executed)", len(_DDL_STATEMENTS))
 
     def is_populated(self) -> bool:
         """Return True if the compounds table has at least one row."""
@@ -253,7 +313,7 @@ class DatabaseManager:
         classes_path:
             Path to the NPC classes CSV (first column: SMILES).
         """
-        conn = self._conn
+        conn: duckdb.DuckDBPyConnection = self._conn
 
         # -- compounds -------------------------------------------------------
         logger.info("Importing compounds from %s", lotus_metadata_path)
@@ -432,149 +492,81 @@ class DatabaseManager:
             logger.exception("NPC classification import failed — transaction rolled back")
             raise
 
-    def import_spectral_db(
-        self, pkl_path: str, mode: str, chunk_size: int = _SPECTRAL_IMPORT_CHUNK_SIZE,
-    ) -> None:
+    # ── Spectral library registration ──────────────────────────────────────────
+    # The rows themselves are inserted by the FragHub importer
+    # (loaders/spectral_libraries/fraghub.py), which owns the SELECT that reads the
+    # CSV. What lives here is everything that concerns the table rather than the
+    # file: id allocation, the registry row, and the bulk-load index handling.
+
+    def next_library_id(self) -> int:
+        """Return the next free ``spectral_library_registry.library_id``."""
+        result = self._conn.execute(
+            "SELECT MAX(library_id) FROM spectral_library_registry"
+        ).fetchone()
+        return (result[0] if result and result[0] is not None else -1) + 1
+
+    def next_spectrum_id(self) -> int:
+        """Return the next free ``library_spectra.id``.
+
+        Ids are allocated from one space shared by every library, so a library can
+        be imported without renumbering the ones already present.
         """
-        One-time import of a pickled list[matchms.Spectrum] into spectral_library.
+        result = self._conn.execute("SELECT MAX(id) FROM library_spectra").fetchone()
+        return (result[0] if result and result[0] is not None else -1) + 1
 
-        Spectra are processed in chunks and inserted via Polars DataFrames
-        (DuckDB's zero-copy Arrow path) to keep memory bounded.
+    def get_library_by_name(self, name: str) -> Optional[dict]:
+        """Return the registry row for ``name``, or None if it is not registered."""
+        row = self._conn.execute(
+            "SELECT * FROM spectral_library_registry WHERE name = ?", [name]
+        ).fetchone()
+        if row is None:
+            return None
+        cols = [d[0] for d in self._conn.description]
+        return dict(zip(cols, row, strict=True))
 
-        Parameters
-        ----------
-        pkl_path:
-            Path to the .pkl file containing a list[Spectrum].
-        mode:
-            Ionization mode, either 'pos' or 'neg'.
-        chunk_size:
-            Number of spectra to process per batch.
+    def delete_library(self, library_id: int) -> int:
+        """Remove a library and every spectrum belonging to it.
+
+        Spectra are deleted first: ``library_spectra.library_id`` references the
+        registry, so removing the registry row while its spectra remain would leave
+        the foreign key pointing at nothing.
+
+        Returns:
+            The number of spectra deleted.
         """
-        if mode not in ("pos", "neg"):
-            raise ValueError(f"mode must be 'pos' or 'neg', got {mode!r}")
-
-        logger.info("Loading spectral pickle (%s): %s", mode, pkl_path)
-        t0 = time()
-        with open(pkl_path, "rb") as f:
-            spectra: list[Spectrum] = pickle.load(f)
-        n_total = len(spectra)
-        logger.info("Loaded %d spectra from pickle in %.2fs", n_total, time() - t0)
-
-        # Determine the starting id to avoid PK conflicts if one mode was already imported
-        result = self._conn.execute("SELECT MAX(id) FROM spectral_library").fetchone()
-        next_id = (result[0] or -1) + 1
-        logger.debug("Starting spectral_library id: %d", next_id)
-
-        # Drop indexes for faster bulk loading
-        self._conn.execute("DROP INDEX IF EXISTS idx_spectral_precursor_mz")
-        self._conn.execute("DROP INDEX IF EXISTS idx_spectral_short_inchikey")
-
-        n_inserted = 0
-        n_skipped = 0
-        t0 = time()
-
-        for chunk_start in range(0, n_total, chunk_size):
-            chunk_end = min(chunk_start + chunk_size, n_total)
-            chunk = spectra[chunk_start:chunk_end]
-
-            ids, short_inchikeys, precursor_mzs = [], [], []
-            mzs_list, intensities_list = [], []
-            modes, compound_names, adducts, charges, metadata_jsons = [], [], [], [], []
-
-            for spec in chunk:
-                precursor_mz = spec.get("precursor_mz")
-                if precursor_mz is None:
-                    n_skipped += 1
-                    logger.warning("Skipping spectrum with no precursor_mz (metadata: %s)", spec.metadata)
-                    continue
-
-                compound_name = spec.get("compound_name")
-                metadata_dict = {k: v for k, v in spec.metadata.items()
-                                 if k not in ("peaks_json",)}
-
-                ids.append(next_id)
-                next_id += 1
-                short_inchikeys.append(compound_name or "")
-                precursor_mzs.append(float(precursor_mz))
-                mzs_list.append(spec.peaks.mz.tolist())
-                intensities_list.append(spec.peaks.intensities.tolist())
-                modes.append(mode)
-                compound_names.append(compound_name)
-                adducts.append(spec.get("adduct"))
-                charges.append(spec.get("charge"))
-                metadata_jsons.append(json.dumps(metadata_dict, default=str))
-
-            # Free memory from the chunk early if it had no valid spectra
-            if not ids:
-                del chunk
-                continue
-
-            df = pl.DataFrame({
-                "id":             ids,
-                "short_inchikey": short_inchikeys,
-                "precursor_mz":  precursor_mzs,
-                "mzs":           mzs_list,
-                "intensities":   intensities_list,
-                "mode":          modes,
-                "compound_name": compound_names,
-                "adduct":        adducts,
-                "charge":        charges,
-                "metadata_json": metadata_jsons,
-            }).cast({
-                "id": pl.Int32,
-                "precursor_mz": pl.Float32,
-                "charge": pl.Int8, # charge is usually small, especially in metabolomics
-            })
-
-            self._conn.begin()
-            try:
-                self._conn.execute(
-                    """INSERT OR IGNORE INTO spectral_library
-                       (id, short_inchikey, precursor_mz, mzs, intensities, mode,
-                        compound_name, adduct, charge, metadata_json)
-                    SELECT id, short_inchikey, precursor_mz, mzs, intensities, mode,
-                           compound_name, adduct, charge, metadata_json
-                    FROM df""",
-                )
-                self._conn.commit()
-                n_inserted += len(df)
-            except Exception:
-                self._conn.rollback()
-                logger.exception("Spectral import failed at chunk [%d:%d]", chunk_start, chunk_end)
-                raise
-
-            del df, ids, short_inchikeys, precursor_mzs
-            del mzs_list, intensities_list
-            del modes, compound_names, adducts, charges, metadata_jsons, chunk
-
-            for idx in range(chunk_start, chunk_end):
-                spectra[idx] = None
-            gc.collect()
-
-            logger.debug(
-                "Chunk [%d:%d] inserted (%d rows so far, %.1fs elapsed)",
-                chunk_start, chunk_end, n_inserted, time() - t0,
-            )
-
-        del spectra
-        gc.collect()
-
-        # Recreate indexes
+        deleted = self._conn.execute(
+            "SELECT count(*) FROM library_spectra WHERE library_id = ?", [library_id]
+        ).fetchone()[0]
         self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_spectral_precursor_mz "
-            "ON spectral_library (precursor_mz, mode)"
+            "DELETE FROM library_spectra WHERE library_id = ?", [library_id]
         )
         self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_spectral_short_inchikey "
-            "ON spectral_library (short_inchikey)"
+            "DELETE FROM spectral_library_registry WHERE library_id = ?", [library_id]
+        )
+        logger.info("Deleted library %d and its %d spectra", library_id, deleted)
+        return deleted
+
+    def register_library(self, **fields) -> None:
+        """Insert one ``spectral_library_registry`` row from column-keyed values."""
+        columns = ", ".join(fields)
+        placeholders = ", ".join("?" for _ in fields)
+        self._conn.execute(
+            f"INSERT INTO spectral_library_registry ({columns}) VALUES ({placeholders})",
+            list(fields.values()),
         )
 
-        if n_skipped:
-            logger.warning("Skipped %d spectra with no precursor_mz", n_skipped)
-        logger.info(
-            "Inserted %d spectra (%s) in %.2fs",
-            n_inserted, mode, time() - t0,
-        )
+    def drop_library_spectra_indexes(self) -> None:
+        """Drop the ``library_spectra`` indexes ahead of a bulk insert."""
+        for index in _LIBRARY_SPECTRA_INDEXES:
+            self._conn.execute(f"DROP INDEX IF EXISTS {index}")
+        logger.debug("Dropped %d spectral indexes for bulk load", len(_LIBRARY_SPECTRA_INDEXES))
+
+    def create_library_spectra_indexes(self) -> None:
+        """Recreate the ``library_spectra`` indexes after a bulk insert."""
+        for statement in _DDL_STATEMENTS:
+            if "ON library_spectra" in statement:
+                self._conn.execute(statement)
+        logger.debug("Recreated %d spectral indexes", len(_LIBRARY_SPECTRA_INDEXES))
 
     # ── Compound queries ───────────────────────────────────────────────────────
     # Both queries share _COMPOUND_SELECT (derived from _COMPOUND_COLUMNS) and
@@ -607,35 +599,105 @@ class DatabaseManager:
 
     # ── Spectral queries ───────────────────────────────────────────────────────
 
-    def get_spectra_by_mode(self, mode: str) -> list[Spectrum]:
-        """Reconstruct all matchms.Spectrum objects for the given ionization mode."""
-        logger.debug("Querying spectral_library for mode=%s", mode)
-        t0 = time()
+    def get_registered_libraries(self) -> list[dict]:
+        """Return every registered spectral library as a column-keyed dict."""
         rows = self._conn.execute(
-            "SELECT * FROM spectral_library WHERE mode = ?", [mode]
+            "SELECT library_id, name, version, ion_mode, predicted, separation, "
+            "n_spectra FROM spectral_library_registry ORDER BY library_id"
         ).fetchall()
         cols = [d[0] for d in self._conn.description]
-        spectra = self._reconstruct_spectra(rows, cols)
-        logger.info("Retrieved %d spectra (mode=%s) in %.2fs", len(spectra), mode, time() - t0)
-        return spectra
+        return [dict(zip(cols, row, strict=True)) for row in rows]
 
-    def _reconstruct_spectra(
-        self, rows: list[tuple], cols: list[str]
-    ) -> list[Spectrum]:
-        """Convert raw DuckDB rows into matchms.Spectrum objects."""
-        spectra = []
-        for row in rows:
-            r = dict(zip(cols, row, strict=False))
-            mzs = np.array(r["mzs"], dtype=float)
-            intensities = np.array(r["intensities"], dtype=float)
-            metadata: dict = {"compound_name": r["compound_name"],
-                              "precursor_mz": r["precursor_mz"]}
-            if r["adduct"] is not None:
-                metadata["adduct"] = r["adduct"]
-            if r["charge"] is not None:
-                metadata["charge"] = r["charge"]
-            spectra.append(Spectrum(mz=mzs, intensities=intensities, metadata=metadata))
-        return spectra
+    def get_candidate_spectra(
+        self,
+        precursor_mzs: Sequence[float],
+        mode: str,
+        tolerance: float,
+        library_ids: Optional[Sequence[int]] = None,
+    ) -> tuple[list[dict], list[tuple[int, int]]]:
+        """Library rows whose precursor m/z is within ``tolerance`` of any query value.
+
+        Answers "which library spectra could match these features?" in SQL, so only
+        the candidates are materialised rather than the whole library. This is the
+        same predicate as matchms' ``PrecursorMzMatch(tolerance, "Dalton")``, which
+        computes ``abs(a - b) <= tol``: SQL ``BETWEEN`` is inclusive at both ends.
+
+        Args:
+            precursor_mzs: Query precursor m/z values, positionally indexed.
+            mode: 'pos' or 'neg'.
+            tolerance: Half-width of the window, in Daltons.
+            library_ids: Restrict to these libraries; None searches every library.
+
+        Returns:
+            ``(rows, pairs)`` — the distinct candidate rows as column-keyed dicts,
+            and ``(query_index, row_index)`` pairs naming which query each candidate
+            was retrieved for. A candidate matching several queries appears once in
+            ``rows`` and once per query in ``pairs``.
+        """
+        if len(precursor_mzs) == 0:
+            return [], []
+
+        t0 = time()
+        # Registered as a DuckDB replacement scan: the name `queries` resolves to
+        # this frame, so the join happens entirely inside the database.
+        queries = pl.DataFrame(  # noqa: F841 - referenced by name in the SQL below
+            {
+                "query_idx": list(range(len(precursor_mzs))),
+                "mz": [float(mz) for mz in precursor_mzs],
+            }
+        )
+
+        library_filter = ""
+        params: list = [tolerance, tolerance, mode]
+        if library_ids is not None:
+            placeholders = ", ".join("?" for _ in library_ids)
+            library_filter = f" AND s.library_id IN ({placeholders})"
+            params.extend(int(i) for i in library_ids)
+
+        pairs_sql = (
+            "SELECT q.query_idx, s.id "
+            "FROM queries q JOIN library_spectra s "
+            "  ON s.precursor_mz BETWEEN q.mz - ? AND q.mz + ? "
+            f"WHERE s.mode = ?{library_filter}"
+        )
+        id_pairs = self._conn.execute(pairs_sql, params).fetchall()
+        if not id_pairs:
+            logger.debug("No candidates for %d queries in %.2fs",
+                         len(precursor_mzs), time() - t0)
+            return [], []
+
+        # Fetch each candidate once, however many queries retrieved it.
+        candidate_ids = sorted({row_id for _, row_id in id_pairs})
+        placeholders = ", ".join("?" for _ in candidate_ids)
+        rows = self._conn.execute(
+            f"SELECT * FROM library_spectra WHERE id IN ({placeholders})",
+            candidate_ids,
+        ).fetchall()
+        cols = [d[0] for d in self._conn.description]
+        candidates = [dict(zip(cols, row, strict=True)) for row in rows]
+
+        index_by_id = {row["id"]: i for i, row in enumerate(candidates)}
+        pairs = [(query_idx, index_by_id[row_id]) for query_idx, row_id in id_pairs]
+
+        logger.debug(
+            "Retrieved %d candidates (%d pairs) for %d queries in %.2fs",
+            len(candidates), len(pairs), len(precursor_mzs), time() - t0,
+        )
+        return candidates, pairs
+
+    @staticmethod
+    def row_to_spectrum(row: dict) -> Spectrum:
+        """Build the matchms Spectrum used for cosine scoring from a candidate row.
+
+        Only the peaks and the precursor m/z are needed: the precursor filter now
+        runs in SQL, and every other library field reaches the annotation through
+        the candidate row itself rather than through matchms metadata.
+        """
+        return Spectrum(
+            mz=np.array(row["mzs"], dtype=float),
+            intensities=np.array(row["intensities"], dtype=float),
+            metadata={"precursor_mz": row["precursor_mz"]},
+        )
 
     # ── Column name helpers ────────────────────────────────────────────────────
 
@@ -667,7 +729,12 @@ class DatabaseManager:
 
     def row_counts(self) -> dict[str, int]:
         """Return row counts for each table (useful for import verification)."""
-        tables = ["compounds", "npc_classifications", "spectral_library"]
+        tables = [
+            "compounds",
+            "npc_classifications",
+            "spectral_library_registry",
+            "library_spectra",
+        ]
         return {
             t: self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
             for t in tables

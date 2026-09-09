@@ -23,5 +23,10 @@ class EnrichmentError(MonolithError):
     """Exception raised for errors in the enrichment process."""
 
 
-class DBLoaderError(MonolithError):
-    """Exception raised for errors in database loading."""
+class DatabaseError(MonolithError):
+    """Exception raised for errors reaching or reading the DuckDB database.
+
+    Covers a missing or unusable database path, an empty compounds table, an
+    unregistered spectral library, and a spectral-library import that does not
+    satisfy the expected column contract.
+    """

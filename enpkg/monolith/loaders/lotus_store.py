@@ -15,7 +15,7 @@ import polars as pl
 from tqdm.auto import tqdm
 
 from enpkg.monolith.data.lotus_class import Lotus
-from enpkg.monolith.exceptions import DBLoaderError
+from enpkg.monolith.exceptions import DatabaseError
 from enpkg.monolith.loaders.database_manager import DatabaseManager
 
 # _LIST_COLUMNS = ("pathways", "superclasses", "classes")
@@ -26,7 +26,7 @@ class LotusStore:
 
     def __init__(self, duckdb_path: str, logger: Logger):
         if not duckdb_path:
-            raise DBLoaderError(
+            raise DatabaseError(
                 "LotusStore requires a DuckDB path; CSV fallback is no longer supported."
             )
 
@@ -36,7 +36,7 @@ class LotusStore:
         # Get column names of each of the supergroups
         with DatabaseManager(duckdb_path, read_only=True) as db:
             if not db.is_populated():
-                raise DBLoaderError(
+                raise DatabaseError(
                     f"DuckDB at {duckdb_path!r} exists but compounds table is empty."
                 )
             self._compound_columns: tuple[str, ...] = tuple(db.compound_columns)

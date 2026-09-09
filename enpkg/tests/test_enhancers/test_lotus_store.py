@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from enpkg.monolith.exceptions import DBLoaderError
+from enpkg.monolith.exceptions import DatabaseError
 from enpkg.monolith.loaders.database_manager import DatabaseManager
 from enpkg.monolith.loaders.lotus_store import LotusStore
 
@@ -115,14 +115,14 @@ def seeded_duckdb(tmp_path) -> str:
 
 class TestLotusStoreConstruction:
     def test_raises_on_empty_path(self, logger):
-        with pytest.raises(DBLoaderError, match="requires a DuckDB path"):
+        with pytest.raises(DatabaseError, match="requires a DuckDB path"):
             LotusStore(duckdb_path="", logger=logger)
 
     def test_raises_on_empty_db(self, tmp_path, logger):
         path = str(tmp_path / "empty.duckdb")
         with DatabaseManager(path) as db:
             db.create_schema()
-        with pytest.raises(DBLoaderError, match="compounds table is empty"):
+        with pytest.raises(DatabaseError, match="compounds table is empty"):
             LotusStore(duckdb_path=path, logger=logger)
 
     def test_metadata_populated(self, seeded_duckdb, logger):

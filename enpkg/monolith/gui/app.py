@@ -575,7 +575,6 @@ def _run_single_mode(selected, configs, shared_params, sidebar) -> None:
             metadata_path=input_dir / sidebar["metadata"],
             quant_path=input_dir / sidebar["quant"],
             ionization_mode=shared_params.get("ionization_mode", "pos"),
-            database_dir=DATABASE_DIR,
             log_queue=log_q,
             verbose=sidebar["verbose"],
         )
@@ -618,7 +617,6 @@ def _run_batch_mode(selected, configs, shared_params, sidebar) -> None:
             selected_ids=selected,
             configs=configs,
             ionization_mode=shared_params.get("ionization_mode", "pos"),
-            database_dir=DATABASE_DIR,
             log_queue=log_q,
             verbose=sidebar["verbose"],
         )
