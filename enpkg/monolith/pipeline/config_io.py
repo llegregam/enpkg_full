@@ -125,6 +125,38 @@ def save_unified_yaml(
         yaml.safe_dump(out, f, sort_keys=False)
 
 
+SHARED_FIELD = "general_params"
+
+
+def inject_shared_params(raw: dict[str, dict], shared: dict) -> dict[str, dict]:
+    """Fold one shared ``general_params`` dict into every section that accepts it.
+
+    ``GeneralParams`` (``recompute``, ``ionization_mode``) appears on most block configs,
+    but it describes the run rather than the block: a run cannot sensibly process MS1 in
+    positive mode and MS2 in negative. Callers therefore collect it once and merge it into
+    every section here, instead of asking the user to keep one copy per block in sync.
+
+    Only sections whose model actually declares the field receive it, so a block that does
+    not take ``GeneralParams`` is left untouched rather than being handed a key that would
+    fail validation.
+
+    Args:
+        raw: ``{block_id: section dict}`` as produced by a form or read from YAML.
+        shared: the single ``GeneralParams`` dict to merge in.
+
+    Returns:
+        A new mapping; ``raw`` is not modified.
+    """
+    merged: dict[str, dict] = {}
+    for block_id, values in raw.items():
+        block = BLOCKS_BY_ID[block_id]
+        if block.config_cls is not None and SHARED_FIELD in block.config_cls.model_fields:
+            merged[block_id] = {**values, SHARED_FIELD: shared}
+        else:
+            merged[block_id] = values
+    return merged
+
+
 def build_configs(
     selected_ids: list[str],
     form_state: dict[str, dict],
