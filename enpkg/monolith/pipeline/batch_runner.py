@@ -427,6 +427,7 @@ def run_batch(
                         str(ttl_path),
                         **serializer_config.model_dump(),
                     )
+                result.ttl_file = ttl_path
                 logger.info(
                     "[%s] Wrote RDF graph: %s (%.1fs)",
                     exp.run_name, ttl_path, result.durations[STAGE_RDF],

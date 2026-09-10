@@ -112,6 +112,9 @@ class RunResult:
     error: Optional[str] = None
     log_file: Optional[Path] = None
     summary_file: Optional[Path] = None
+    # Set once the Turtle export has been written. Stays None when serialization was
+    # skipped or failed, so a reader can tell "no graph" from "graph at this path".
+    ttl_file: Optional[Path] = None
     # Wall-clock seconds per block id, plus the STAGE_* keys for the loading,
     # serialization and pickling that happen outside the block loop. A plain dict
     # of floats, so it outlives `analysis` being dropped at the end of a batch
@@ -323,6 +326,7 @@ def run_pipeline(
                     str(ttl_path),
                     **serializer_config.model_dump(),
                 )
+            result.ttl_file = ttl_path
             # Logged rather than shown in the summary: the summary is written and
             # its file handler closed inside `_run_analysis`, which has already
             # returned by this point.
