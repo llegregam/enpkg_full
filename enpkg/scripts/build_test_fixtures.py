@@ -143,7 +143,7 @@ def build_database(
         out_db: Fixture database to create.
         n_family: Number of compounds to keep from ``family`` (beyond ``genus``).
         n_other: Number of compounds to keep from outside ``family``.
-        n_spectra: Number of spectral-library entries to keep.
+        n_spectra: Number of library spectra to keep **per registered library**.
         genus: Genus whose compounds are kept in full.
         family: Family to sample the mid-tier of compounds from.
     """
@@ -198,14 +198,46 @@ def build_database(
         n_npc = conn.execute("SELECT count(*) FROM npc_classifications").fetchone()[0]
         logger.info("npc_classifications: %d rows (%.1fs)", n_npc, time() - t0)
 
+        # The registry is copied whole and first: library_spectra.library_id is a
+        # foreign key onto it, so sampled spectra would otherwise reference
+        # libraries that are not in the fixture.
         t0 = time()
         conn.execute(
-            f"INSERT INTO spectral_library SELECT * FROM src.spectral_library "
-            f"WHERE precursor_mz BETWEEN {_MASS_MIN} AND {_MASS_MAX} "
-            f"ORDER BY hash(id) LIMIT {n_spectra}"
+            "INSERT INTO spectral_library_registry "
+            "SELECT * FROM src.spectral_library_registry"
         )
-        n_spec = conn.execute("SELECT count(*) FROM spectral_library").fetchone()[0]
-        logger.info("spectral_library: %d rows (%.1fs)", n_spec, time() - t0)
+        n_libraries = conn.execute(
+            "SELECT count(*) FROM spectral_library_registry"
+        ).fetchone()[0]
+
+        # Columns are named rather than copied with SELECT *: a positional copy
+        # silently misaligns the moment either schema gains a column. Sampling is
+        # per library so every registered library keeps some spectra, instead of
+        # one large library crowding the others out of the LIMIT.
+        columns = ", ".join(
+            row[0] for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'library_spectra' ORDER BY ordinal_position"
+            ).fetchall()
+        )
+        conn.execute(
+            f"INSERT INTO library_spectra ({columns}) "
+            f"SELECT {columns} FROM src.library_spectra "
+            f"WHERE precursor_mz BETWEEN {_MASS_MIN} AND {_MASS_MAX} "
+            f"QUALIFY row_number() OVER "
+            f"    (PARTITION BY library_id ORDER BY hash(id)) <= {n_spectra}"
+        )
+        n_spec = conn.execute("SELECT count(*) FROM library_spectra").fetchone()[0]
+        # Keep the registry's counts describing the fixture, not the source.
+        conn.execute(
+            "UPDATE spectral_library_registry r SET n_spectra = ("
+            "  SELECT count(*) FROM library_spectra s WHERE s.library_id = r.library_id"
+            ")"
+        )
+        logger.info(
+            "spectral_library_registry: %d rows; library_spectra: %d rows (%.1fs)",
+            n_libraries, n_spec, time() - t0,
+        )
 
         # Copied whole: these rows name the columns behind the pathway,
         # superclass and class probability arrays, so a partial copy would

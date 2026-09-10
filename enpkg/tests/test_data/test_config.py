@@ -60,6 +60,7 @@ def test_enhancer_config_forbids_unknown_keys():
 def test_from_dict_roundtrip():
     cfg = MSEnhancerConfig.from_dict(
         {
+            "duckdb_path": "enpkg.duckdb",
             "general_params": {"ionization_mode": "neg"},
             "spectral_match_params": {"min_peaks": 3, "method": "cosine_hungarian"},
         }
@@ -74,6 +75,7 @@ def test_from_dict_roundtrip_legacy_polarity_key():
     correctly through a full EnhancerConfig (not just GeneralParams directly)."""
     cfg = MSEnhancerConfig.from_dict(
         {
+            "duckdb_path": "enpkg.duckdb",
             "general_params": {"polarity": "neg"},
             "spectral_match_params": {"min_peaks": 3, "method": "cosine_hungarian"},
         }

@@ -50,7 +50,9 @@ def test_every_declared_resource_is_known():
 
 
 def test_required_resources_is_the_union_of_the_selection():
-    assert required_resources(["ms1", "ms2"]) == {"db_loader", "lotus_store"}
+    assert required_resources(["ms1", "ms2"]) == {
+        "lotus_store", "spectral_library_store",
+    }
     assert required_resources(["taxonomical", "network", "sirius"]) == frozenset()
 
 
@@ -60,19 +62,21 @@ def test_required_resources_of_nothing_is_empty():
 
 def test_required_resources_ignores_unknown_ids():
     assert required_resources(["not_a_block"]) == frozenset()
-    assert required_resources(["ms1", "not_a_block"]) == {"db_loader", "lotus_store"}
+    assert required_resources(["ms1", "not_a_block"]) == {"lotus_store"}
 
 
-def test_lotus_store_always_implies_db_loader():
-    # The store reads the DuckDB file the loader manages, so a block asking for
-    # the store without the loader would be built against a half-set-up run.
+def test_only_ms2_reads_the_spectral_libraries():
+    # MS1 matches precursor masses against LOTUS compounds and weights propagates
+    # their classifications; neither touches a library spectrum. Declaring the
+    # store anyway would make every MS1-only run open and validate it for nothing.
     for block in BLOCKS:
-        if "lotus_store" in block.requires:
-            assert "db_loader" in block.requires, (
-                f"{block.id} requires lotus_store without db_loader"
+        if "spectral_library_store" in block.requires:
+            assert block.id == "ms2", (
+                f"{block.id} declares spectral_library_store but only ms2 reads it"
             )
 
 
 def test_blocks_needing_database_access_declare_it():
-    for block_id in ("ms1", "ms2", "weights"):
-        assert BLOCKS_BY_ID[block_id].requires == {"db_loader", "lotus_store"}
+    assert BLOCKS_BY_ID["ms1"].requires == {"lotus_store"}
+    assert BLOCKS_BY_ID["weights"].requires == {"lotus_store"}
+    assert BLOCKS_BY_ID["ms2"].requires == {"lotus_store", "spectral_library_store"}

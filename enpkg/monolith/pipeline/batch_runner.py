@@ -13,7 +13,7 @@ directory structured as::
     └── ...
 
 and runs the selected pipeline blocks against every experiment. Expensive
-shared resources — ``DBLoader`` and every non-Sirius pipeline step — are built
+shared resources — the database stores and every non-Sirius pipeline step — are built
 **once** and reused across all experiments. Sirius is rebuilt per experiment
 with a deep-copied config whose input/output paths are rewritten to point at
 that experiment's spectra and a per-experiment output subdirectory.
@@ -32,14 +32,20 @@ from typing import Any, Optional
 
 from enpkg.monolith.dev_utils import log_memory_snapshot
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
+from enpkg.monolith.pipeline.blocks import BLOCKS_BY_ID
 from enpkg.monolith.pipeline.runner import (
     LOG_DIR,
+    STAGE_LABELS,
+    STAGE_LOAD,
+    STAGE_PICKLE,
+    STAGE_RDF,
     AnalysisSummary,
     RunResult,
     _build_step,
     _run_analysis,
     build_shared_steps,
     make_loggers,
+    record_duration,
 )
 from enpkg.monolith.rdf import serialize_to_turtle
 
@@ -115,7 +121,7 @@ class BatchResult:
 
     Holds one :class:`RunResult` per experiment plus batch-level metadata.
     ``error`` is reserved for batch-wide failures (e.g. missing shared metadata
-    file, DBLoader construction failure); per-experiment failures live on each
+    file, database store construction failure); per-experiment failures live on each
     ``RunResult.error``.
     """
 
@@ -228,13 +234,12 @@ def run_batch(
     selected_ids: list[str],
     configs: dict[str, Any],
     ionization_mode: str,
-    database_dir: Path,
     log_queue: "queue.Queue[str]",
     verbose: bool = False,
 ) -> BatchResult:
     """Run the selected pipeline blocks against every experiment in ``parent_dir``.
 
-    Shared steps (and the ``DBLoader``) are built once up front. For each
+    Shared steps and their database stores are built once up front. For each
     experiment a dedicated runtime + summary log pair is written under the
     batch folder, and — if Sirius is selected — a per-experiment Sirius step
     with rewritten input/output paths is built just before execution.
@@ -269,10 +274,9 @@ def run_batch(
     bootstrap_logger = logging.getLogger("enpkg.gui.batch.bootstrap")
     bootstrap_logger.setLevel(logging.INFO)
     try:
-        shared_steps, _ = build_shared_steps(
+        shared_steps = build_shared_steps(
             selected_ids,
             configs,
-            database_dir,
             bootstrap_logger,
             skip={"sirius"},  # Sirius is per-experiment (paths differ).
         )
@@ -332,13 +336,17 @@ def run_batch(
         logger.info("=== [%s] Starting ===", exp.run_name)
         _maybe_memory_snapshot(logger, f"{exp.run_name}_START")
         try:
-            analysis = AnalysisLoader.from_files(
-                path_to_spectra=str(exp.spectra_path),
-                path_to_metadata=str(metadata_path),
-                path_to_quant_table=str(exp.quant_path),
-                ionization_mode=ionization_mode,
+            with record_duration(result.durations, STAGE_LOAD):
+                analysis = AnalysisLoader.from_files(
+                    path_to_spectra=str(exp.spectra_path),
+                    path_to_metadata=str(metadata_path),
+                    path_to_quant_table=str(exp.quant_path),
+                    ionization_mode=ionization_mode,
+                )
+            logger.info(
+                "[%s] Loaded %d spectra in %.1fs",
+                exp.run_name, len(analysis.spectra), result.durations[STAGE_LOAD],
             )
-            logger.info("[%s] Loaded %d spectra", exp.run_name, len(analysis.spectra))
         except Exception as exc:
             logger.exception("[%s] Failed to load analysis", exp.run_name)
             result.error = f"Analysis loading failed: {exc}"
@@ -372,7 +380,7 @@ def run_batch(
                     exp.run_name, exp.sirius_spectra_path, sirius_shared_cfg,
                 )
                 # Sirius is bound per-experiment (its config carries per-run paths);
-                # it needs neither DBLoader nor LotusStore.
+                # it needs neither the LotusStore nor the SpectralLibraryStore.
                 steps["sirius"] = _build_step("sirius", sirius_cfg, logger, None, None)
                 Path(sirius_cfg.sirius_params.output_directory).mkdir(parents=True, exist_ok=True)
                 logger.info("[%s] Built Sirius step with input %s and output dir %s",
@@ -406,12 +414,16 @@ def run_batch(
             # in-memory Analysis.
             ttl_path = exp_dir / f"{exp.run_name}.ttl"
             try:
-                serialize_to_turtle(
-                    result.analysis,
-                    str(ttl_path),
-                    include_network="network" in result.executed,
+                with record_duration(result.durations, STAGE_RDF):
+                    serialize_to_turtle(
+                        result.analysis,
+                        str(ttl_path),
+                        include_network="network" in result.executed,
+                    )
+                logger.info(
+                    "[%s] Wrote RDF graph: %s (%.1fs)",
+                    exp.run_name, ttl_path, result.durations[STAGE_RDF],
                 )
-                logger.info("[%s] Wrote RDF graph: %s", exp.run_name, ttl_path)
             except Exception:
                 logger.exception(
                     "[%s] Failed to write RDF graph to %s", exp.run_name, ttl_path
@@ -419,9 +431,13 @@ def run_batch(
 
             analysis_pkl = exp_dir / "analysis.pkl"
             try:
-                with open(analysis_pkl, "wb") as f:
-                    pickle.dump(result.analysis, f, protocol=pickle.HIGHEST_PROTOCOL)
-                logger.info("[%s] Wrote analysis pickle: %s", exp.run_name, analysis_pkl)
+                with record_duration(result.durations, STAGE_PICKLE):
+                    with open(analysis_pkl, "wb") as f:
+                        pickle.dump(result.analysis, f, protocol=pickle.HIGHEST_PROTOCOL)
+                logger.info(
+                    "[%s] Wrote analysis pickle: %s (%.1fs)",
+                    exp.run_name, analysis_pkl, result.durations[STAGE_PICKLE],
+                )
                 result.analysis = None
             except Exception:
                 logger.exception("[%s] Failed to write analysis pickle to %s", exp.run_name, analysis_pkl)
@@ -453,6 +469,46 @@ def _write_batch_summary(batch: BatchResult) -> None:
             r.log_file.parent.name if r.log_file else "?"
         )
         status = "OK" if r.error is None else f"FAIL: {r.error}"
-        lines.append(f"  {name:<40s} {status}")
+        elapsed = sum(r.durations.values())
+        lines.append(f"  {name:<40s} {elapsed:>8.1f}s  {status}")
+    lines.extend(_timing_table(batch))
     lines.append(sep)
     batch.summary_log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _timing_table(batch: BatchResult) -> list[str]:
+    """Build the aggregate timing breakdown across every experiment in the batch.
+
+    One row per block id and per ``STAGE_*`` key, ordered by total time
+    descending so the stage that dominates the batch is the first row read.
+    ``n`` is the number of experiments that recorded the stage, which can be
+    lower than the experiment count when a block was skipped for some of them —
+    it is what makes the mean readable in that case.
+
+    Returns an empty list when nothing recorded a duration, so a batch that
+    failed before running anything still produces a well-formed summary.
+    """
+    totals: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for result in batch.results:
+        for key, elapsed in result.durations.items():
+            totals[key] = totals.get(key, 0.0) + elapsed
+            counts[key] = counts.get(key, 0) + 1
+
+    if not totals:
+        return []
+
+    grand = sum(totals.values())
+    lines = ["-" * 72, "  TIMING BREAKDOWN", "-" * 72]
+    lines.append(f"  {'stage':<28}{'total s':>11}{'mean s':>10}{'share':>8}{'n':>5}")
+    for key, elapsed in sorted(totals.items(), key=lambda kv: -kv[1]):
+        label = STAGE_LABELS.get(key) or (
+            BLOCKS_BY_ID[key].label if key in BLOCKS_BY_ID else key
+        )
+        share = 100.0 * elapsed / grand if grand > 0 else 0.0
+        lines.append(
+            f"  {label:<28}{elapsed:>11.1f}{elapsed / counts[key]:>10.1f}"
+            f"{share:>7.1f}%{counts[key]:>5}"
+        )
+    lines.append(f"  {'TOTAL':<28}{grand:>11.1f}")
+    return lines

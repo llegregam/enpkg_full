@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import logging
 import queue
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -20,10 +23,10 @@ from typing import Any, Optional
 
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
-from enpkg.monolith.exceptions import DBLoaderError
+from enpkg.monolith.exceptions import DatabaseError
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.loaders.spectral_library_store import SpectralLibraryStore
 from enpkg.monolith.pipeline.blocks import (
     BLOCKS,
     BLOCKS_BY_ID,
@@ -34,6 +37,43 @@ from enpkg.monolith.pipeline.blocks import (
 from enpkg.monolith.rdf import serialize_to_turtle
 
 LOG_DIR = Path("gui_workspace") / "logs"
+
+# Keys under which ``RunResult.durations`` records the work that happens outside
+# the block loop. The dunder form cannot collide with a block id: `BlockSpec.id`
+# values are plain lowercase names ("sirius", "ms1_graph", …).
+STAGE_LOAD = "__load__"
+STAGE_RDF = "__rdf__"
+STAGE_PICKLE = "__pickle__"
+
+# Human-readable names for the stage keys above, used by the run and batch reports.
+STAGE_LABELS: dict[str, str] = {
+    STAGE_LOAD: "Load analysis",
+    STAGE_RDF: "RDF serialization",
+    STAGE_PICKLE: "Pickle analysis",
+}
+
+
+@contextmanager
+def record_duration(durations: dict[str, float], key: str) -> Iterator[None]:
+    """Time the enclosed block and store the elapsed seconds under ``key``.
+
+    Records on the exception path as well as the success path: a step that runs
+    for twenty minutes and then raises is exactly the one whose duration is worth
+    reading, and the runner abandons the analysis as soon as a step raises.
+
+    Uses ``time.perf_counter``, which is monotonic, so a system clock adjustment
+    part-way through a long run cannot produce a negative duration.
+
+    Args:
+        durations: Mapping to write into; the key is overwritten if already present.
+        key: A block id, or one of the ``STAGE_*`` constants for work outside the
+            block loop.
+    """
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        durations[key] = time.perf_counter() - start
 
 
 @dataclass(frozen=True)
@@ -70,6 +110,11 @@ class RunResult:
     error: Optional[str] = None
     log_file: Optional[Path] = None
     summary_file: Optional[Path] = None
+    # Wall-clock seconds per block id, plus the STAGE_* keys for the loading,
+    # serialization and pickling that happen outside the block loop. A plain dict
+    # of floats, so it outlives `analysis` being dropped at the end of a batch
+    # experiment and stays available to the GUI.
+    durations: dict[str, float] = field(default_factory=dict)
     # Populated by the batch runner once `analysis` has been pickled and
     # freed; the GUI prefers `analysis` when present, falls back here.
     summary: Optional[AnalysisSummary] = None
@@ -202,7 +247,6 @@ def run_pipeline(
     metadata_path: Path,
     quant_path: Path,
     ionization_mode: str,
-    database_dir: Path,
     log_queue: "queue.Queue[str]",
     verbose: bool = False
 ) -> RunResult:
@@ -214,17 +258,18 @@ def run_pipeline(
     result = RunResult(log_file=log_file, summary_file=summary_file)
 
     logger.debug("Starting pipeline run with selected blocks: %s", selected_ids)
-    logger.debug("Ionization mode: %s, database_dir: %s", ionization_mode, database_dir)
+    logger.debug("Ionization mode: %s", ionization_mode)
 
     try:
         logger.info("Loading analysis from %s", spectra_path)
         logger.debug("Metadata path: %s, Quant path: %s", metadata_path, quant_path)
-        analysis = AnalysisLoader.from_files(
-            path_to_spectra=str(spectra_path),
-            path_to_metadata=str(metadata_path),
-            path_to_quant_table=str(quant_path),
-            ionization_mode=ionization_mode,
-        )
+        with record_duration(result.durations, STAGE_LOAD):
+            analysis = AnalysisLoader.from_files(
+                path_to_spectra=str(spectra_path),
+                path_to_metadata=str(metadata_path),
+                path_to_quant_table=str(quant_path),
+                ionization_mode=ionization_mode,
+            )
         logger.info("Loaded %d spectra", len(analysis.spectra))
     except Exception as exc:
         logger.exception("Failed to load analysis")
@@ -232,7 +277,7 @@ def run_pipeline(
         return result
 
     try:
-        steps, _ = build_shared_steps(selected_ids, configs, database_dir, logger)
+        steps = build_shared_steps(selected_ids, configs, logger)
     except Exception as exc:
         logger.exception("Failed to construct pipeline steps")
         result.error = f"Step construction failed: {exc}"
@@ -244,11 +289,17 @@ def run_pipeline(
     if result.analysis is not None and result.error is None and result.log_file is not None:
         ttl_path = result.log_file.with_suffix(".ttl")
         try:
-            serialize_to_turtle(
-                result.analysis, str(ttl_path),
-                include_network="network" in result.executed,
+            with record_duration(result.durations, STAGE_RDF):
+                serialize_to_turtle(
+                    result.analysis, str(ttl_path),
+                    include_network="network" in result.executed,
+                )
+            # Logged rather than shown in the summary: the summary is written and
+            # its file handler closed inside `_run_analysis`, which has already
+            # returned by this point.
+            logger.info(
+                "Wrote RDF graph: %s (%.1fs)", ttl_path, result.durations[STAGE_RDF]
             )
-            logger.info("Wrote RDF graph: %s", ttl_path)
         except Exception:
             logger.exception("Failed to write RDF graph to %s", ttl_path)
 
@@ -258,11 +309,10 @@ def run_pipeline(
 def build_shared_steps(
     selected_ids: list[str],
     configs: dict[str, Any],
-    database_dir: Path,
     logger: logging.Logger,
     skip: Optional[set[str]] = None,
-) -> tuple[dict[str, Any], Optional[DBLoader]]:
-    """Build step instances for every selected block plus the shared ``DBLoader``.
+) -> dict[str, Any]:
+    """Build step instances for every selected block.
 
     Factored out of ``run_pipeline`` so the batch runner can construct shared
     resources once and reuse them across many analyses. Steps listed in ``skip``
@@ -276,58 +326,63 @@ def build_shared_steps(
     Args:
         selected_ids: Block ids the caller wants to run.
         configs: Validated config objects keyed by block id.
-        database_dir: Target directory for DB downloads.
         logger: Runtime logger shared with the built steps.
         skip: Optional set of block ids to exclude from the returned step map.
 
     Raises:
-        DBLoaderError: If a selected block needs the ``lotus_store`` but the
-            resolved MSEnhancerConfig carries no DuckDB path.
+        DatabaseError: If a selected block needs database access but no
+            MSEnhancerConfig was supplied to say which database.
 
     Returns:
-        ``(steps, db_loader)`` — a map from block id to step instance, and the
-        shared ``DBLoader`` (or ``None`` when no selected block required it).
+        A map from block id to step instance.
     """
     skip = skip or set()
 
-    db_loader: Optional[DBLoader] = None
     lotus_store: Optional[LotusStore] = None
+    library_store: Optional[SpectralLibraryStore] = None
 
     needed = required_resources(selected_ids)
     if needed:
-        # Database access is configured by the MSEnhancerConfig that MS1/MS2
-        # share. A block can require the loader without either being selected,
-        # so fall back to the defaults when neither supplied one.
-        ms_config: MSEnhancerConfig = (
-            configs.get("ms1") or configs.get("ms2") or MSEnhancerConfig()
-        )
-        _apply_download_dir(ms_config, database_dir)
-
-        # The LotusStore reads the DuckDB file the loader manages, so requiring
-        # the store implies the loader.
-        db_loader = DBLoader(configuration=ms_config, logger=logger)
-        logger.debug("DBLoader initialized for: %s", ", ".join(sorted(needed)))
+        # Database access is configured by the MSEnhancerConfig that MS1 and MS2
+        # share. A block can require it without either being selected — `weights`
+        # does — and there is no default database path to fall back to, so the
+        # absence of a config is reported here rather than surfacing later as a
+        # missing-file error.
+        ms_config: Optional[MSEnhancerConfig] = configs.get("ms1") or configs.get("ms2")
+        if ms_config is None:
+            raise DatabaseError(
+                f"Block(s) requiring database access ({', '.join(sorted(needed))}) "
+                "were selected, but no MS enhancer configuration was supplied to "
+                "name the DuckDB database. Select the ms1 or ms2 block, or provide "
+                "its configuration."
+            )
 
         if "lotus_store" in needed:
-            duckdb_path = ms_config.downloader_params.duckdb_path
-            if not duckdb_path:
-                raise DBLoaderError(
-                    "A DuckDB path is required by the selected blocks; "
-                    "CSV fallback is not supported."
-                )
-            lotus_store = LotusStore(duckdb_path=duckdb_path, logger=logger)
-            logger.debug("LotusStore initialized from %s", duckdb_path)
+            lotus_store = LotusStore(
+                duckdb_path=ms_config.duckdb_path, logger=logger
+            )
+            logger.debug("LotusStore initialized from %s", ms_config.duckdb_path)
+
+        if "spectral_library_store" in needed:
+            library_store = SpectralLibraryStore(
+                duckdb_path=ms_config.duckdb_path,
+                logger=logger,
+                library_names=ms_config.spectral_libraries,
+            )
+            logger.debug(
+                "SpectralLibraryStore initialized from %s", ms_config.duckdb_path
+            )
 
     steps: dict[str, Any] = {}
     for block_id in selected_ids:
         if block_id in skip:
             continue
         steps[block_id] = _build_step(
-            block_id, configs.get(block_id), logger, db_loader, lotus_store,
+            block_id, configs.get(block_id), logger, lotus_store, library_store,
         )
         logger.debug("Built step %s", block_id)
 
-    return steps, db_loader
+    return steps
 
 
 def _run_analysis(
@@ -373,7 +428,8 @@ def _run_analysis(
 
         logger.info("Running %s …", block.label)
         try:
-            analysis = step.process(analysis)
+            with record_duration(result.durations, block.id):
+                analysis = step.process(analysis)
         except Exception as exc:
             logger.exception("Step %s failed", block.id)
             result.error = f"{block.id}: {exc}"
@@ -381,7 +437,7 @@ def _run_analysis(
             _close_file_handlers(summary_logger)
             return result
         result.executed.append(block.id)
-        logger.info("%s completed", block.label)
+        logger.info("%s completed in %.1fs", block.label, result.durations[block.id])
 
     result.analysis = analysis
     logger.info("Pipeline execution completed successfully")
@@ -441,9 +497,19 @@ def _log_analysis_summary(logger: logging.Logger, result: RunResult) -> None:
     # -- Per-block sections: only for blocks that actually executed --
     for block_id in result.executed:
         block = BLOCKS_BY_ID[block_id]
+        elapsed = result.durations.get(block_id)
         logger.info("-" * 72)
-        logger.info("  %s", block.label.upper())
+        # A block with no recorded duration prints "-" rather than raising: a
+        # RunResult can reach here with an empty `durations` (a run that failed
+        # before the block loop, or a caller that built the result itself).
+        logger.info(
+            "  %s  [%s]",
+            block.label.upper(),
+            f"{elapsed:.1f}s" if elapsed is not None else "-",
+        )
         block.log_summary(logger, analysis)
+
+    _log_timing_section(logger, result)
 
     logger.info(sep)
     if result.log_file:
@@ -451,11 +517,31 @@ def _log_analysis_summary(logger: logging.Logger, result: RunResult) -> None:
     logger.info(sep)
 
 
-def _apply_download_dir(ms_config: MSEnhancerConfig, database_dir: Path) -> None:
-    database_dir.mkdir(parents=True, exist_ok=True)
-    logger = logging.getLogger("enpkg.gui.runner")
-    logger.debug("Setting download directory to: %s", database_dir)
-    ms_config.downloader_params.download_dir = str(database_dir)
+def _log_timing_section(logger: logging.Logger, result: RunResult) -> None:
+    """Log the per-stage timing breakdown for one analysis.
+
+    Lists every executed block and every ``STAGE_*`` entry recorded so far,
+    slowest first, with each one's share of the total. Stages that run after
+    ``_log_analysis_summary`` — RDF serialization and pickling, both driven by
+    the callers — are absent here by construction; the batch report collects
+    them once every experiment has finished.
+
+    Emits nothing when no durations were recorded, so a caller that built a
+    ``RunResult`` without timing still gets a well-formed summary.
+    """
+    if not result.durations:
+        return
+
+    total = sum(result.durations.values())
+    logger.info("-" * 72)
+    logger.info("  TIMING  (total %.1fs)", total)
+    for key, elapsed in sorted(result.durations.items(), key=lambda kv: -kv[1]):
+        label = STAGE_LABELS.get(key) or (
+            BLOCKS_BY_ID[key].label if key in BLOCKS_BY_ID else key
+        )
+        share = 100.0 * elapsed / total if total > 0 else 0.0
+        logger.info("    %-28s %9.1fs  %5.1f%%", label, elapsed, share)
+
 
 
 class _BoundBlock:
@@ -489,8 +575,8 @@ def _build_step(
     block_id: str,
     config: Any,
     logger: logging.Logger,
-    db_loader: Optional[DBLoader],
     lotus_store: Optional[LotusStore],
+    library_store: Optional[SpectralLibraryStore],
 ) -> _BoundBlock:
     """Bind a registry block to its config and shared resources.
 
@@ -500,5 +586,7 @@ def _build_step(
     """
     spec = BLOCKS_BY_ID[block_id]
     logger.debug("Binding block %s", block_id)
-    ctx = BuildContext(logger=logger, db_loader=db_loader, lotus_store=lotus_store)
+    ctx = BuildContext(
+        logger=logger, lotus_store=lotus_store, spectral_library_store=library_store
+    )
     return _BoundBlock(spec, config, ctx)

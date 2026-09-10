@@ -1,15 +1,12 @@
-"""Submodule for the ISDB enhancer."""
+"""Submodule for the MS2 spectral-matching enhancer."""
 
 from itertools import groupby
 from logging import Logger
 from time import time
 from typing import Optional
 
-import matchms
-import numpy as np
-from matchms import Spectrum, calculate_scores
-from matchms.similarity import CosineGreedy, CosineHungarian, PrecursorMzMatch
-from tqdm.auto import tqdm, trange
+from matchms.similarity import CosineGreedy, CosineHungarian
+from tqdm.auto import trange
 from tqdm.contrib import tzip
 
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
@@ -18,8 +15,11 @@ from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
 from enpkg.monolith.data.chemical_annotation import AnnotationOrganism, MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.enhancers.enhancer import Enhancer
-from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.loaders.spectral_library_store import (
+    LibraryCandidate,
+    SpectralLibraryStore,
+)
 from enpkg.monolith.utils.ms2_adduct_gating import select_spectra_for_ms2
 
 
@@ -30,7 +30,7 @@ class Ms2Enhancer(Enhancer):
         self,
         configuration: MSEnhancerConfig,
         logger: Logger,
-        db_loader: DBLoader,
+        library_store: SpectralLibraryStore,
         lotus_store: LotusStore,
     ):
         """Initializes the enhancer."""
@@ -41,46 +41,31 @@ class Ms2Enhancer(Enhancer):
             )
         if not isinstance(logger, Logger):
             raise TypeError(f"Expected logger of type logging.Logger, got {type(logger)}")
-        if not isinstance(db_loader, DBLoader):
-            raise TypeError(f"Expected db_loader of type DBLoader, got {type(db_loader)}")
+        if not isinstance(library_store, SpectralLibraryStore):
+            raise TypeError(
+                f"Expected library_store of type SpectralLibraryStore, "
+                f"got {type(library_store)}"
+            )
         if not isinstance(lotus_store, LotusStore):
             raise TypeError(f"Expected lotus_store of type LotusStore, got {type(lotus_store)}")
         self.configuration = configuration
         self.logger = logger
-        self.db_loader = db_loader
+        self.library_store = library_store
         self.lotus_store = lotus_store
-        # Lotus list + library-spectrum linking are built lazily on first enhance().
-        # In batch mode this means only the first experiment pays the build cost;
-        # subsequent ones reuse the same list (the full compound set is identical
-        # across experiments).
+        # The Lotus list is built lazily on first enhance(). In batch mode only the
+        # first experiment pays the build cost; later ones reuse it, since the full
+        # compound set is identical across experiments.
         self.lotus_objects: Optional[list[Lotus]] = None
-
-        self.logger.info("Loading Databases")
-        # Taxonomy access is fully owned by LotusStore now; DBLoader is only
-        # around for the spectral DB. Load the library matching the configured
-        # ionization mode so negative-mode runs query the negative library.
-        start = time()
-        self.db_loader.load_spectral_databases(
-            mode=self.configuration.general_params.ionization_mode
-        )
-        self.logger.debug("Spectral databases loaded in %.2f seconds", time() - start)
-
-        # TODO: Could be put elsewhere
-        if not isinstance(self.db_loader.spectral_db, list):
-            raise TypeError(f"Expected spectral_db to be a list, got {type(self.db_loader.spectral_db)}")
-        if not all(isinstance(spectrum, Spectrum) for spectrum in self.db_loader.spectral_db):
-            raise TypeError("Expected all entries in spectral_db to be of type matchms.Spectrum")
-        if not all(spectrum.get("compound_name") is not None for spectrum in self.db_loader.spectral_db[:10]):
-            raise ValueError("Expected all spectra in spectral_db to have 'compound_name' metadata for short inchikey matching")
+        self._lotus_by_short_inchikey: dict[str, list[Lotus]] = {}
 
         self.logger.info("MS2 Enhancer initialized successfully")
 
     def _ensure_lotus_objects(self) -> None:
-        """Build the sorted Lotus list and link library spectra on first use.
+        """Materialise the Lotus list and index it by short InChIKey.
 
-        Deferred from __init__ so the (expensive) full-compound materialisation
-        only happens if enhance() is actually called. Idempotent: subsequent
-        calls short-circuit on the cached self.lotus_objects.
+        Deferred from ``__init__`` so the expensive full-compound fetch only
+        happens if ``enhance()`` is actually called. Idempotent: later calls
+        short-circuit on the cached list.
         """
         if self.lotus_objects is not None:
             return
@@ -95,70 +80,117 @@ class Ms2Enhancer(Enhancer):
             len(self.lotus_objects), time() - start,
         )
 
-        self.logger.info("Adding Lotus entries to spectral database")
-        start = time()
-        self._link_lotus_to_spectra()
+        # groupby needs its input sorted by the grouping key, which is what
+        # all_sorted_by_short_inchikey guarantees.
+        self._lotus_by_short_inchikey = {
+            key: list(group)
+            for key, group in groupby(self.lotus_objects, key=lambda x: x.short_inchikey)
+        }
         self.logger.debug(
-            "Added Lotus entries to spectral database in %.2f seconds", time() - start
+            "Indexed %d distinct short InChIKeys", len(self._lotus_by_short_inchikey)
         )
 
     def name(self) -> str:
         """Returns the name of the enhancer."""
         return "MS2 Enhancer"
 
-    def _link_lotus_to_spectra(self) -> None:
-        """Link Lotus entries to spectral database entries by short inchikey.
+    def _annotate(
+        self,
+        spectrum: AnnotatedSpectrum,
+        candidate: LibraryCandidate,
+        library_label: str,
+        score: float,
+        n_matches: int,
+    ) -> bool:
+        """Attach one MS2 annotation for a scored candidate, if LOTUS knows it.
 
-        Builds a dict short_inchikey -> [Lotus, ...] in one pass over the
-        pre-sorted self.lotus_objects, then attaches matching slices to each
-        spectrum via O(1) lookups.
+        Returns True when an annotation was added. A candidate whose structure is
+        absent from LOTUS currently yields nothing: the annotation model carries
+        the classification vectors and source organisms that only LOTUS provides.
         """
-        assert self.lotus_objects is not None
+        # TODO: let MS2ChemicalAnnotation carry classifications from a source other
+        # than LOTUS, so a candidate LOTUS does not know is annotated rather than
+        # dropped. Three things block that today, and they are separable:
+        #
+        #  1. The model is LOTUS-shaped. `source` is hardcoded "Lotus";
+        #     `pathway_scores` / `superclass_scores` / `class_scores` are the LOTUS
+        #     probability vectors; `organisms` has no library equivalent at all;
+        #     `short_inchikey` is required, but a library hit is identified by its
+        #     own INCHIKEY/SMILES/FORMULA, which are not currently stored anywhere.
+        #  2. The types differ. LOTUS gives a score per NPC term over the whole
+        #     vocabulary; `candidate.npc_pathway` / `npc_superclass` / `npc_class`
+        #     give one label per rank. Reweighting multiplies elementwise against
+        #     LOTUS-length vectors, so a library label is only usable once one-hot
+        #     encoded into `LotusStore.pathways_col_names` and the two sibling
+        #     vocabularies — a different vocabulary misaligns silently.
+        #  3. `weights_enhancer` filters on `has_organisms()`, so an annotation with
+        #     no source organism is dropped downstream even if it is emitted here.
+        #
+        # Open question — precedence, once an annotation can have two sources.
+        # Identity cannot conflict: the LOTUS entry is looked up *by* the
+        # candidate's short InChIKey, so both describe the same structure. The
+        # classifications can conflict, and it is not settled which wins when a
+        # structure is in LOTUS and the library also carries NPC labels: a LOTUS
+        # score vector is strictly more informative than a one-hot, which argues
+        # for LOTUS first and the library as fallback, but the library label is the
+        # one attached to the spectrum that actually matched. ClassyFire has no
+        # LOTUS counterpart and no consumer, so it is additive either way. Record
+        # the winner on the annotation (a `classification_source` field) rather
+        # than resolving it silently, or the reranking input becomes unattributable.
+        if not candidate.short_inchikey:
+            return False
+        lotus_entries = self._lotus_by_short_inchikey.get(candidate.short_inchikey)
+        if not lotus_entries:
+            return False
 
-        start = time()
-        lotus_by_short_inchikey: dict[str, list[Lotus]] = {
-            key: list(group)
-            for key, group in groupby(self.lotus_objects, key=lambda x: x.short_inchikey)
-        }
-
-        for spectrum in tqdm(
-            self.db_loader.spectral_db,
-            desc="Adding Lotus entries to spectral database",
-            dynamic_ncols=True,
-            leave=False,
-        ):
-            compound_name = spectrum.get("compound_name")
-            if compound_name is None:
-                self.logger.warning(
-                    "Spectrum %s has no compound_name metadata; skipping Lotus linking",
-                    spectrum.get("spectrum_id", "unknown"),
-                )
-                continue
-            entries = lotus_by_short_inchikey.get(compound_name)
-            spectrum.set("lotus_entries", entries)
-
-        self.logger.debug(f"Linked lotus to spectra in {time() - start:.2f} seconds")
+        representative = lotus_entries[0]
+        organisms = [
+            AnnotationOrganism(
+                name=entry.organism_name,
+                wikidata=entry.organism_wikidata,
+                ott_id=entry.organism_taxonomy_ottid,
+                domain=entry.domain,
+                kingdom=entry.kingdom,
+                phylum=entry.phylum,
+                klass=entry.klass,
+                order=entry.order,
+                family=entry.family,
+                genus=entry.genus,
+                species=entry.species,
+            )
+            for entry in lotus_entries
+        ]
+        spectrum.add_ms2_annotation(
+            MS2ChemicalAnnotation(
+                source="Lotus",
+                queried_against=library_label,
+                short_inchikey=representative.short_inchikey,
+                score=float(score),
+                n_matched_peaks=int(n_matches),
+                pathway_scores=representative.structure_taxonomy_hammer_pathways,
+                superclass_scores=representative.structure_taxonomy_hammer_superclasses,
+                class_scores=representative.structure_taxonomy_hammer_classes,
+                organisms=organisms,
+            )
+        )
+        return True
 
     def enhance(self, analysis: Analysis, chunk_size: int = 1000) -> Analysis:
         """Add MS2 chemical annotations to each spectrum via two-stage matching.
 
-        Stage 1 — ``precursor_filter`` (PrecursorMzMatch): cheap pre-filter run
-        in batch via ``calculate_scores``. For every (reference, query) pair it
-        only checks whether the precursor m/z agree within ``parent_mz_tol``;
-        no MS/MS comparison happens here.
+        Stage 1 — precursor m/z agreement — runs in the database: ``candidates_for``
+        returns only the library spectra whose precursor is within ``parent_mz_tol``
+        of a feature in the current chunk. This is the same predicate matchms'
+        ``PrecursorMzMatch(tolerance, "Dalton")`` applies, evaluated where the data
+        already lives, so the library is never held in memory in full.
 
-        Stage 2 — ``cosine_similarity`` (CosineGreedy or CosineHungarian): the
-        actual MS/MS cosine, computed via ``.pair()`` only on pairs that
-        survived stage 1. This is the dominant cost.
+        Stage 2 — the MS/MS cosine (CosineGreedy or CosineHungarian) — is computed
+        only on those surviving pairs, and is the dominant cost.
 
-        Spectra are processed in chunks of ``chunk_size`` references against
-        the full library so memory stays bounded.
-
-        Annotations passing both ``min_score`` and ``min_peaks`` are appended
-        in place to ``spectrum.ms2_annotations`` along with the matched
-        library spectrum's ``lotus_entries``.
+        Features are processed in chunks of ``chunk_size`` so the retrieved
+        candidate set stays bounded. Annotations passing both ``min_score`` and
+        ``min_peaks`` are appended in place to ``spectrum.ms2_annotations``.
         """
-
         # Gate on the MS1 adduct-graph roles: spectral libraries are almost all
         # base-ion ([M+H]+/[M-H]-), so resolved non-base adducts are skipped.
         # Falls back to all features (with a warning) if the graph did not run.
@@ -168,17 +200,29 @@ class Ms2Enhancer(Enhancer):
             self.logger,
         )
 
-        # First call in a batch triggers the expensive LotusStore fetch + library linking.
+        # First call in a batch triggers the expensive LotusStore fetch.
         self._ensure_lotus_objects()
 
+        mode = self.configuration.general_params.ionization_mode
+        libraries = {
+            library.library_id: library
+            for library in self.library_store.libraries_for_mode(mode)
+        }
+        if not libraries:
+            self.logger.warning(
+                "No spectral library registered for mode %r; MS2 added no annotations.",
+                mode,
+            )
+            return analysis
+
         number_of_spectra = len(spectrum_list)
-        self.logger.info(f"Running MS2 enrichment process on {number_of_spectra} spectra")
-        # Stage-1 filter: cheap precursor m/z agreement test (returns bool per pair).
-        precursor_filter = PrecursorMzMatch(
-            tolerance=self.configuration.spectral_match_params.parent_mz_tol,
-            tolerance_type="Dalton",
+        self.logger.info(
+            "Running MS2 enrichment on %d spectra against %d librar%s (%s)",
+            number_of_spectra, len(libraries),
+            "y" if len(libraries) == 1 else "ies",
+            ", ".join(library.label for library in libraries.values()),
         )
-        # Stage-2 scorer: actual MS/MS cosine, only run on pairs that passed stage 1.
+
         match self.configuration.spectral_match_params.method:
             case "cosine_greedy":
                 cosine_similarity = CosineGreedy(
@@ -191,12 +235,11 @@ class Ms2Enhancer(Enhancer):
                 )
             case _:
                 raise ValueError(
-                    f"Unknown spectral match method: {self.configuration.spectral_match_params.method!r}"
+                    f"Unknown spectral match method: "
+                    f"{self.configuration.spectral_match_params.method!r}"
                 )
-        self.logger.debug(
-            f"precursor_filter: {precursor_filter}\n{self.configuration.spectral_match_params.method}: {cosine_similarity}"
-        )
 
+        n_annotations = 0
         for min_range in trange(
             0,
             number_of_spectra,
@@ -209,74 +252,43 @@ class Ms2Enhancer(Enhancer):
                 min_range : min_range + chunk_size
             ]
 
-            # Stage 1: filter (ref, query) pairs by precursor m/z within parent_tol.
-            # The Scores object holds precursor matches, NOT cosine scores —
-            # the cosine is computed below in stage 2 on the survivors only.
-            precursor_matches: matchms.Scores = calculate_scores(
-                references=spectra_chunk,
-                queries=self.db_loader.spectral_db,
-                similarity_function=precursor_filter,
+            # Stage 1, in SQL: retrieve only the library spectra that could match
+            # this chunk. `pairs` names which feature each candidate was found for.
+            candidates, pairs = self.library_store.candidates_for(
+                [spectrum.precursor_mz for spectrum in spectra_chunk],
+                mode,
+                self.configuration.spectral_match_params.parent_mz_tol,
             )
+            if not pairs:
+                continue
 
-            # Reference indices are the indices of the spectra in the input data (i.e., the spectra in the analysis)
-            reference_indices: np.ndarray = precursor_matches.scores[:, :][0]
-
-            # Query indices are the indices of the spectra in the database.
-            query_indices: np.ndarray = precursor_matches.scores[:, :][1]
-
-            # Stage 2: compute cosine on each precursor-matched pair.
-            for ref_idx, query_idx in tzip(
-                reference_indices,
-                query_indices,
+            # Stage 2: the actual MS/MS cosine on each surviving pair.
+            for feature_idx, candidate_idx in tzip(
+                [pair[0] for pair in pairs],
+                [pair[1] for pair in pairs],
                 desc="Processing chunk similarities",
                 leave=False,
             ):
+                candidate = candidates[candidate_idx]
                 msms_score, n_matches = cosine_similarity.pair(
-                    spectra_chunk[ref_idx], self.db_loader.spectral_db[query_idx]
-                )[()] # Numpy indexing to extract a "scalar" (here a tuple (score, n_matches)) value from a 0-dim array
+                    spectra_chunk[feature_idx], candidate.spectrum
+                )[()]  # 0-dim array -> (score, n_matches)
+
                 # min_peaks is an inclusive minimum (>=); min_score stays a strict
                 # lower bound (a match must beat the floor, not merely equal it).
                 if (
                     msms_score > self.configuration.spectral_match_params.min_score
-                    and
-                    n_matches >= self.configuration.spectral_match_params.min_peaks
+                    and n_matches >= self.configuration.spectral_match_params.min_peaks
                 ):
-                    lotus_entries: list[Lotus] = self.db_loader.spectral_db[query_idx].get("lotus_entries")
-                    # No taxonomical-DB structure for this library hit -> no
-                    # InChIKey / classification arrays / organisms to keep.
-                    if not lotus_entries:
-                        continue
-                    representative: Lotus = lotus_entries[0]
-                    organisms = [
-                        AnnotationOrganism(
-                            name=entry.organism_name,
-                            wikidata=entry.organism_wikidata,
-                            ott_id=entry.organism_taxonomy_ottid,
-                            domain=entry.domain,
-                            kingdom=entry.kingdom,
-                            phylum=entry.phylum,
-                            klass=entry.klass,
-                            order=entry.order,
-                            family=entry.family,
-                            genus=entry.genus,
-                            species=entry.species,
-                        )
-                        for entry in lotus_entries
-                    ]
-                    spectra_chunk[ref_idx].add_ms2_annotation(
-                        MS2ChemicalAnnotation(
-                            source="Lotus",
-                            queried_against="ISDB", # TODO: Create versioning system for databases and include version in the annotation
-                            short_inchikey=representative.short_inchikey,
-                            score=float(msms_score),
-                            n_matched_peaks=int(n_matches),
-                            pathway_scores=representative.structure_taxonomy_hammer_pathways,
-                            superclass_scores=representative.structure_taxonomy_hammer_superclasses,
-                            class_scores=representative.structure_taxonomy_hammer_classes,
-                            organisms=organisms,
-                        )
+                    n_annotations += self._annotate(
+                        spectra_chunk[feature_idx],
+                        candidate,
+                        libraries[candidate.library_id].label,
+                        msms_score,
+                        n_matches,
                     )
 
+        self.logger.info("MS2 enrichment added %d annotations", n_annotations)
         # Spectra are annotated in place; the same Analysis is returned (uniform
         # enhancer contract).
         return analysis

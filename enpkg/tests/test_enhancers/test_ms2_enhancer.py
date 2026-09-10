@@ -9,8 +9,8 @@ import pytest
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
-from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.loaders.spectral_library_store import SpectralLibraryStore
 from enpkg.tests.test_enhancers.conftest import FIXTURE_DATASET
 
 
@@ -26,14 +26,20 @@ def analysis():
 
 
 @pytest.fixture(scope="class")
-def db_loader(ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger) -> DBLoader:
-    return DBLoader(configuration=ms_enhancer_config, logger=logger)
+def library_store(
+    ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger
+) -> SpectralLibraryStore:
+    return SpectralLibraryStore(
+        duckdb_path=ms_enhancer_config.duckdb_path,
+        logger=logger,
+        library_names=ms_enhancer_config.spectral_libraries,
+    )
 
 
 @pytest.fixture(scope="class")
 def lotus_store(ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger) -> LotusStore:
     return LotusStore(
-        duckdb_path=ms_enhancer_config.downloader_params.duckdb_path,
+        duckdb_path=ms_enhancer_config.duckdb_path,
         logger=logger,
     )
 
@@ -42,12 +48,12 @@ def lotus_store(ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger) ->
 def ms2_enhancer(
     ms_enhancer_config: MSEnhancerConfig,
     logger: logging.Logger,
-    db_loader: DBLoader,
+    library_store: SpectralLibraryStore,
     lotus_store: LotusStore,
 ) -> Ms2Enhancer:
     return Ms2Enhancer(
         configuration=ms_enhancer_config, logger=logger,
-        db_loader=db_loader, lotus_store=lotus_store,
+        library_store=library_store, lotus_store=lotus_store,
     )
 
 

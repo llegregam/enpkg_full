@@ -17,6 +17,7 @@ from matchms.importing import load_from_mgf, load_from_mzml, load_from_mzxml
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
 from enpkg.monolith.data.sample_metadata import SampleMetadata
+from enpkg.monolith.utils.delimiters import sniff_separator
 
 logger = logging.getLogger(__name__)
 
@@ -154,29 +155,8 @@ class AnalysisLoader:
 
     @staticmethod
     def _sniff_separator(path: Path) -> str:
-        """Detect the column separator from the first non-empty line of a CSV/TSV file.
-
-        Picks whichever of comma / semicolon / tab appears most often in the
-        header row. Raises if none are present, so a malformed file fails loudly
-        instead of degrading to a single-column read where every "column" name is
-        the entire header glued together.
-        """
-        with path.open("r", encoding="utf-8") as f:
-            first_line = ""
-            for line in f:
-                if line.strip():
-                    first_line = line
-                    break
-        if not first_line:
-            raise ValueError(f"Quantification table {path} is empty")
-        counts = {sep: first_line.count(sep) for sep in (",", ";", "\t")}
-        sep, count = max(counts.items(), key=lambda kv: kv[1])
-        if count == 0:
-            raise ValueError(
-                f"Could not detect a column separator in {path}: header line "
-                f"contains no commas, semicolons, or tabs."
-            )
-        return sep
+        """Detect the column separator of a metadata or quantification table."""
+        return sniff_separator(path)
 
     @classmethod
     def _normalize_quant_columns(cls, quant_table: pl.DataFrame) -> pl.DataFrame:

@@ -60,8 +60,8 @@ from enpkg.monolith.enhancers.network_enhancer import NetworkEnhancer
 from enpkg.monolith.enhancers.sirius_enhancer import SiriusEnhancer
 from enpkg.monolith.enhancers.taxa_enhancer import TaxaEnhancer
 from enpkg.monolith.enhancers.weights_enhancer import WeightsEnhancer
-from enpkg.monolith.loaders.database_loader import DBLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
+from enpkg.monolith.loaders.spectral_library_store import SpectralLibraryStore
 from enpkg.monolith.pipeline.log_utils import has_nonzero_scores
 
 # Callable signature for every block's post-run log summary.
@@ -77,8 +77,8 @@ class BuildContext:
     """Shared resources a block's enhancer may need, injected by the runner.
 
     A block only reads the fields it needs (e.g. taxonomical/networking use
-    none of them). ``db_loader`` and ``lotus_store`` are built once per run and
-    reused across blocks.
+    none of them). ``lotus_store`` and ``spectral_library_store`` are built once
+    per run and reused across blocks.
 
     A field is only populated when some selected block asked for it through
     ``BlockSpec.requires``; otherwise it stays ``None``.  A block that reads a
@@ -86,15 +86,16 @@ class BuildContext:
     """
 
     logger: logging.Logger
-    db_loader: Optional[DBLoader] = None
     lotus_store: Optional[LotusStore] = None
+    spectral_library_store: Optional[SpectralLibraryStore] = None
 
 
 # Resource names a block may ask for via ``BlockSpec.requires``; each maps to a
 # field of ``BuildContext`` the runner fills in when at least one selected block
-# requests it. ``lotus_store`` implies ``db_loader`` — both are built from the
-# same MSEnhancerConfig, and the store reads the DuckDB file the loader manages.
-KNOWN_RESOURCES = frozenset({"db_loader", "lotus_store"})
+# requests it. Both read the same DuckDB file, named by
+# ``MSEnhancerConfig.duckdb_path``, but they own different tables and are
+# independent: a block may require either without the other.
+KNOWN_RESOURCES = frozenset({"lotus_store", "spectral_library_store"})
 
 
 # A block's enhancer factory: ``(validated_config, BuildContext) -> Enhancer``.
@@ -232,7 +233,7 @@ def _build_ms1(config: Any, ctx: BuildContext) -> Enhancer:
 
 
 def _build_ms2(config: Any, ctx: BuildContext) -> Enhancer:
-    return Ms2Enhancer(config, ctx.logger, ctx.db_loader, ctx.lotus_store)
+    return Ms2Enhancer(config, ctx.logger, ctx.spectral_library_store, ctx.lotus_store)
 
 
 def _build_sirius(config: Any, ctx: BuildContext) -> Enhancer:
@@ -553,7 +554,7 @@ _BUILTIN_BLOCKS: list[BlockSpec] = [
         "When the ms1_graph block ran first, only anchors and singletons are searched; each "
         "satellite inherits its cluster anchor's molecule under its own adduct form (no redundant "
         "search). Without the graph, every feature is searched.",
-        requires=frozenset({"db_loader", "lotus_store"}),
+        requires=frozenset({"lotus_store"}),
     ),
     BlockSpec(
         id="ms2",
@@ -563,7 +564,7 @@ _BUILTIN_BLOCKS: list[BlockSpec] = [
         config_cls=MSEnhancerConfig, # Shared with MS1
         log_summary=_log_ms2,
         description="Matches MS/MS spectra against spectral databases (ISDB).",
-        requires=frozenset({"db_loader", "lotus_store"}),
+        requires=frozenset({"lotus_store", "spectral_library_store"}),
     ),
     BlockSpec(
         id="sirius",
@@ -586,7 +587,7 @@ _BUILTIN_BLOCKS: list[BlockSpec] = [
         # Reranking propagates scores over the network and rewrites the MS1/MS2
         # annotations, so all three have to have produced their output first.
         after=("network", "ms1", "ms2"),
-        requires=frozenset({"db_loader", "lotus_store"}),
+        requires=frozenset({"lotus_store"}),
     ),
 ]
 

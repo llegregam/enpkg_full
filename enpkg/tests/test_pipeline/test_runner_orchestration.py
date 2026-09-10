@@ -69,3 +69,40 @@ def test_records_error_and_halts_on_step_exception(make_analysis):
     assert result.error is not None and "ms1" in result.error
     assert "ms2" not in result.executed
     assert steps["ms2"].processed is False
+
+
+# --- Timing instrumentation -------------------------------------------------
+
+
+def test_records_a_duration_for_every_executed_block(make_analysis):
+    steps = {"ms1": _StubStep(), "ms2": _StubStep()}
+    result = _run(make_analysis, ["ms1", "ms2"], steps)
+    assert set(result.durations) == {"ms1", "ms2"}
+    assert all(value >= 0.0 for value in result.durations.values())
+
+
+def test_records_duration_for_a_block_that_raises(make_analysis):
+    # A step that runs a long time and then fails is exactly the one whose
+    # duration is worth having, so the failure path must still record it.
+    steps = {"ms1": _StubStep(fail=True)}
+    result = _run(make_analysis, ["ms1"], steps)
+    assert result.error is not None
+    assert "ms1" in result.durations
+
+
+def test_records_no_duration_for_a_skipped_block(make_analysis):
+    steps = {"ms1": _StubStep(can_run=False)}
+    result = _run(make_analysis, ["ms1"], steps)
+    assert "ms1" in result.skipped
+    assert result.durations == {}
+
+
+def test_summary_survives_an_empty_durations_map(make_analysis, caplog):
+    # A RunResult can reach the summary with nothing recorded — a run that failed
+    # during loading, or a caller that assembled the result itself.
+    from enpkg.monolith.pipeline.runner import _log_analysis_summary
+
+    result = RunResult(analysis=make_analysis())
+    with caplog.at_level(logging.INFO):
+        _log_analysis_summary(logging.getLogger("test.summary.empty"), result)
+    assert "TIMING" not in caplog.text

@@ -20,6 +20,102 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-10 — SIRIUS does not parallelise: four approaches measured and rejected
+
+No code changed. This records why the planned SIRIUS parallelisation was abandoned,
+so it is not re-proposed. Every number below is measured on this machine; the probe
+scripts are not kept (they were scratch), but the method is described well enough to
+repeat.
+
+- **The premise.** Phase 0 measured SIRIUS at 88.6% of block time and ~85% of total
+  experiment wall time. The plan was a worker pool running several SIRIUS processes
+  at once, projected at 2.4x on two workers and 4.7x on four.
+- **Concurrent processes are *slower*, not faster.** Three truncated samples
+  (400 spectra each), cold cache both ways: **375.7s** run one at a time versus
+  **617.3s** run three at once — 1.64x slower, each individual run degrading ~5x
+  (114-133s alone, ~610s when sharing). They also changed the result: 10 of 1259
+  rows (0.8%) got a different rank-1 structure, on InChIkey2D, smiles and
+  CSI:FingerIDScore.
+- **SIRIUS itself is deterministic**, which is what makes that 0.8% attributable:
+  two sequential runs of the same input were identical on every science column
+  across all 1259 rows.
+- **Directory input is slower *and* corrupts attribution.** `--input <dir>` over the
+  same three files took **600.6s** against 472.1s one-at-a-time. Worse, SIRIUS
+  preserves the input feature ids rather than renumbering, and the summaries carry no
+  column naming the source file — so 55 of 428 returned ids (13%) were ambiguous
+  across samples and 14 ids came back with more than top-k rows, meaning two samples'
+  features had merged under one id. `attach_sirius_annotations` joins on exactly that
+  key. Namespacing ids before a merged run would fix the correctness half, but there
+  is no speed to gain.
+- **The searched-database list does not drive wall time.** Holding everything else
+  fixed on one sample: 1 database 170.8s, 8 databases 129.3s, 25 databases (today's
+  hardcoded list) 136.3s — flat, with one database the *slowest*. All three annotated
+  the same 136 features, losing and gaining none. But the rank-1 structure changed for
+  26% of features at 8 databases and 50% at one. So trimming the list buys nothing and
+  changes a quarter to half of what gets ingested: **do not trim it**.
+- **Why all four fail for one reason.** SIRIUS's own log reports a job manager fixed
+  at 12 CPU and **4 IO threads**, and an HTTP pool at **MaxPerRoute=2-3 /
+  maxTotal=5**; the dominant work unit is `FingerprintPreprocessingJJob`, the
+  CSI:FingerID web path. CSI:FingerID issues **one request per feature**, and the
+  database list only changes what the server searches inside that request — which is
+  exactly why feature count matters and database count does not. The throttle looks
+  server-side per account, since nine connections across three processes performed
+  worse than three.
+- **The pool is not tunable.** `de.unijena.bioinf.sirius.cpu.cores` and
+  `.cpu.threads` (the only two such properties in the 6.3.4 jar) change the *reported*
+  detection only — set either way, the job manager still initialises 12 CPU / 4 IO
+  threads and MaxPerRoute=3. `-D` via `JDK_JAVA_OPTIONS` reaches the JVM but the
+  property is read from the properties file, and even there it does not affect the
+  allocation.
+- **What is left, and it is modest.** Two levers survive, both worth roughly 15%:
+  send SIRIUS fewer features (the MS1 adduct graph already classifies features as
+  anchor / satellite / singleton, and `utils/ms2_adduct_gating.py` already applies
+  exactly this reasoning for MS2 — a satellite is the same molecule as its cluster
+  anchor); and overlap the single SIRIUS process with the pipeline's non-SIRIUS 15%.
+  Note the feature-count saving is **not yet quantified for SIRIUS**: the adduct roles
+  are stamped on `analysis.spectra` (1274 features for actea_EtOAc-1) while SIRIUS
+  reads a separate `_sirius.mgf` with a different, larger feature set (2662), so the
+  17.5% satellite share of the former does not transfer directly.
+- **Conclusion.** SIRIUS wall time is an external web-service cost that cannot be
+  parallelised away client-side. The worker pool, directory mode and database trimming
+  are all rejected on measurement.
+
+### 2026-09-10 — Per-stage timing instrumentation
+
+- `RunResult` now carries `durations`, a map of wall-clock seconds per block id plus
+  three reserved keys (`__load__`, `__rdf__`, `__pickle__`) for the work that happens
+  outside the block loop. Every run reports it: a per-analysis `TIMING` section in the
+  run summary, and an aggregate `TIMING BREAKDOWN` table — total, mean, share, and the
+  number of experiments that recorded each stage — in `batch_summary.log`.
+- The motivation was that nothing measured where pipeline time went, so proposals to
+  speed it up rested on assumption. Scraping the `Running X …` / `X completed`
+  timestamps out of an existing 12-experiment batch log
+  (`gui_workspace/logs/batch_20260818_235853/`) gave the first answer: **SIRIUS is 88.6%
+  of block time** (1139.5 s mean per experiment), weights 6.6%, and everything else
+  under 5% combined. Per experiment, outside the block loop: load 1.1 s, RDF
+  serialization 46.4 s, pickling the 1.5 GB `Analysis` 11.7 s. The whole batch was
+  4.49 h for 12 experiments, SIRIUS 84.7% of it.
+- That scrape is why the instrumentation exists rather than being a substitute for it.
+  It only worked because block boundaries happen to be logged as progress messages, it
+  saw nothing outside the block loop that was not separately logged, and repeating it
+  meant re-writing the parser. The numbers are now an output of the run.
+- Durations are recorded on the **failure** path as well as the success path. A block
+  that runs for twenty minutes and then raises is the one whose duration is most worth
+  reading, and the runner abandons the analysis as soon as a step raises, so a
+  success-only timer would lose exactly that case.
+- `time.perf_counter`, not `time.time`: it is monotonic, so a clock adjustment during a
+  multi-hour batch cannot yield a negative duration.
+- RDF serialization and pickling are absent from the *per-experiment* summary and
+  present only in the batch table. Both are driven by the callers, after
+  `_run_analysis` has already written the summary and closed its file handler. Rather
+  than reorder that, each logs its own duration as a runtime line and the batch table
+  collects them once every experiment has finished.
+- Consequence worth recording for the parallelism work this was meant to inform: since
+  SIRIUS is ~85% of total experiment time, overlapping it with the rest of the pipeline
+  at one worker can save at most ~15%. Any larger gain requires running SIRIUS runs
+  concurrently with each other, which is unverified — so the measurement moved that
+  from a side assumption to the decisive question.
+
 ### 2026-09-07 — Integration-test fixtures
 
 - Added `enpkg/scripts/build_test_fixtures.py`, which builds everything the

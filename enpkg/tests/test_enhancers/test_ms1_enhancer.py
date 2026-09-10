@@ -28,7 +28,7 @@ def analysis():
 @pytest.fixture(scope="class")
 def lotus_store(ms_enhancer_config: MSEnhancerConfig, logger: logging.Logger) -> LotusStore:
     return LotusStore(
-        duckdb_path=ms_enhancer_config.downloader_params.duckdb_path,
+        duckdb_path=ms_enhancer_config.duckdb_path,
         logger=logger,
     )
 

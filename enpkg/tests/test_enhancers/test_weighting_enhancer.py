@@ -20,9 +20,9 @@ def analysis():
     )
 
 @pytest.fixture(scope="class")
-def lotus_store(reweighting_config, logger) -> LotusStore:
+def lotus_store(ms_enhancer_config, logger) -> LotusStore:
     return LotusStore(
-        duckdb_path=reweighting_config.downloader_params.duckdb_path,
+        duckdb_path=ms_enhancer_config.duckdb_path,
         logger=logger,
     )
 
