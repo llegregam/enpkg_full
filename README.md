@@ -28,14 +28,30 @@ scripts. The current design:
   [`pipeline/runner.py`](enpkg/monolith/pipeline/runner.py)) — a single `BLOCKS` registry
   is the source of truth for which blocks exist, how to build each enhancer, and
   when it can run; the runner executes selected blocks in canonical order.
-- **Reference data** — LOTUS compound/taxonomy metadata and the ISDB spectral
-  library are resolved from a persistent **DuckDB** file (see
-  [`loaders/`](enpkg/monolith/loaders/); build it with
-  [`enpkg/scripts/build_duckdb.py`](enpkg/scripts/build_duckdb.py)).
+- **Reference data** — LOTUS compound/taxonomy metadata and spectral libraries are
+  resolved from a persistent **DuckDB** file (see [`loaders/`](enpkg/monolith/loaders/);
+  build it with `enpkg db lotus` and `enpkg db spectral-library`).
 - **Output** — an RDF/Turtle knowledge graph via [`rdf/`](enpkg/monolith/rdf/)
   (`AnalysisSerializer`), mapped to the EMI vocabulary.
 
-A Streamlit GUI drives the pipeline — see
+## Running it
+
+The `enpkg` command line is the primary entry point:
+
+```bash
+enpkg blocks list                       # what the pipeline can do
+enpkg config init --out config.yaml     # a template to edit
+enpkg config validate config.yaml       # check it before a long run
+enpkg run   --config config.yaml --input-dir data/    # one experiment
+enpkg batch --config config.yaml --parent-dir data/   # many experiments
+enpkg batch discover --parent-dir data/ # preview what a batch would pick up
+enpkg serialize run/analysis.pkl -o rdf_out/          # re-export without re-running
+```
+
+`--output-dir` puts every log, Turtle export and pickle from a run under one directory;
+`--json-out` additionally writes a machine-readable summary of what ran, for scripting.
+
+A Streamlit GUI also drives the pipeline — see
 [`gui/ARCHITECTURE.md`](enpkg/monolith/gui/ARCHITECTURE.md) and the per-enhancer
 notes under [`docs/`](docs/). Run the tests with `pytest`: unit tests
 (`enpkg/tests/test_data`, `enpkg/tests/test_pipeline`) need no external data;

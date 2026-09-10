@@ -20,6 +20,60 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-10 — The `enpkg` command line
+
+The pipeline could not be run without a browser. `pipeline/` imports no GUI code and was
+kept that way deliberately, but the only entry point was `streamlit run`, so processing
+a few hundred experiments on a cluster had no supported path. This adds one.
+
+**`enpkg` is now an installable package.** `enpkg/__init__.py` did not exist, making
+`enpkg` a namespace package that resolved only because the repository root happened to be
+on `sys.path` — via `pythonpath = .` in `pytest.ini` and `PYTHONPATH=/app` in the planned
+container. Meanwhile `packages = [{include = "monolith", from = "enpkg"}]` installed the
+inner directory as a top-level `monolith`, which no import in the codebase agrees with. A
+`[project.scripts]` console script needs a genuinely importable module, so the package is
+now `{include = "enpkg"}` with tests excluded, and `poetry install` no longer needs
+`--no-root`. `PYTHONPATH` becomes belt-and-braces rather than load-bearing; it is left in
+place for the Streamlit entry point, which puts the *script's* directory on `sys.path`
+rather than the working directory.
+
+**Commands.** `run`, `batch` (+ `batch discover`), `serialize`, `config init|validate|show`,
+`db lotus|spectral-library`, `blocks list`. Each is a thin adapter over the same runner
+the GUI calls; no orchestration logic lives in `enpkg/cli/`. `enpkg gui` is not here yet —
+it arrives with the NiceGUI application.
+
+**Built on Typer**, which derives parsing, `--help` and nested subcommands from type
+annotations. It adds six packages (rich, pygments, markdown-it-py, mdurl, shellingham,
+annotated-doc); click and colorama were already present. `argparse` would have avoided
+those at the cost of hand-rolled subparser nesting for seven command groups.
+
+**`db` forwards rather than redeclares.** `enpkg db lotus` hands its arguments straight to
+`enpkg/scripts/import_lotus.py`, so the flags are defined once. Both import scripts gained
+`argv` and `prog` parameters to make that possible — `prog` so argparse's usage line reads
+`enpkg db lotus` rather than `enpkg`, which is not a command that accepts those flags.
+
+**`config init` writes a template, not a validated config.** Blocks whose config has a
+required field with no default — only `MSEnhancerConfig.duckdb_path` today — get `null`
+and are listed on stderr. Generating only the fields that happen to have defaults would
+hide from the user that a value is needed at all.
+
+**A JSON result artifact** (`pipeline/run_artifact.py`, `--json-out`). This is what lets a
+caller that runs the pipeline as a separate process learn what happened: the `Analysis`
+lives in that process's memory and cannot be returned, so the outcome, the per-stage
+durations, the `AnalysisSummary` counts and the output paths are projected into a small
+file instead. `schema_version` lets a reader reject a file it cannot interpret. The
+alternative considered was scraping stdout, which would break whenever a log line is
+reworded.
+
+**One bug found by running it rather than by testing it.** Input discovery matched "any
+accepted suffix", but metadata accepts `.tsv/.txt/.csv` while quant tables are `.csv`, so
+a normal folder resolved metadata to the quant table and the run died deep in the loader
+looking for `sample_filename_pos` among quant columns. `find_shared_metadata` had always
+iterated suffixes in preference order for exactly this reason; the CLI now does too.
+
+Verified end to end: 2159 spectra through the networking block, a 2.1 MB Turtle graph,
+logs and artifact under `--output-dir`, and nothing written to `gui_workspace/`.
+
 ### 2026-09-10 — Groundwork for an `enpkg` CLI and a NiceGUI front end
 
 Work on the `GUI_MIGRATION` branch. This entry covers the shared groundwork only; the CLI

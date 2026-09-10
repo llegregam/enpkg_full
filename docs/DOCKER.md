@@ -79,8 +79,8 @@ directory to the daemon before executing the first instruction. Here that is the
 difference between a thirty-second build and one that never completes.
 
 **Only the built DuckDB is needed at runtime.** The LOTUS CSVs and the ISDB pickle are
-inputs to `enpkg/scripts/build_duckdb.py`, which is a one-time offline step. They can
-stay on the host and never approach the image.
+inputs to `enpkg db lotus` / `enpkg db spectral-library`, a one-time offline step. They
+can stay on the host and never approach the image.
 
 ```mermaid
 %%{init: {'theme':'dark'}}%%
@@ -108,16 +108,22 @@ flowchart LR
 
 ## 4. Three code facts that shape the Dockerfile
 
-### 4.1 The package is a namespace package, not an installable distribution
+### 4.1 `enpkg` is an installable distribution
 
-There is no `enpkg/__init__.py`, and `packages = [...]` sits under `[project]` in
-`pyproject.toml`, where `poetry-core` ignores it. CI already works around this with
-`poetry install --no-root` plus `pythonpath = .` in `pytest.ini`.
+`enpkg/__init__.py` exists and `[tool.poetry] packages = [{include = "enpkg"}]` installs
+it, so `poetry install` (**without** `--no-root`) puts `enpkg` on the path and creates
+the `enpkg` console script from `[project.scripts]`. A container that installs the
+project normally can call `enpkg run ...` with no `PYTHONPATH` set.
 
-The container needs the same arrangement, with one extra trap: **`streamlit run` puts the
-*script's* directory on `sys.path`, not the working directory.** So `ENV PYTHONPATH=/app`
-is required for the app to import `enpkg.monolith` at all — it is not defensive
-boilerplate.
+Two things still depend on the repository root being importable, so a container built
+with `--no-root` needs `ENV PYTHONPATH=/app`:
+
+- `pytest.ini` sets `pythonpath = .`, which covers the test run but nothing else.
+- **`streamlit run` puts the *script's* directory on `sys.path`, not the working
+  directory**, so the Streamlit entry point cannot import `enpkg.monolith` on its own.
+
+Installing the root package is the simpler arrangement and removes both. `PYTHONPATH` is
+then belt-and-braces rather than load-bearing.
 
 ### 4.2 Every path is relative to the working directory
 
