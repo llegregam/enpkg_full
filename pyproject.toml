@@ -34,6 +34,7 @@ dependencies = [
     "rdflib>=7.5.0,<8",
     "requests>=2.32.5,<3",
     "tqdm>=4.67.2,<5",
+    "typer>=0.27.2,<0.28",
 ]
 
 [project.urls]
@@ -41,10 +42,14 @@ homepage = "https://github.com/enpkg/enpkg_full"
 repository = "https://github.com/enpkg/enpkg_full"
 documentation = "https://github.com/enpkg/enpkg_full"
 
+[project.scripts]
+enpkg = "enpkg.cli.main:app"
+
 [tool.poetry]
 packages = [
-    {include = "monolith", from = "enpkg"}
+    {include = "enpkg"}
 ]
+exclude = ["enpkg/tests/**"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.4"
