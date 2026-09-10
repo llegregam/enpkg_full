@@ -26,7 +26,6 @@ import os
 import pickle
 import queue
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -46,6 +45,7 @@ from enpkg.monolith.pipeline.runner import (
     build_shared_steps,
     make_loggers,
     record_duration,
+    run_stamp,
 )
 from enpkg.monolith.rdf import serialize_to_turtle
 
@@ -127,7 +127,6 @@ class BatchResult:
 
     results: list[RunResult] = field(default_factory=list)
     batch_dir: Optional[Path] = None
-    runtime_log: Optional[Path] = None
     summary_log: Optional[Path] = None
     metadata_path: Optional[Path] = None
     error: Optional[str] = None
@@ -203,12 +202,17 @@ def _first_with_suffix(folder: Path, suffixes: tuple[str, ...]) -> Optional[Path
     return None
 
 
-def _make_batch_paths() -> tuple[Path, Path, Path]:
-    """Create the batch log folder and return ``(batch_dir, runtime_log, summary_log)``."""
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    batch_dir = LOG_DIR / f"batch_{stamp}"
+def _make_batch_paths(output_dir: Path | None = None) -> tuple[Path, Path]:
+    """Create the batch folder and return ``(batch_dir, summary_log)``.
+
+    Args:
+        output_dir: Parent directory for the batch folder. Defaults to ``LOG_DIR``,
+            which is relative to the process working directory.
+    """
+    base = output_dir if output_dir is not None else LOG_DIR
+    batch_dir = base / f"batch_{run_stamp()}"
     batch_dir.mkdir(parents=True, exist_ok=True)
-    return batch_dir, batch_dir / "runtime.log", batch_dir / "batch_summary.log"
+    return batch_dir, batch_dir / "batch_summary.log"
 
 
 def _sirius_config_for(run_name: str, sirius_spectra_path: Path, shared_cfg: Any) -> Any:
@@ -236,6 +240,7 @@ def run_batch(
     ionization_mode: str,
     log_queue: "queue.Queue[str]",
     verbose: bool = False,
+    output_dir: Path | None = None,
 ) -> BatchResult:
     """Run the selected pipeline blocks against every experiment in ``parent_dir``.
 
@@ -249,12 +254,12 @@ def run_batch(
     Per-experiment failures set the corresponding ``RunResult.error`` and
     the batch continues with the next experiment.
     """
-    batch_dir, runtime_log_path, summary_log_path = _make_batch_paths()
-    batch = BatchResult(
-        batch_dir=batch_dir,
-        runtime_log=runtime_log_path,
-        summary_log=summary_log_path,
-    )
+    batch_dir, summary_log_path = _make_batch_paths(output_dir)
+    batch = BatchResult(batch_dir=batch_dir, summary_log=summary_log_path)
+
+    # ``run_batch`` drops "sirius" from the selection when the executable cannot be
+    # validated, so work on a copy — the caller's list must not change under it.
+    selected_ids = list(selected_ids)
 
     # --- Validate inputs --------------------------------------------------
     metadata_path = find_shared_metadata(parent_dir)
