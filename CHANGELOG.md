@@ -71,6 +71,35 @@ on that always-empty field, so the caption never appeared; it now checks `batch_
 **`run_batch` no longer mutates its caller's list.** It removes `"sirius"` from the selection
 when the executable cannot be validated, which silently changed the caller's list.
 
+**`SerializerConfig`.** `AnalysisSerializer` took nine keyword arguments; the runners
+hardcoded eight and derived the ninth, so eight were unreachable from any config file and
+the GUI could reach none. They now come from a Pydantic model written under a `serializer:`
+key, consumed by `runner.py`, `batch_runner.py` and `smoke_serialize.py` alike. A test
+asserts the model's field names and defaults match the constructor's, so the two cannot
+drift apart unnoticed.
+
+**`include_network` removed entirely** — from the config, from `AnalysisSerializer`, and
+from `smoke_serialize`'s flags. Whether the `emi:LFpair` edges belong in the graph is
+already answered by whether the networking block is part of the run; a second switch could
+only contradict that, and the runners were in fact overriding the serializer's own default
+on every network run. The edges are now emitted whenever a network is present.
+
+The trade-off accepted here: the edge set is worst-case quadratic in feature count, and
+`weights` declares `depends_on=("network",)`, so selecting reranking pulls the networking
+block — and therefore the edges — in with it. There is no longer a way to compute a network
+for reranking while keeping its edges out of the graph. If a large experiment produces an
+unusably large export, this is the cause, and the fix would be to reintroduce a size-based
+gate rather than a semantic one.
+
+**`max_ions_per_spectrum` now rejects a non-positive value.** The three `top_k_*` options
+normalise `<= 0` to `None` meaning "emit all", but this one is stored raw and used as a
+slice bound, so `0` drops *every* ion while writing `enpkg:maxIonsPerSpectrum 0` as
+provenance — an empty result that reads as deliberate. It was latent because `include_ions`
+defaults off, and a serializer UI is exactly what turns it on. Pydantic now rejects it at
+the config boundary (`gt=0`). This puts a hard requirement on the NiceGUI form builder: it
+must return `None` for an empty optional number, since substituting `0` the way the
+Streamlit builder does would now fail validation.
+
 ### 2026-09-10 — SIRIUS does not parallelise: four approaches measured and rejected
 
 No code changed. This records why the planned SIRIUS parallelisation was abandoned,
