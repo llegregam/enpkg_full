@@ -42,8 +42,9 @@ def _configure_logging(verbose: bool) -> None:
 logger = logging.getLogger(__name__)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, prog: str | None = None) -> None:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Import the LOTUS compound tables into a DuckDB database.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -56,7 +57,7 @@ def main() -> None:
                         help="Re-import even if the database already appears populated")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable DEBUG-level logging (default: INFO)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     _configure_logging(args.verbose)
 
