@@ -108,6 +108,35 @@ class Ms2Enhancer(Enhancer):
         absent from LOTUS currently yields nothing: the annotation model carries
         the classification vectors and source organisms that only LOTUS provides.
         """
+        # TODO: let MS2ChemicalAnnotation carry classifications from a source other
+        # than LOTUS, so a candidate LOTUS does not know is annotated rather than
+        # dropped. Three things block that today, and they are separable:
+        #
+        #  1. The model is LOTUS-shaped. `source` is hardcoded "Lotus";
+        #     `pathway_scores` / `superclass_scores` / `class_scores` are the LOTUS
+        #     probability vectors; `organisms` has no library equivalent at all;
+        #     `short_inchikey` is required, but a library hit is identified by its
+        #     own INCHIKEY/SMILES/FORMULA, which are not currently stored anywhere.
+        #  2. The types differ. LOTUS gives a score per NPC term over the whole
+        #     vocabulary; `candidate.npc_pathway` / `npc_superclass` / `npc_class`
+        #     give one label per rank. Reweighting multiplies elementwise against
+        #     LOTUS-length vectors, so a library label is only usable once one-hot
+        #     encoded into `LotusStore.pathways_col_names` and the two sibling
+        #     vocabularies — a different vocabulary misaligns silently.
+        #  3. `weights_enhancer` filters on `has_organisms()`, so an annotation with
+        #     no source organism is dropped downstream even if it is emitted here.
+        #
+        # Open question — precedence, once an annotation can have two sources.
+        # Identity cannot conflict: the LOTUS entry is looked up *by* the
+        # candidate's short InChIKey, so both describe the same structure. The
+        # classifications can conflict, and it is not settled which wins when a
+        # structure is in LOTUS and the library also carries NPC labels: a LOTUS
+        # score vector is strictly more informative than a one-hot, which argues
+        # for LOTUS first and the library as fallback, but the library label is the
+        # one attached to the spectrum that actually matched. ClassyFire has no
+        # LOTUS counterpart and no consumer, so it is additive either way. Record
+        # the winner on the annotation (a `classification_source` field) rather
+        # than resolving it silently, or the reranking input becomes unattributable.
         if not candidate.short_inchikey:
             return False
         lotus_entries = self._lotus_by_short_inchikey.get(candidate.short_inchikey)
