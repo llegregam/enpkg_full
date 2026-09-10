@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import logging
 import queue
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +37,43 @@ from enpkg.monolith.pipeline.blocks import (
 from enpkg.monolith.rdf import serialize_to_turtle
 
 LOG_DIR = Path("gui_workspace") / "logs"
+
+# Keys under which ``RunResult.durations`` records the work that happens outside
+# the block loop. The dunder form cannot collide with a block id: `BlockSpec.id`
+# values are plain lowercase names ("sirius", "ms1_graph", …).
+STAGE_LOAD = "__load__"
+STAGE_RDF = "__rdf__"
+STAGE_PICKLE = "__pickle__"
+
+# Human-readable names for the stage keys above, used by the run and batch reports.
+STAGE_LABELS: dict[str, str] = {
+    STAGE_LOAD: "Load analysis",
+    STAGE_RDF: "RDF serialization",
+    STAGE_PICKLE: "Pickle analysis",
+}
+
+
+@contextmanager
+def record_duration(durations: dict[str, float], key: str) -> Iterator[None]:
+    """Time the enclosed block and store the elapsed seconds under ``key``.
+
+    Records on the exception path as well as the success path: a step that runs
+    for twenty minutes and then raises is exactly the one whose duration is worth
+    reading, and the runner abandons the analysis as soon as a step raises.
+
+    Uses ``time.perf_counter``, which is monotonic, so a system clock adjustment
+    part-way through a long run cannot produce a negative duration.
+
+    Args:
+        durations: Mapping to write into; the key is overwritten if already present.
+        key: A block id, or one of the ``STAGE_*`` constants for work outside the
+            block loop.
+    """
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        durations[key] = time.perf_counter() - start
 
 
 @dataclass(frozen=True)
@@ -70,6 +110,11 @@ class RunResult:
     error: Optional[str] = None
     log_file: Optional[Path] = None
     summary_file: Optional[Path] = None
+    # Wall-clock seconds per block id, plus the STAGE_* keys for the loading,
+    # serialization and pickling that happen outside the block loop. A plain dict
+    # of floats, so it outlives `analysis` being dropped at the end of a batch
+    # experiment and stays available to the GUI.
+    durations: dict[str, float] = field(default_factory=dict)
     # Populated by the batch runner once `analysis` has been pickled and
     # freed; the GUI prefers `analysis` when present, falls back here.
     summary: Optional[AnalysisSummary] = None
@@ -218,12 +263,13 @@ def run_pipeline(
     try:
         logger.info("Loading analysis from %s", spectra_path)
         logger.debug("Metadata path: %s, Quant path: %s", metadata_path, quant_path)
-        analysis = AnalysisLoader.from_files(
-            path_to_spectra=str(spectra_path),
-            path_to_metadata=str(metadata_path),
-            path_to_quant_table=str(quant_path),
-            ionization_mode=ionization_mode,
-        )
+        with record_duration(result.durations, STAGE_LOAD):
+            analysis = AnalysisLoader.from_files(
+                path_to_spectra=str(spectra_path),
+                path_to_metadata=str(metadata_path),
+                path_to_quant_table=str(quant_path),
+                ionization_mode=ionization_mode,
+            )
         logger.info("Loaded %d spectra", len(analysis.spectra))
     except Exception as exc:
         logger.exception("Failed to load analysis")
@@ -243,11 +289,17 @@ def run_pipeline(
     if result.analysis is not None and result.error is None and result.log_file is not None:
         ttl_path = result.log_file.with_suffix(".ttl")
         try:
-            serialize_to_turtle(
-                result.analysis, str(ttl_path),
-                include_network="network" in result.executed,
+            with record_duration(result.durations, STAGE_RDF):
+                serialize_to_turtle(
+                    result.analysis, str(ttl_path),
+                    include_network="network" in result.executed,
+                )
+            # Logged rather than shown in the summary: the summary is written and
+            # its file handler closed inside `_run_analysis`, which has already
+            # returned by this point.
+            logger.info(
+                "Wrote RDF graph: %s (%.1fs)", ttl_path, result.durations[STAGE_RDF]
             )
-            logger.info("Wrote RDF graph: %s", ttl_path)
         except Exception:
             logger.exception("Failed to write RDF graph to %s", ttl_path)
 
@@ -376,7 +428,8 @@ def _run_analysis(
 
         logger.info("Running %s …", block.label)
         try:
-            analysis = step.process(analysis)
+            with record_duration(result.durations, block.id):
+                analysis = step.process(analysis)
         except Exception as exc:
             logger.exception("Step %s failed", block.id)
             result.error = f"{block.id}: {exc}"
@@ -384,7 +437,7 @@ def _run_analysis(
             _close_file_handlers(summary_logger)
             return result
         result.executed.append(block.id)
-        logger.info("%s completed", block.label)
+        logger.info("%s completed in %.1fs", block.label, result.durations[block.id])
 
     result.analysis = analysis
     logger.info("Pipeline execution completed successfully")
@@ -444,14 +497,50 @@ def _log_analysis_summary(logger: logging.Logger, result: RunResult) -> None:
     # -- Per-block sections: only for blocks that actually executed --
     for block_id in result.executed:
         block = BLOCKS_BY_ID[block_id]
+        elapsed = result.durations.get(block_id)
         logger.info("-" * 72)
-        logger.info("  %s", block.label.upper())
+        # A block with no recorded duration prints "-" rather than raising: a
+        # RunResult can reach here with an empty `durations` (a run that failed
+        # before the block loop, or a caller that built the result itself).
+        logger.info(
+            "  %s  [%s]",
+            block.label.upper(),
+            f"{elapsed:.1f}s" if elapsed is not None else "-",
+        )
         block.log_summary(logger, analysis)
+
+    _log_timing_section(logger, result)
 
     logger.info(sep)
     if result.log_file:
         logger.info("  Full log written to: %s", result.log_file)
     logger.info(sep)
+
+
+def _log_timing_section(logger: logging.Logger, result: RunResult) -> None:
+    """Log the per-stage timing breakdown for one analysis.
+
+    Lists every executed block and every ``STAGE_*`` entry recorded so far,
+    slowest first, with each one's share of the total. Stages that run after
+    ``_log_analysis_summary`` — RDF serialization and pickling, both driven by
+    the callers — are absent here by construction; the batch report collects
+    them once every experiment has finished.
+
+    Emits nothing when no durations were recorded, so a caller that built a
+    ``RunResult`` without timing still gets a well-formed summary.
+    """
+    if not result.durations:
+        return
+
+    total = sum(result.durations.values())
+    logger.info("-" * 72)
+    logger.info("  TIMING  (total %.1fs)", total)
+    for key, elapsed in sorted(result.durations.items(), key=lambda kv: -kv[1]):
+        label = STAGE_LABELS.get(key) or (
+            BLOCKS_BY_ID[key].label if key in BLOCKS_BY_ID else key
+        )
+        share = 100.0 * elapsed / total if total > 0 else 0.0
+        logger.info("    %-28s %9.1fs  %5.1f%%", label, elapsed, share)
 
 
 

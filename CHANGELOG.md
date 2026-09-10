@@ -20,6 +20,42 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-10 — Per-stage timing instrumentation
+
+- `RunResult` now carries `durations`, a map of wall-clock seconds per block id plus
+  three reserved keys (`__load__`, `__rdf__`, `__pickle__`) for the work that happens
+  outside the block loop. Every run reports it: a per-analysis `TIMING` section in the
+  run summary, and an aggregate `TIMING BREAKDOWN` table — total, mean, share, and the
+  number of experiments that recorded each stage — in `batch_summary.log`.
+- The motivation was that nothing measured where pipeline time went, so proposals to
+  speed it up rested on assumption. Scraping the `Running X …` / `X completed`
+  timestamps out of an existing 12-experiment batch log
+  (`gui_workspace/logs/batch_20260818_235853/`) gave the first answer: **SIRIUS is 88.6%
+  of block time** (1139.5 s mean per experiment), weights 6.6%, and everything else
+  under 5% combined. Per experiment, outside the block loop: load 1.1 s, RDF
+  serialization 46.4 s, pickling the 1.5 GB `Analysis` 11.7 s. The whole batch was
+  4.49 h for 12 experiments, SIRIUS 84.7% of it.
+- That scrape is why the instrumentation exists rather than being a substitute for it.
+  It only worked because block boundaries happen to be logged as progress messages, it
+  saw nothing outside the block loop that was not separately logged, and repeating it
+  meant re-writing the parser. The numbers are now an output of the run.
+- Durations are recorded on the **failure** path as well as the success path. A block
+  that runs for twenty minutes and then raises is the one whose duration is most worth
+  reading, and the runner abandons the analysis as soon as a step raises, so a
+  success-only timer would lose exactly that case.
+- `time.perf_counter`, not `time.time`: it is monotonic, so a clock adjustment during a
+  multi-hour batch cannot yield a negative duration.
+- RDF serialization and pickling are absent from the *per-experiment* summary and
+  present only in the batch table. Both are driven by the callers, after
+  `_run_analysis` has already written the summary and closed its file handler. Rather
+  than reorder that, each logs its own duration as a runtime line and the batch table
+  collects them once every experiment has finished.
+- Consequence worth recording for the parallelism work this was meant to inform: since
+  SIRIUS is ~85% of total experiment time, overlapping it with the rest of the pipeline
+  at one worker can save at most ~15%. Any larger gain requires running SIRIUS runs
+  concurrently with each other, which is unverified — so the measurement moved that
+  from a side assumption to the decisive question.
+
 ### 2026-09-07 — Integration-test fixtures
 
 - Added `enpkg/scripts/build_test_fixtures.py`, which builds everything the
