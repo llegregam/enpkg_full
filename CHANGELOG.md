@@ -20,6 +20,57 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-10 — Groundwork for an `enpkg` CLI and a NiceGUI front end
+
+Work on the `GUI_MIGRATION` branch. This entry covers the shared groundwork only; the CLI
+and the NiceGUI application follow.
+
+**Why this is happening.** Two problems, both consequences of the pipeline being headless
+while the only way to reach it is a browser.
+
+The pipeline under `pipeline/` imports no GUI code, but `pyproject.toml` declares no
+`[project.scripts]` and the only `argparse` entry points are the standalone
+`enpkg/scripts/*.py` utilities. There is therefore no supported way to run a batch on a
+cluster. And the Streamlit front end pays a recurring cost to Streamlit's execution model
+rather than to the problem domain: the `form_rev` counter exists only because Streamlit
+ignores a changed `value=` for an already-registered widget key, a trailing `st.rerun()`
+works around the execution panel rendering beneath a collapsed `st.status`, `_drain_queue`
+runs only *after* `run_pipeline` returns so a run shows a spinner and nothing else until it
+finishes, and there is no way to cancel a run. NiceGUI's elements are persistent Python
+objects, which removes the first two by construction; running the pipeline as a subprocess
+of the new CLI removes the last two, and means both front ends exercise one execution path.
+
+**`configuration/introspect.py`** — the five Pydantic-reflection helpers that were private to
+`gui/form_builder.py` now live next to the models they reflect over, so the Streamlit and
+NiceGUI form builders cannot drift while both exist. Adding `enum_choices` there fixed a
+live defect: `_render_field` dispatched on `annotation is bool/int/float/str`, which
+`Literal[...]` does not match, so `SpectralMatchParams.method` and
+`MSEnhancerConfig.ms2_adduct_filter` fell through to a free-text box and had to be typed by
+hand. Both are dropdowns now. (`canopus_source` looked like the same bug but is a `str` with
+a regex constraint, and already worked.)
+
+**`config_io.inject_shared_params`** — moved out of `gui/app.py`. `GeneralParams` describes
+the run, not the block, so it is collected once and merged into every section that declares
+it; `build_configs` never did this, so any caller that skipped the GUI's private copy would
+have built each block from its Pydantic defaults and silently processed a negative-mode
+dataset as positive. It is now on the path every front end shares.
+
+**`output_dir` on `run_pipeline` and `run_batch`** — `LOG_DIR` is a module-level *relative*
+path resolved against the process working directory. That is survivable for a GUI launched
+from the repository root and not for a command line invokable from anywhere, which would
+scatter its logs. The default is unchanged, so existing callers behave as before.
+
+**Run stamps are now unique.** The stamp was one-second granular, so two runs started in the
+same second wrote to the same log paths and the second overwrote the first. Four random
+characters are appended; the stamp still sorts chronologically.
+
+**`BatchResult.runtime_log` removed.** The path was computed and stored but no handler was
+ever attached, so the file was never created. `gui/app.py` gated the "Batch folder" caption
+on that always-empty field, so the caption never appeared; it now checks `batch_dir`.
+
+**`run_batch` no longer mutates its caller's list.** It removes `"sirius"` from the selection
+when the executable cannot be validated, which silently changed the caller's list.
+
 ### 2026-09-10 — SIRIUS does not parallelise: four approaches measured and rejected
 
 No code changed. This records why the planned SIRIUS parallelisation was abandoned,
