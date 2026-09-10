@@ -356,12 +356,13 @@ the registry cannot do for you, and it is the step with lasting consequences:
 
 Practically: add URI minting to [`rdf/uris.py`](../enpkg/monolith/rdf/uris.py), the terms to
 [`rdf/namespaces.py`](../enpkg/monolith/rdf/namespaces.py), an `_add_*` method to the
-serializer, and document the shape in [RDF_DATA_MODEL.md](RDF_DATA_MODEL.md). If the output
-should only be emitted when your block actually ran, follow the network layer's pattern —
-the runners pass `include_network="network" in result.executed` into `serialize_to_turtle`,
-so a conditional layer needs a flag threaded from both
-[`runner.py`](../enpkg/monolith/pipeline/runner.py) and
-[`batch_runner.py`](../enpkg/monolith/pipeline/batch_runner.py).
+serializer, and document the shape in [RDF_DATA_MODEL.md](RDF_DATA_MODEL.md). A layer whose
+input is absent should be a no-op rather than an error — the network layers return early
+when `analysis.molecular_network` is None, which is what makes them safe to leave on. If a
+layer is expensive enough that a user needs to switch it off, add a field to
+[`SerializerConfig`](../enpkg/monolith/configuration/serializer_config.py); the runners pass
+that config straight through to `serialize_to_turtle`, and the serializer page picks the new
+field up from `model_fields` without further work.
 
 ### Step 8 — Write the walkthrough doc
 

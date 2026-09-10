@@ -558,7 +558,7 @@ def test_molecular_network_emits_named_lfpairs(make_spectrum):
     carrying cosine + mass difference — and re-adding is a no-op."""
     # Edge stated (2, 1) on purpose: orientation must not leak into the output.
     analysis = _analysis_with_network(make_spectrum, [1, 2, 3], [(2, 1, 0.83)])
-    serializer = AnalysisSerializer(include_network=True)
+    serializer = AnalysisSerializer()
     serializer.add_analysis(analysis)
     g = serializer.graph
 
@@ -588,8 +588,8 @@ def test_lfpair_is_orientation_independent(make_spectrum):
     """The same edge stated (1, 2) and (2, 1) produces the same triples."""
     forward = _analysis_with_network(make_spectrum, [1, 2], [(1, 2, 0.9)])
     reverse = _analysis_with_network(make_spectrum, [1, 2], [(2, 1, 0.9)])
-    a = AnalysisSerializer(include_network=True)
-    b = AnalysisSerializer(include_network=True)
+    a = AnalysisSerializer()
+    b = AnalysisSerializer()
     a.add_analysis(forward)
     b.add_analysis(reverse)
     # Comparable as sets only because there are no blank nodes left to re-mint.
@@ -604,7 +604,7 @@ def test_fbmn_components_are_serialized(make_spectrum):
         [1, 2, 3, 4, 5, 6],
         [(1, 2, 0.9), (2, 3, 0.8), (4, 5, 0.75)],  # {1,2,3}, {4,5}, 6 isolated
     )
-    serializer = AnalysisSerializer()  # components on by default, edges off
+    serializer = AnalysisSerializer()  # components on by default
     serializer.add_analysis(analysis)
     g = serializer.graph
 
@@ -628,8 +628,9 @@ def test_fbmn_components_are_serialized(make_spectrum):
     isolated = AnalysisURIs.spectrum_uri(analysis, analysis.spectra[5])
     assert list(g.objects(isolated, EMI.hasFBMNComponent)) == []
     assert (AnalysisURIs.fbmn_component_uri(analysis, 6), RDF.type, EMI.FBMNComponent) not in g
-    # Components are gated independently of the edges.
-    assert set(g.subjects(RDF.type, EMI.LFpair)) == set()
+    # The edges the components derive from are emitted alongside them: one per input
+    # pair, and none for the isolated feature.
+    assert len(set(g.subjects(RDF.type, EMI.LFpair))) == 3
 
     before = len(g)
     serializer.add_analysis(analysis)
@@ -663,7 +664,7 @@ def test_fbmn_components_can_be_disabled(make_spectrum):
 
 def test_network_layers_are_no_ops_without_a_network(make_analysis):
     analysis = make_analysis(run_name="RUNX", n_spectra=2)  # molecular_network is None
-    serializer = AnalysisSerializer(include_network=True, include_fbmn_components=True)
+    serializer = AnalysisSerializer(include_fbmn_components=True)
     serializer.add_analysis(analysis)
 
     assert set(serializer.graph.subjects(RDF.type, EMI.LFpair)) == set()

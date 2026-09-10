@@ -15,9 +15,9 @@ Phases implemented here:
   1. ``Analysis -> Sample -> FeatureSet -> Spectrum`` spine + shared Taxon node.
   2. MS1 adducts (+ recipe), compounds (+ 2D-InChIKey bridge node, organism,
      reference) and MS2 annotations.
-  3. The OTT match node, the molecular network (``emi:LFpair`` edges, gated by
-     ``include_network``; ``emi:FBMNComponent`` nodes for the connected components
-     those edges form, on by default) and the gated product-ion layer.
+  3. The OTT match node, the molecular network (``emi:LFpair`` edges; plus
+     ``emi:FBMNComponent`` nodes for the connected components those edges form, on by
+     default) and the gated product-ion layer.
 """
 
 from __future__ import annotations
@@ -97,7 +97,6 @@ class AnalysisSerializer:
         top_k_ms1: Optional[int] = 5,
         top_k_ms2: Optional[int] = 5,
         top_k_sirius: Optional[int] = None,
-        include_network: bool = False,
         include_fbmn_components: bool = True,
         include_ions: bool = False,
         include_adduct_clusters: bool = True,
@@ -119,10 +118,9 @@ class AnalysisSerializer:
         # SIRIUS candidates arrive pre-ranked (structurePerIdRank) and the summary
         # file is already SIRIUS's chosen top-X, so this defaults to None (emit all).
         self.top_k_sirius = top_k_sirius if (top_k_sirius is None or top_k_sirius > 0) else None
-        self.include_network = include_network
         # Components are O(features) where the edges they derive from are O(features^2),
-        # and the component is the unit FBMN consumers reason about — so unlike
-        # include_network this defaults on. Both are no-ops without a network.
+        # and the component is the unit FBMN consumers reason about. A no-op without a
+        # network.
         self.include_fbmn_components = include_fbmn_components
         self.include_ions = include_ions
         self.include_adduct_clusters = include_adduct_clusters
@@ -803,13 +801,14 @@ class AnalysisSerializer:
     def _add_network_layer(self, analysis: Analysis, featureset_uri: URIRef) -> None:
         """Emit the molecular-network layers. A no-op when there is no network.
 
-        Two independent views of the same ``nx.Graph``:
+        Two views of the same ``nx.Graph``:
 
-        * ``include_network`` — the reified pairwise edges (``emi:LFpair``). Off by
-          default: worst-case quadratic in the number of features.
-        * ``include_fbmn_components`` — the connected components those edges form
-          (``emi:FBMNComponent``). On by default: one node per family, so O(features),
-          and in FBMN practice the component is the unit people reason about.
+        * the reified pairwise edges (``emi:LFpair``), always emitted, worst-case
+          quadratic in the number of features.
+        * the connected components those edges form (``emi:FBMNComponent``), gated on
+          ``include_fbmn_components`` and on by default: one node per family, so
+          O(features), and in FBMN practice the component is the unit people reason
+          about.
 
         Builds the feature-id -> spectrum lookup **once** and shares it with both
         emitters. The lookup is needed because network node ids are the MGF
@@ -821,11 +820,8 @@ class AnalysisSerializer:
         network = analysis.molecular_network
         if network is None:
             return
-        if not (self.include_network or self.include_fbmn_components):
-            return
         spectra_by_id = {spectrum.feature_id: spectrum for spectrum in analysis.spectra}
-        if self.include_network:
-            self._add_molecular_network(analysis, network, spectra_by_id)
+        self._add_molecular_network(analysis, network, spectra_by_id)
         if self.include_fbmn_components:
             self._add_fbmn_components(analysis, network, featureset_uri, spectra_by_id)
 

@@ -182,13 +182,17 @@ more by its closest structural relatives than by borderline ones.
 
 ## 6. Serializing the network to RDF
 
-The network is exported as **two independent layers**, gated separately because they cost
-very different amounts:
+The network is exported as **two layers**:
 
 | layer | flag | default | cost |
 |---|---|---|---|
-| `emi:LFpair` — the pairwise edges | `include_network` | **off** | worst-case O(features²) |
+| `emi:LFpair` — the pairwise edges | — always emitted | — | worst-case O(features²) |
 | `emi:FBMNComponent` — the families those edges form | `include_fbmn_components` | **on** | O(features) |
+
+Whether the edges belong in the graph is answered by whether the networking block is part of
+the run, so there is no second switch for them. Note that `weights` declares
+`depends_on=("network",)`, so selecting reranking pulls the networking block — and therefore
+the edge set — in with it.
 
 Neither emits feature nodes: those already exist from the analysis spine. Both are no-ops
 when the analysis carries no network.
@@ -383,11 +387,12 @@ queries that span both.
 - **Order is part of the contract.** The graph is consumed as a matrix, so node order is
   validated at the data-model level rather than trusted — a silent misalignment would corrupt
   propagation without raising anything.
-- **The two export layers are gated separately.** Edges are the largest thing this pipeline
-  could write (quadratic in the worst case) and are largely an *internal* artefact, so
-  `include_network` defaults **off**. The components derived from them are O(features) and are
-  what consumers actually query, so `include_fbmn_components` defaults **on**. Paying for the
-  cheap, high-value layer should not require paying for the expensive one.
+- **The block selection decides whether the network reaches the graph.** Edges are the
+  largest thing this pipeline could write (quadratic in the worst case), and they are emitted
+  whenever the networking block ran — a serializer switch could only contradict what the
+  selection already said. The components derived from them are O(features) and are what
+  consumers actually query, so `include_fbmn_components` defaults **on** and can be turned off
+  independently.
 - **Named URIs everywhere, no blank nodes.** Every emitted node is addressable and derived
   from stable keys, so re-serializing is a no-op and GraphDB's browser can show it. The URIs
   are sorted/minimum-keyed so they never depend on iteration order.

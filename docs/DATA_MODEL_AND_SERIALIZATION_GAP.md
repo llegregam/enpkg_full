@@ -232,7 +232,7 @@ flowchart TD
 | MS2 `MS2ChemicalAnnotation` (+organisms) | ✅ | slim; attaches at 2D InChIKey; rank/score |
 | SIRIUS `SiriusChemicalAnnotation` | ✅ | formula, adduct, rank; 2D InChIKey |
 | OTT `Match` / shared `Taxon` nodes | ✅ | match-quality literals; `owl:sameAs` externals |
-| Molecular network (`emi:LFpair` edges + `emi:FBMNComponent`) | ✅ | edges gated `include_network` (off); components gated `include_fbmn_components` (on). Named URIs, `hasCosine` + `hasMassDifference` |
+| Molecular network (`emi:LFpair` edges + `emi:FBMNComponent`) | ✅ | edges emitted whenever the networking block ran; components gated `include_fbmn_components` (on). Named URIs, `hasCosine` + `hasMassDifference` |
 | Per-channel top-k ranking (`annotationRank/Score`) | ✅ | reweighted NPC-alignment, MS2 falls back to cosine |
 
 Export entrypoints: `serialize_to_turtle(analysis, "out.ttl")` and the batch smoke test
