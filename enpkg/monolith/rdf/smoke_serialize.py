@@ -11,7 +11,7 @@ path raise (the script reports that per-analysis rather than crashing).
 Usage::
 
     python -m enpkg.monolith.rdf.smoke_serialize [--batch-dir DIR] [--out-dir DIR]
-        [--include-network] [--no-fbmn-components]
+        [--no-fbmn-components]
         [--include-ions] [--min-relative-intensity F] [--max-ions-per-spectrum N]
 """
 
@@ -25,6 +25,8 @@ from typing import Optional
 
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import RDF
+
+from enpkg.monolith.configuration.serializer_config import SerializerConfig
 
 from .namespaces import EMI, ENPKG
 from .serializer import AnalysisSerializer
@@ -131,8 +133,6 @@ def main(argv=None) -> int:
     parser.add_argument("--top-k-sirius", type=int, default=None,
                         help="Keep only the top-k SIRIUS annotations per spectrum (by structurePerIdRank). "
                              "Default: emit all (the summary file is already SIRIUS's top-X).")
-    parser.add_argument("--include-network", action="store_true",
-                        help="Emit the molecular network (LFpair edges). Off by default.")
     parser.add_argument("--no-fbmn-components", dest="include_fbmn_components",
                         action="store_false",
                         help="Skip the emi:FBMNComponent nodes for the network's connected "
@@ -151,22 +151,22 @@ def main(argv=None) -> int:
         parser.error(f"No analysis.pkl under {batch_dir}/*/")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    opts = dict(
+    # Same model the runners and the GUI use, so a flag combination that is rejected
+    # here is rejected there too.
+    opts = SerializerConfig(
         top_k_ms1=args.top_k_ms1,
         top_k_ms2=args.top_k_ms2,
         top_k_sirius=args.top_k_sirius,
-        include_network=args.include_network,
         include_fbmn_components=args.include_fbmn_components,
         include_ions=args.include_ions,
         min_relative_intensity=args.min_relative_intensity,
         max_ions_per_spectrum=args.max_ions_per_spectrum,
-    )
+    ).model_dump()
 
     print(f"Batch:  {batch_dir}")
     print(f"Output: {args.out_dir.resolve()}")
     print(f"Top-k:  ms1={args.top_k_ms1}  ms2={args.top_k_ms2}  sirius={args.top_k_sirius}")
-    print(f"Network: edges={'on' if args.include_network else 'off'}  "
-          f"components={'on' if args.include_fbmn_components else 'off'}")
+    print(f"Network: components={'on' if args.include_fbmn_components else 'off'}")
     print(f"Ions:   {'on' if args.include_ions else 'off'}\n")
 
     overall_ok = True

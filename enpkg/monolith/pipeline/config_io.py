@@ -25,6 +25,10 @@ from enpkg.monolith.pipeline.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCK
 # ``get_section`` (which looks sections up by block id) never collides with it.
 SELECTION_KEY = "selected_blocks"
 
+# Top-level YAML key holding the RDF serializer's options. Not a block id either: the
+# Turtle export runs after the block loop rather than as a selectable block.
+SERIALIZER_KEY = "serializer"
+
 
 def load_unified_yaml(path: Path) -> dict[str, dict]:
     """Return a mapping ``{block_id_or_shared_key: section_dict}``.
@@ -85,9 +89,21 @@ def get_selection(data: dict[str, Any]) -> list[str] | None:
     return [block_id for block_id in raw if block_id in BLOCKS_BY_ID]
 
 
+def get_serializer_section(data: dict[str, Any]) -> dict:
+    """Return the RDF serializer's section, or ``{}`` when the file has none.
+
+    ``serializer`` is a top-level key like ``ms_enhancer`` rather than a block id: the
+    export runs after the block loop, not as a selectable block, so it has no entry in
+    ``selected_blocks`` and is never skipped.
+    """
+    section = data.get(SERIALIZER_KEY)
+    return dict(section) if isinstance(section, dict) else {}
+
+
 def save_unified_yaml(
     path: Path,
     validated_configs: dict[str, Any],
+    serializer: Any = None,
 ) -> None:
     """Dump validated Pydantic configs back to a single YAML file.
 
@@ -120,6 +136,10 @@ def save_unified_yaml(
             seen_ms = True
         else:
             out[block.id] = cfg.model_dump(exclude_none=True)
+    if serializer is not None:
+        # Written without exclude_none: an unset `max_ions_per_spectrum` means "no cap",
+        # and dropping the key would leave a reader guessing whether it was chosen.
+        out[SERIALIZER_KEY] = serializer.model_dump()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
         yaml.safe_dump(out, f, sort_keys=False)

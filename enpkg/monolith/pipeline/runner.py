@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
+from enpkg.monolith.configuration.serializer_config import SerializerConfig
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.exceptions import DatabaseError
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
@@ -267,13 +268,17 @@ def run_pipeline(
     log_queue: "queue.Queue[str]",
     verbose: bool = False,
     output_dir: Path | None = None,
+    serializer_config: SerializerConfig | None = None,
 ) -> RunResult:
     """Load an Analysis and run each selected block in canonical order.
 
     Args:
         output_dir: Where the run log, summary log and Turtle export are written.
             Defaults to ``LOG_DIR``, which is relative to the process working directory.
+        serializer_config: What the Turtle export should contain. Defaults to
+            :class:`SerializerConfig`'s own defaults.
     """
+    serializer_config = serializer_config or SerializerConfig()
     log_file, summary_file = _make_log_paths(output_dir)
     logger, summary_logger = make_loggers(
         log_queue, verbose=verbose, log_file=log_file, summary_file=summary_file
@@ -314,8 +319,9 @@ def run_pipeline(
         try:
             with record_duration(result.durations, STAGE_RDF):
                 serialize_to_turtle(
-                    result.analysis, str(ttl_path),
-                    include_network="network" in result.executed,
+                    result.analysis,
+                    str(ttl_path),
+                    **serializer_config.model_dump(),
                 )
             # Logged rather than shown in the summary: the summary is written and
             # its file handler closed inside `_run_analysis`, which has already

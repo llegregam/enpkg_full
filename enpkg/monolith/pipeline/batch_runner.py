@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from enpkg.monolith.configuration.serializer_config import SerializerConfig
 from enpkg.monolith.dev_utils import log_memory_snapshot
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.pipeline.blocks import BLOCKS_BY_ID
@@ -241,6 +242,7 @@ def run_batch(
     log_queue: "queue.Queue[str]",
     verbose: bool = False,
     output_dir: Path | None = None,
+    serializer_config: SerializerConfig | None = None,
 ) -> BatchResult:
     """Run the selected pipeline blocks against every experiment in ``parent_dir``.
 
@@ -254,6 +256,7 @@ def run_batch(
     Per-experiment failures set the corresponding ``RunResult.error`` and
     the batch continues with the next experiment.
     """
+    serializer_config = serializer_config or SerializerConfig()
     batch_dir, summary_log_path = _make_batch_paths(output_dir)
     batch = BatchResult(batch_dir=batch_dir, summary_log=summary_log_path)
 
@@ -414,16 +417,15 @@ def run_batch(
             result.summary = AnalysisSummary.from_analysis(result.analysis)
 
             # Export the per-experiment knowledge graph as Turtle (best-effort,
-            # like the pickle below). The network layer is only emitted when the
-            # networking block actually ran. Done before the pickle drops the
-            # in-memory Analysis.
+            # like the pickle below). Done before the pickle drops the in-memory
+            # Analysis.
             ttl_path = exp_dir / f"{exp.run_name}.ttl"
             try:
                 with record_duration(result.durations, STAGE_RDF):
                     serialize_to_turtle(
                         result.analysis,
                         str(ttl_path),
-                        include_network="network" in result.executed,
+                        **serializer_config.model_dump(),
                     )
                 logger.info(
                     "[%s] Wrote RDF graph: %s (%.1fs)",
