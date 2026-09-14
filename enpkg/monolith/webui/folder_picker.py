@@ -10,10 +10,13 @@ Both paths end at the same callback, so callers never branch on the mode.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Callable, Optional
 
 from nicegui import app, run, ui
+
+log = logging.getLogger(__name__)
 
 
 def is_native() -> bool:
@@ -106,22 +109,51 @@ class FolderPicker:
         self.input.value = str(path)
 
     async def _browse(self) -> None:
-        chosen = await _native_dialog(self.input.value) if is_native() else await _served_dialog(
-            self.input.value
-        )
+        try:
+            if is_native():
+                chosen = await _native_dialog(self.input.value)
+            else:
+                chosen = await _served_dialog(self.input.value)
+        except Exception as exc:  # noqa: BLE001
+            # Without this the button appears to do nothing at all, which gives no
+            # indication that anything went wrong or where to look.
+            log.exception("Folder dialog failed")
+            ui.notify(f"Could not open the folder chooser: {exc}", type="negative")
+            return
         if chosen is not None:
             self.set_value(chosen)
             self._on_pick(chosen)
+
+
+def dialog_start_directory(current: str) -> str:
+    """Return an absolute directory for a file dialog to open at.
+
+    The path must be absolute. A dialog runs in the operating system's shell, which has
+    no notion of the working directory this process was started from, and handing it a
+    relative path makes the native dialog hang rather than fail — the button then looks
+    as though it does nothing. The stored value is whatever the user typed, and the
+    defaults are relative, so resolving here is what keeps that from happening.
+
+    Falls back to the home directory when the current value does not name a directory.
+    """
+    # Checked before constructing a Path: Path("") is Path("."), which is a directory,
+    # so an empty box would otherwise open at the working directory.
+    if (current or "").strip():
+        try:
+            candidate = Path(current).expanduser()
+            if candidate.is_dir():
+                return str(candidate.resolve())
+        except OSError:
+            pass
+    return str(Path.home().resolve())
 
 
 async def _native_dialog(current: str) -> Optional[Path]:
     """Open the operating system's folder dialog."""
     import webview
 
-    start = Path(current).expanduser()
-    directory = str(start if start.is_dir() else Path.home())
     result = await app.native.main_window.create_file_dialog(
-        webview.FOLDER_DIALOG, directory=directory
+        webview.FileDialog.FOLDER, directory=dialog_start_directory(current)
     )
     if not result:
         return None
@@ -130,12 +162,8 @@ async def _native_dialog(current: str) -> Optional[Path]:
 
 async def _served_dialog(current: str) -> Optional[Path]:
     """Open a dialog listing directories visible to the server."""
-    start = Path(current).expanduser()
-    if not start.is_dir():
-        start = Path.home()
-
     chosen: dict[str, Optional[Path]] = {"path": None}
-    cursor = {"path": start.resolve()}
+    cursor = {"path": Path(dialog_start_directory(current))}
 
     with ui.dialog() as dialog, ui.card().classes("w-[32rem]"):
         header = ui.label(str(cursor["path"])).classes("text-sm font-mono break-all")
