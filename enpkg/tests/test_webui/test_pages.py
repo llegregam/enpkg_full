@@ -73,6 +73,38 @@ async def test_imports_offers_both_modes(user: User) -> None:
     await user.should_see("Batch")
 
 
+async def test_imports_survives_a_revisit_after_files_are_chosen(
+    user: User, tmp_path, monkeypatch
+) -> None:
+    """Revisiting Imports must not fail on the filenames the first visit stored.
+
+    A select rejects a value that is not among its options. The dropdowns are built
+    before the folder has been scanned, so a stored filename handed to them at
+    construction raises and the page returns a 500 -- which is what happened on the
+    second visit, once a first visit had recorded a choice.
+    """
+    from enpkg.monolith.webui import paths
+
+    data = tmp_path / "experiment"
+    data.mkdir()
+    (data / "arnica_pos.mgf").write_text("", encoding="utf-8")
+    (data / "metadata.tsv").write_text("", encoding="utf-8")
+    (data / "arnica_pos_quant.csv").write_text("", encoding="utf-8")
+    monkeypatch.setattr(paths, "DEFAULT_INPUT_DIR", data)
+
+    # First visit scans the folder and records a filename for each dropdown. Waiting for
+    # the filename to appear is what makes this a real reproduction: without it the scan
+    # may not have finished, nothing would be stored, and the revisit would prove nothing.
+    await user.open("/imports")
+    await user.should_see("arnica_pos.mgf")
+
+    # Leaving and returning is what used to raise.
+    await user.open("/pipeline")
+    await user.should_see("Pipeline")
+    await user.open("/imports")
+    await user.should_see("arnica_pos.mgf")
+
+
 async def test_pipeline_reports_an_empty_selection(user: User) -> None:
     await user.open("/pipeline")
     await user.should_see("Select at least one block")

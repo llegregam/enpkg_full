@@ -113,11 +113,13 @@ def _single_section() -> None:
             ),
         )
 
+        # Built with no options and no value. The options come from scanning the folder,
+        # which happens after the page is delivered, and a select rejects a value that is
+        # not among its options -- so a previously chosen filename passed in here would
+        # raise as soon as the page was revisited. `_populate` sets both together.
         for key, label, _suffixes in _SINGLE_INPUTS:
             selects[key] = (
-                ui.select(
-                    [], label=label, value=state.get(key), with_input=True, clearable=True
-                )
+                ui.select([], label=label, with_input=True, clearable=True)
                 .props("dense")
                 .classes("w-full")
                 .on_value_change(lambda e, key=key: state.set_value(key, e.value))
@@ -127,7 +129,6 @@ def _single_section() -> None:
             ui.select(
                 [],
                 label="Spectra for SIRIUS (only needed when that block runs)",
-                value=state.get("sirius_spectra"),
                 with_input=True,
                 clearable=True,
             )
@@ -156,14 +157,15 @@ async def _populate(folder: Path, selects: dict[str, ui.select]) -> None:
         element = selects.get(key)
         if element is None:
             continue
-        element.options = names
         current = state.get(key)
         # A file chosen before the folder changed may no longer exist. Falling back to
         # the first match keeps the page usable; clearing it keeps it honest when there
         # is nothing to fall back to.
-        element.value = current if current in names else (names[0] if names else None)
-        state.set_value(key, element.value)
-        element.update()
+        chosen = current if current in names else (names[0] if names else None)
+        # Options and value are set in one call: a select rejects a value that is not
+        # among its options, so assigning them separately depends on the order.
+        element.set_options(names, value=chosen)
+        state.set_value(key, chosen)
 
 
 def _batch_section() -> None:
