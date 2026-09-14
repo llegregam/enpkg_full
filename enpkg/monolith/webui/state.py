@@ -76,12 +76,20 @@ def _defaults() -> dict[str, Any]:
 
 
 def raw() -> dict[str, Any]:
-    """Return this visitor's stored values, seeding them on first access."""
+    """Return this visitor's stored values, filling in any that are missing.
+
+    Missing keys are added individually rather than by replacing the whole mapping.
+    Replacing it would mean that a single access finding the mapping unfamiliar — which
+    happens whenever the store differs from the one a value was written through — silently
+    discards every choice the visitor has made.
+    """
     store = app.storage.user
     current = store.get(_ROOT)
-    if not isinstance(current, dict) or "sid" not in current:
-        current = _defaults()
+    if not isinstance(current, dict):
+        current = {}
         store[_ROOT] = current
+    for key, value in _defaults().items():
+        current.setdefault(key, value)
     return current
 
 
