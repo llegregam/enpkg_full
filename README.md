@@ -30,7 +30,8 @@ scripts. The current design:
   when it can run; the runner executes selected blocks in canonical order.
 - **Reference data** — LOTUS compound/taxonomy metadata and spectral libraries are
   resolved from a persistent **DuckDB** file (see [`loaders/`](enpkg/monolith/loaders/);
-  build it with `enpkg db lotus` and `enpkg db spectral-library`).
+  build it with `enpkg db lotus` and `enpkg db spectral-library` — see
+  [docs/BUILDING_THE_DATABASE.md](docs/BUILDING_THE_DATABASE.md)).
 - **Output** — an RDF/Turtle knowledge graph via [`rdf/`](enpkg/monolith/rdf/)
   (`AnalysisSerializer`), mapped to the EMI vocabulary.
 

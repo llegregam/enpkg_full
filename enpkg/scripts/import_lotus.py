@@ -1,20 +1,24 @@
 """
-One-time script to ingest LOTUS CSV files and spectral pickle files into a
-persistent DuckDB database file.
+Ingest the LOTUS compound and NatProd-classifier tables into a DuckDB database.
+
+Spectral libraries go into the same database through a separate step,
+:mod:`enpkg.scripts.import_spectral_library`, because they are registered
+individually and updated on their own schedule.
 
 Usage
 -----
-python -m enpkg.scripts.build_duckdb \\
-    --metadata    path/to/taxo_db_metadata.csv \\
-    --pathways    path/to/pathways.csv \\
+python -m enpkg.scripts.import_lotus \\
+    --metadata     path/to/taxo_db_metadata.csv \\
+    --pathways     path/to/pathways.csv \\
     --superclasses path/to/superclasses.csv \\
-    --classes     path/to/classes.csv \\
-    --spectral-pos path/to/isdb_pos.pkl \\
-    --spectral-neg path/to/isdb_neg.pkl \\
-    --output      path/to/enpkg.duckdb
+    --classes      path/to/classes.csv \\
+    --database     path/to/enpkg.duckdb
 
-All spectral arguments are optional — omit any you don't have.
-Use --force to re-import into an existing database.
+All four CSVs are required. The database file is created if absent; if it is already
+populated the import reports its row counts and stops, so an accidental repeat cannot
+rebuild a multi-gigabyte table. Pass --force to re-import anyway.
+
+See docs/BUILDING_THE_DATABASE.md for the whole procedure.
 """
 
 import argparse
