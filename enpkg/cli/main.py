@@ -12,6 +12,7 @@ import typer
 from enpkg.cli.blocks_cmd import blocks_app
 from enpkg.cli.config_cmd import config_app
 from enpkg.cli.db_cmd import db_app
+from enpkg.cli.gui_cmd import gui
 from enpkg.cli.run import batch_app, run
 from enpkg.cli.serialize_cmd import serialize
 
@@ -25,6 +26,7 @@ app = typer.Typer(
 # the modules defining them stay importable (and testable) without building a Typer app.
 app.command("run")(run)
 app.command("serialize")(serialize)
+app.command("gui")(gui)
 
 app.add_typer(batch_app, name="batch")
 app.add_typer(config_app, name="config")
