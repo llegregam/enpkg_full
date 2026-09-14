@@ -10,8 +10,9 @@ controls immediately and fills in the file lists from a background task.
 """
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from nicegui import background_tasks, run, ui
 
@@ -22,18 +23,9 @@ from enpkg.monolith.pipeline.batch_runner import (
     discover_experiments,
     find_shared_metadata,
 )
-from enpkg.monolith.webui import state
-from enpkg.monolith.webui.folder_picker import FolderPicker
+from enpkg.monolith.webui import config_files, state
 from enpkg.monolith.webui.layout import page_frame
-
-# Which stored key each dropdown fills, and what it accepts. Metadata and quant overlap
-# on .csv, so the order within each tuple is a preference: the first suffix with a match
-# wins, which is what stops a quant table being taken for the metadata file.
-_SINGLE_INPUTS: list[tuple[str, str, tuple[str, ...]]] = [
-    ("spectra", "Spectra", SPECTRA_SUFFIXES),
-    ("metadata", "Sample metadata", METADATA_SUFFIXES),
-    ("quant", "Quantification table", QUANT_SUFFIXES),
-]
+from enpkg.monolith.webui.pickers import ConfigFilePicker, FolderPicker
 
 
 def files_matching(folder: Path, suffixes: tuple[str, ...]) -> list[str]:
@@ -64,6 +56,21 @@ def sirius_candidates(folder: Path) -> list[str]:
     ]
 
 
+# Each dropdown: the stored key it fills, its label, and how to find its candidates in a
+# folder. Keeping the scan alongside the entry lets one loop build and fill all four,
+# including the SIRIUS one, which differs by filename rather than by suffix.
+_SINGLE_INPUTS: list[tuple[str, str, Callable[[Path], list[str]]]] = [
+    ("spectra", "Spectra", partial(files_matching, suffixes=SPECTRA_SUFFIXES)),
+    ("metadata", "Sample metadata", partial(files_matching, suffixes=METADATA_SUFFIXES)),
+    ("quant", "Quantification table", partial(files_matching, suffixes=QUANT_SUFFIXES)),
+    (
+        "sirius_spectra",
+        "Spectra for SIRIUS (only needed when that block runs)",
+        sirius_candidates,
+    ),
+]
+
+
 @ui.page("/")
 def index() -> None:
     ui.navigate.to("/imports")
@@ -90,6 +97,8 @@ def imports_page() -> None:
         with batch:
             _batch_section()
 
+        _config_section()
+
 
 def _set_mode(value: str) -> None:
     state.set_value("mode", value)
@@ -104,7 +113,7 @@ def _single_section() -> None:
         def refresh_lists(folder: Path) -> None:
             background_tasks.create(_populate(folder, selects), name="enpkg-scan-input")
 
-        picker = FolderPicker(
+        FolderPicker(
             "Folder holding the spectra, metadata and quant files",
             state.get("input_dir", ""),
             on_pick=lambda path: (
@@ -117,7 +126,7 @@ def _single_section() -> None:
         # which happens after the page is delivered, and a select rejects a value that is
         # not among its options -- so a previously chosen filename passed in here would
         # raise as soon as the page was revisited. `_populate` sets both together.
-        for key, label, _suffixes in _SINGLE_INPUTS:
+        for key, label, _scan in _SINGLE_INPUTS:
             selects[key] = (
                 ui.select([], label=label, with_input=True, clearable=True)
                 .props("dense")
@@ -125,38 +134,20 @@ def _single_section() -> None:
                 .on_value_change(lambda e, key=key: state.set_value(key, e.value))
             )
 
-        selects["sirius_spectra"] = (
-            ui.select(
-                [],
-                label="Spectra for SIRIUS (only needed when that block runs)",
-                with_input=True,
-                clearable=True,
-            )
-            .props("dense")
-            .classes("w-full")
-            .on_value_change(lambda e: state.set_value("sirius_spectra", e.value))
-        )
-
-        ui.button("Rescan", icon="refresh", on_click=lambda: refresh_lists(state.input_path())).props(
-            "flat dense no-caps"
-        )
+        ui.button(
+            "Rescan", icon="refresh", on_click=lambda: refresh_lists(state.input_path())
+        ).props("flat dense no-caps")
 
         refresh_lists(state.input_path())
-        _ = picker
 
 
 async def _populate(folder: Path, selects: dict[str, ui.select]) -> None:
     """Fill the dropdowns from a folder scan, keeping any still-valid selection."""
-    scans = {
-        key: await run.io_bound(files_matching, folder, suffixes)
-        for key, _label, suffixes in _SINGLE_INPUTS
-    }
-    scans["sirius_spectra"] = await run.io_bound(sirius_candidates, folder)
-
-    for key, names in scans.items():
+    for key, _label, scan in _SINGLE_INPUTS:
         element = selects.get(key)
         if element is None:
             continue
+        names = await run.io_bound(scan, folder)
         current = state.get(key)
         # A file chosen before the folder changed may no longer exist. Falling back to
         # the first match keeps the page usable; clearing it keeps it honest when there
@@ -166,6 +157,45 @@ async def _populate(folder: Path, selects: dict[str, ui.select]) -> None:
         # among its options, so assigning them separately depends on the order.
         element.set_options(names, value=chosen)
         state.set_value(key, chosen)
+
+
+def _config_section() -> None:
+    """Choosing a configuration file and reading it in.
+
+    Loading writes to the stored settings rather than to widgets: the widgets it fills
+    are on the Pipeline page, which is not built while this page is open. That page seeds
+    itself from the store, so the loaded values appear the next time it is opened.
+    """
+    with ui.card().classes("w-full"):
+        ui.label("Configuration file").classes("font-bold")
+        ui.label(
+            "Which blocks run and their settings. Loading replaces everything on the "
+            "Pipeline page."
+        ).classes("text-sm text-grey-7")
+
+        ConfigFilePicker(
+            "Config YAML",
+            state.get("config_path", ""),
+            on_pick=lambda path: state.set_value("config_path", str(path)),
+            marker="config-path",
+        )
+
+        def load() -> None:
+            path = state.config_path()
+            try:
+                loaded = config_files.read_config(path)
+            except (OSError, ValueError) as exc:
+                ui.notify(f"Could not read {path}: {exc}", type="negative")
+                return
+            config_files.apply_to_state(loaded)
+            if loaded.warning:
+                ui.notify(loaded.warning, type="warning")
+            blocks = ", ".join(loaded.selected_blocks) or "no blocks"
+            ui.notify(f"Loaded {path.name} — {blocks}", type="positive")
+
+        ui.button("Load", icon="upload", on_click=load).props(
+            "no-caps color=primary"
+        ).mark("config-load")
 
 
 def _batch_section() -> None:

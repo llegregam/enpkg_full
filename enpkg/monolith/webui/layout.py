@@ -71,11 +71,3 @@ def _run_indicator() -> None:
     ui.timer(1.0, refresh)
 
 
-def section(title: str, caption: str = "") -> ui.card:
-    """Return a titled card to place content in."""
-    card = ui.card().classes("w-full")
-    with card:
-        ui.label(title).classes("text-lg font-bold")
-        if caption:
-            ui.label(caption).classes("text-sm text-grey-7 -mt-2")
-    return card

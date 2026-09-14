@@ -22,12 +22,10 @@ from enpkg.monolith.pipeline import config_io
 from enpkg.monolith.pipeline.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS
 from enpkg.monolith.pipeline.runner import STAGE_LABELS
 from enpkg.monolith.webui import paths, runs, state
+from enpkg.monolith.webui.config_files import MS_FORM_KEY
 from enpkg.monolith.webui.forms import ModelForm, build_form
 from enpkg.monolith.webui.layout import page_frame
-
-# MS1 and MS2 share one config, so they share one form. The key is the id whose form
-# holds the shared values.
-_MS_FORM_KEY = "ms1"
+from enpkg.monolith.webui.pickers import choose_save_target
 
 # Filled in from the Imports page rather than typed here.
 _SIRIUS_INPUT_FIELD = "sirius_params.path_to_input_spectra"
@@ -113,7 +111,7 @@ def _blocks_section(
                 continue
             seen_ms = True
             title = "MS1 / MS2 settings (shared)"
-            key = _MS_FORM_KEY
+            key = MS_FORM_KEY
             visible_when = [b for b in MS_SHARED_BLOCKS]
         else:
             title = f"{block.label} settings"
@@ -187,31 +185,50 @@ def _preview_section():
 
 
 def _config_section(checkboxes, forms, general_form) -> None:
-    """Load and save the unified config file."""
+    """Write the settings to a configuration file.
+
+    Choosing a file and loading it are on the Imports page; this writes what has been
+    edited here. The target is named on the button so it is clear where it goes, since
+    it was chosen on another page.
+    """
     with ui.card().classes("w-full"):
-        ui.label("Config file").classes("font-bold")
-        path_input = (
-            ui.input("YAML path", value=state.get("config_path", ""))
-            .props("dense")
-            .classes("w-full")
-            .on_value_change(lambda e: state.set_value("config_path", e.value))
-        )
+        ui.label("Save configuration").classes("font-bold")
+        target = ui.label("").classes("text-sm text-grey-7")
+
+        def refresh_target() -> None:
+            target.text = f"Writes to {state.config_path()}"
+
+        refresh_target()
+
+        def collect() -> None:
+            # Read the widgets first. The periodic sync would otherwise decide what gets
+            # written, so saving straight after a change would store the values from
+            # before it.
+            _store(checkboxes, forms, general_form)
+
+        def save() -> None:
+            collect()
+            _save_config(state.config_path())
+
+        async def save_as() -> None:
+            collect()
+            chosen = await choose_save_target(state.get("config_path", ""))
+            if chosen is None:
+                return
+            state.set_value("config_path", str(chosen))
+            refresh_target()
+            _save_config(chosen)
 
         with ui.row().classes("gap-2"):
+            ui.button("Save", icon="download", on_click=save).props(
+                "no-caps color=primary"
+            ).mark("save-button")
+            ui.button("Save as…", icon="save_as", on_click=save_as).props(
+                "flat no-caps"
+            ).mark("save-as-button")
 
-            def load() -> None:
-                _load_config(state.config_path(), checkboxes, forms, general_form)
-
-            def save() -> None:
-                # Read the widgets first. The periodic sync would otherwise decide what
-                # gets written, so saving straight after a change would store the values
-                # from before it.
-                _store(checkboxes, forms, general_form)
-                _save_config(state.config_path())
-
-            ui.button("Load", icon="upload", on_click=load).props("flat no-caps")
-            ui.button("Save", icon="download", on_click=save).props("flat no-caps")
-        _ = path_input
+        # The target is chosen on another page, so it can change while this one is open.
+        ui.timer(2.0, refresh_target)
 
 
 def _run_section(checkboxes, forms, general_form):
@@ -301,30 +318,12 @@ def _current_selection(checkboxes: dict[str, ui.checkbox]) -> list[str]:
     return [block.id for block in BLOCKS if checkboxes[block.id].value]
 
 
-def _raw_sections(
-    checkboxes: dict[str, ui.checkbox],
-    forms: dict[str, ModelForm],
-    general_form: ModelForm,
-) -> dict[str, dict]:
-    """Collect the form values for the ticked blocks, MS1 and MS2 sharing one form."""
-    shared = general_form.get_values()
-    raw: dict[str, dict] = {}
-    for block_id in _current_selection(checkboxes):
-        block = BLOCKS_BY_ID[block_id]
-        if block.config_cls is None:
-            raw[block_id] = {}
-            continue
-        key = _MS_FORM_KEY if block_id in MS_SHARED_BLOCKS else block_id
-        raw[block_id] = dict(forms[key].get_values())
-    return config_io.inject_shared_params(raw, shared)
+def _build_configs():
+    """Validate the stored settings into config objects.
 
-
-def _build_configs(
-    checkboxes: Optional[dict] = None,
-    forms: Optional[dict] = None,
-    general_form: Optional[ModelForm] = None,
-):
-    """Validate the stored form values into config objects."""
+    Reads the store rather than the widgets, so it works from a page that did not build
+    them. Callers that have just edited widgets call ``_store`` first.
+    """
     stored = state.get("form_state") or {}
     selected = state.selected_blocks()
     if not selected:
@@ -332,7 +331,7 @@ def _build_configs(
 
     raw = {
         block_id: dict(
-            stored.get(_MS_FORM_KEY if block_id in MS_SHARED_BLOCKS else block_id) or {}
+            stored.get(MS_FORM_KEY if block_id in MS_SHARED_BLOCKS else block_id) or {}
         )
         for block_id in selected
     }
@@ -349,41 +348,6 @@ def _store(checkboxes, forms, general_form) -> None:
     state.set_value(
         "form_state", {key: form.get_values() for key, form in forms.items()}
     )
-
-
-def _load_config(path, checkboxes, forms, general_form) -> None:
-    """Replace every control from a config file."""
-    try:
-        data = config_io.load_unified_yaml(path)
-    except Exception as exc:  # noqa: BLE001
-        ui.notify(f"Could not read {path}: {exc}", type="negative")
-        return
-
-    selection = config_io.get_selection(data)
-    if selection is None:
-        ui.notify(
-            f"{path} records no block selection, so it cannot say which blocks to run.",
-            type="warning",
-        )
-    else:
-        for block in BLOCKS:
-            checkboxes[block.id].value = block.id in selection
-
-    shared = None
-    for block in BLOCKS:
-        if block.config_cls is None:
-            continue
-        section = config_io.get_section(data, block.id)
-        if shared is None and isinstance(section.get("general_params"), dict):
-            shared = section["general_params"]
-        key = _MS_FORM_KEY if block.id in MS_SHARED_BLOCKS else block.id
-        if key in forms:
-            forms[key].set_values(section)
-
-    general_form.set_values(shared or GeneralParams().model_dump())
-    state.set_value("serializer", config_io.get_serializer_section(data))
-    _store(checkboxes, forms, general_form)
-    ui.notify(f"Loaded {path}", type="positive")
 
 
 def _save_config(path) -> None:
@@ -432,15 +396,9 @@ def _prepare_run(checkboxes, forms, general_form, verbose, log, cursor):
     handle = runs.new_handle(kind, paths.RUNS_DIR)
     config_io.save_unified_yaml(handle.config_path, configs, serializer=serializer_config)
 
-    handle_paths = {
-        "config": handle.config_path,
-        "run_dir": handle.run_dir,
-        "result": handle.result_path,
-    }
     if kind == "run":
         handle.argv = runs.build_argv(
-            "run",
-            handle_paths,
+            handle,
             spectra=state.resolved_input("spectra"),
             metadata=state.resolved_input("metadata"),
             quant=state.resolved_input("quant"),
@@ -451,7 +409,7 @@ def _prepare_run(checkboxes, forms, general_form, verbose, log, cursor):
         )
     else:
         handle.argv = runs.build_argv(
-            "batch", handle_paths, parent_dir=state.batch_path().resolve(), verbose=verbose
+            handle, parent_dir=state.batch_path().resolve(), verbose=verbose
         )
 
     log.clear()

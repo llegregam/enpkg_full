@@ -144,7 +144,7 @@ async def test_serializer_reset_reports_itself(user: User) -> None:
 
 async def test_save_refuses_an_empty_selection(user: User) -> None:
     await user.open("/pipeline")
-    user.find("Save").click()
+    user.find(marker="save-button").click()
     await user.should_see("Select at least one block")
 
 
@@ -157,19 +157,37 @@ async def test_run_refuses_before_inputs_are_chosen(user: User) -> None:
     await user.should_see("Imports page")
 
 
+async def _choose_config(user: User, path) -> None:
+    """Point the Imports page at a config file.
+
+    `type()` appends to whatever the box holds, so the default has to go first. The
+    picker only records a path that names an existing file, which is why every caller
+    creates the file before typing it.
+    """
+    await user.open("/imports")
+    user.find(marker="config-path").clear().type(str(path))
+
+
 async def test_loading_a_config_replaces_the_selection(user: User, tmp_path) -> None:
-    """Loading is a full replace, including blocks the file does not mention."""
+    """Loading is a full replace, including blocks the file does not mention.
+
+    It is also the round trip that matters: Load writes to the store on one page, and
+    the Pipeline page has to build its widgets from that when it is next opened.
+    """
     path = tmp_path / "config.yaml"
     configs = config_io.build_configs(["network"], {"network": {}})
     config_io.save_unified_yaml(path, configs, serializer=SerializerConfig())
 
-    await user.open("/pipeline")
     # Start from a different selection so the load has something to overwrite.
+    await user.open("/pipeline")
     user.find("Sirius").click()
-    # type() appends to whatever the box already holds, so the default path has to go.
-    user.find("YAML path").clear().type(str(path))
-    user.find("Load").click()
+    await user.should_see("Configuration is valid")
+
+    await _choose_config(user, path)
+    user.find(marker="config-load").click()
     await user.should_see("Loaded")
+
+    await user.open("/pipeline")
     await user.should_see("Configuration is valid")
 
 
@@ -178,11 +196,17 @@ async def test_loading_a_file_without_a_selection_says_so(user: User, tmp_path) 
     path = tmp_path / "legacy.yaml"
     path.write_text(yaml.safe_dump({"network": {}}), encoding="utf-8")
 
-    await user.open("/pipeline")
-    # type() appends to whatever the box already holds, so the default path has to go.
-    user.find("YAML path").clear().type(str(path))
-    user.find("Load").click()
-    await user.should_see("records no block selection")
+    await _choose_config(user, path)
+    user.find(marker="config-load").click()
+    await user.should_see("no block selection")
+
+
+async def test_loading_a_missing_file_reports_it(user: User, tmp_path) -> None:
+    """An absent file reads as an empty config, which would silently clear everything."""
+    await user.open("/imports")
+    user.find(marker="config-path").clear().type(str(tmp_path / "absent.yaml"))
+    user.find(marker="config-load").click()
+    await user.should_see("Could not read")
 
 
 async def test_saving_produces_a_file_the_command_line_accepts(
@@ -190,16 +214,16 @@ async def test_saving_produces_a_file_the_command_line_accepts(
 ) -> None:
     """What the page writes has to be what `enpkg run` can read back."""
     path = tmp_path / "out.yaml"
+    path.write_text(yaml.safe_dump({"selected_blocks": []}), encoding="utf-8")
+
+    await _choose_config(user, path)
 
     await user.open("/pipeline")
     user.find("Molecular networking").click()
     await user.should_see("Configuration is valid")
-    # type() appends to whatever the box already holds, so the default path has to go.
-    user.find("YAML path").clear().type(str(path))
-    user.find("Save").click()
+    user.find(marker="save-button").click()
     await user.should_see("Saved")
 
-    assert path.is_file(), "Save wrote no file"
     data = config_io.load_unified_yaml(path)
     assert config_io.get_selection(data) == ["network"]
     assert config_io.get_serializer_section(data) != {}

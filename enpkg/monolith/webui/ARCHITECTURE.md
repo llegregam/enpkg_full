@@ -51,8 +51,9 @@ enpkg/monolith/webui/
 ├── state.py           per-visitor state (see §3)
 ├── runs.py            starting, watching and stopping a run (see §4)
 ├── forms.py           Pydantic model → widgets (see §5)
+├── config_files.py    reading a config file into the stored settings
 ├── layout.py          the frame every page is drawn in: header, navigation, run indicator
-├── folder_picker.py   choosing a directory, natively or served (see §6)
+├── pickers.py         choosing a folder or a file, natively or served (see §6)
 ├── main.py            run_app(): the ui.run() call and its arguments
 ├── __main__.py        `python -m enpkg.monolith.webui`, with the __main__ guard
 └── pages/
@@ -254,20 +255,36 @@ Three behaviours worth knowing:
 
 ---
 
-## 6. Choosing a folder, in both modes
+## 6. Choosing a folder or a file, in both modes
 
 The server cannot see the machine running the browser, so a served page has no access to
-an operating-system file dialog. `folder_picker.py` covers both cases behind one call,
-detecting the mode at runtime from `app.native.main_window`:
+an operating-system file dialog. `pickers.py` covers both cases behind one call, detecting
+the mode at runtime from `app.native.main_window`:
 
-- **Native** — pywebview's real folder dialog.
-- **Served** — a dialog listing directories the *server* can see, which in served mode is
-  the machine holding the data.
+- **Native** — pywebview's real dialogs.
+- **Served** — a dialog listing what the *server* can see, which in served mode is the
+  machine holding the data.
 
-Both end at the same callback, so pages never branch on the mode. The typed path box is
-always live; the button is an accelerator, not the only way in. Directory listing goes
-through `run.io_bound`, because a network share can take seconds and doing it on the event
-loop would stall every other client.
+Three kinds of choice, differing in what the dialog offers and what validates: an existing
+directory (`MODE_FOLDER`), an existing file (`MODE_OPEN`, used for the config YAML), and a
+file to write that need not exist yet (`MODE_SAVE`, used by Save as).
+
+Both routes end at the same callback, so pages never branch on the mode. Directory listing
+goes through `run.io_bound`, because a network share can take seconds and doing it on the
+event loop would stall every other client.
+
+Two rules that came from defects:
+
+**The directory handed to a dialog must be absolute.** A dialog runs in the operating
+system's shell, which has no notion of this process's working directory. On Windows the
+native folder dialog does not reject a relative path — it never returns, so the button
+appears to do nothing. The stored values are whatever the user typed and the defaults are
+relative, so `dialog_start_directory` resolves every one of them.
+
+**The typed box stores what was typed, valid or not.** Validation only colours the caption.
+Storing only valid paths leaves the box showing one thing and the store holding another,
+so an action taken afterwards quietly uses the previous path instead of reporting that
+this one is unusable.
 
 **`ui.run(host=...)` defaults to loopback.** The served dialog browses the server's own
 filesystem, so binding to every interface exposes that to anyone who can reach the port.
@@ -279,13 +296,24 @@ Serving to a network should be a deliberate act.
 
 ### 7.1 `/imports`
 
-Chooses the data. Single mode wants three files from one folder; batch mode wants a parent
-folder holding shared metadata and a subfolder per experiment, which
-`discover_experiments` finds.
+Chooses everything a run reads: the data, and the configuration file. Single mode wants
+three files from one folder; batch mode wants a parent folder holding shared metadata and
+a subfolder per experiment, which `discover_experiments` finds.
+
+**Loading a config happens here, and writes to the store rather than to widgets.** The
+widgets it fills belong to the Pipeline page, which is not built while this page is open;
+that page seeds itself from the store, so the loaded values appear the next time it is
+opened. `config_files.py` therefore touches no widget, which is also what makes it
+testable without a page.
 
 File lists come from a background task rather than being built in the page function: a
 page builder has a few seconds before the client gives up on it, and scanning a network
 share can exceed that. The route also raises its timeout.
+
+**The dropdowns are created with neither options nor value.** A select rejects a value
+that is not among its options, and the options only exist once the folder has been
+scanned — so a filename recorded by a previous visit, handed in at construction, raised
+and returned a 500 on every revisit. `set_options(names, value=...)` sets both together.
 
 Metadata accepts `.tsv`, `.txt` and `.csv` while quantification tables are `.csv`, so the
 two overlap. The suffix tuples are **preference orders**, not sets: the first suffix with a
@@ -296,7 +324,9 @@ quant columns. That is a defect this project has already had, in the command lin
 ### 7.2 `/pipeline`
 
 Block checkboxes, the shared `GeneralParams` form, one settings group per block, the
-configuration preview, config load and save, and the run controls.
+configuration preview, saving, and the run controls. Choosing a config file and loading it
+are on the Imports page; this page only writes. The target is named on the card because it
+was chosen elsewhere, and *Save as* goes through the same picker in save mode.
 
 **Every block's form is built at page load** and then shown or hidden by its checkbox,
 rather than created when the block is ticked. Loading a config therefore always has a form
@@ -354,6 +384,11 @@ Four things about the harness that are not obvious:
   collection.
 - A conftest fixture works around a NiceGUI cleanup failure on Windows, written up in
   [docs/NICEGUI_STORAGE_CLEANUP_BUG.md](../../../docs/NICEGUI_STORAGE_CLEANUP_BUG.md).
+- **Find elements by marker, not by label text.** `user.find("Run")` matched something
+  other than the Run button and the click went nowhere; `user.find("Save")` matched the
+  "Save configuration" heading. Both failures look like a broken handler. Buttons that
+  tests drive carry `.mark(...)`.
+- `user.find(...).type()` **appends** to the box; `.clear()` first.
 
 **Known gap.** No test starts a real run from the page. The run registry is covered against
 a stand-in process, and the page is covered up to the point of launching, but the join

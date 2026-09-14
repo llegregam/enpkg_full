@@ -212,12 +212,7 @@ async def test_cancelling_an_already_finished_run_is_harmless(tmp_path):
 def test_build_argv_uses_the_running_interpreter(tmp_path):
     """Not the `enpkg` console script: the run must use this virtual environment."""
     handle = runs.new_handle("run", tmp_path / "runs")
-    argv = runs.build_argv(
-        "run",
-        {"config": handle.config_path, "run_dir": handle.run_dir, "result": handle.result_path},
-        input_dir=tmp_path / "data",
-        verbose=True,
-    )
+    argv = runs.build_argv(handle, input_dir=tmp_path / "data", verbose=True)
     assert argv[0] == sys.executable
     assert argv[1:4] == ["-m", "enpkg.cli", "run"]
     assert "--json-out" in argv and str(handle.result_path) in argv
@@ -227,11 +222,7 @@ def test_build_argv_uses_the_running_interpreter(tmp_path):
 
 def test_build_argv_for_a_batch_passes_the_parent_folder(tmp_path):
     handle = runs.new_handle("batch", tmp_path / "runs")
-    argv = runs.build_argv(
-        "batch",
-        {"config": handle.config_path, "run_dir": handle.run_dir, "result": handle.result_path},
-        parent_dir=tmp_path / "experiments",
-    )
+    argv = runs.build_argv(handle, parent_dir=tmp_path / "experiments")
     assert argv[3] == "batch"
     assert "--parent-dir" in argv
     assert "--input-dir" not in argv

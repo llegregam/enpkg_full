@@ -139,16 +139,25 @@ def _prune() -> None:
 # --- typed accessors for the values pages read most -------------------------------
 
 
+def _stored_path(key: str, fallback: Path) -> Path:
+    """Return a stored path, falling back when it is missing or was cleared.
+
+    An emptied box would otherwise become ``Path("")``, which is ``Path(".")`` — the
+    working directory, silently and wrongly.
+    """
+    return Path(get(key) or str(fallback)).expanduser()
+
+
 def input_path() -> Path:
-    return Path(get("input_dir", str(paths.DEFAULT_INPUT_DIR))).expanduser()
+    return _stored_path("input_dir", paths.DEFAULT_INPUT_DIR)
 
 
 def batch_path() -> Path:
-    return Path(get("batch_dir", str(paths.DEFAULT_BATCH_DIR))).expanduser()
+    return _stored_path("batch_dir", paths.DEFAULT_BATCH_DIR)
 
 
 def config_path() -> Path:
-    return Path(get("config_path", str(paths.DEFAULT_CONFIG_PATH))).expanduser()
+    return _stored_path("config_path", paths.DEFAULT_CONFIG_PATH)
 
 
 def selected_blocks() -> list[str]:

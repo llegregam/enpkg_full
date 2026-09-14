@@ -15,7 +15,6 @@ nothing left pointing at a destroyed element.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 import uuid
@@ -78,8 +77,7 @@ class RunHandle:
 
 
 def build_argv(
-    kind: Literal["run", "batch"],
-    handle_paths: dict[str, Path],
+    handle: RunHandle,
     *,
     input_dir: Optional[Path] = None,
     spectra: Optional[Path] = None,
@@ -95,17 +93,18 @@ def build_argv(
     subprocess runs under the same interpreter and virtual environment as the server with
     no dependency on what is on PATH.
     """
+    kind = handle.kind
     argv = [
         sys.executable,
         "-m",
         "enpkg.cli",
         kind,
         "--config",
-        str(handle_paths["config"]),
+        str(handle.config_path),
         "--output-dir",
-        str(handle_paths["run_dir"]),
+        str(handle.run_dir),
         "--json-out",
-        str(handle_paths["result"]),
+        str(handle.result_path),
     ]
     if kind == "run":
         if input_dir is not None:
@@ -269,11 +268,3 @@ def summary_line(handle: RunHandle) -> str:
     return "Running…"
 
 
-def load_artifact(path: Path) -> Optional[dict[str, Any]]:
-    """Read a result artifact, returning None when it is absent or unreadable."""
-    if not path.is_file():
-        return None
-    try:
-        return read_artifact(path)
-    except (ValueError, json.JSONDecodeError, OSError):
-        return None
