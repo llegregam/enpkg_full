@@ -51,11 +51,31 @@ enpkg serialize run/analysis.pkl -o rdf_out/          # re-export without re-run
 `--output-dir` puts every log, Turtle export and pickle from a run under one directory;
 `--json-out` additionally writes a machine-readable summary of what ran, for scripting.
 
-A Streamlit GUI also drives the pipeline — see
-[`gui/ARCHITECTURE.md`](enpkg/monolith/gui/ARCHITECTURE.md) and the per-enhancer
-notes under [`docs/`](docs/). Run the tests with `pytest`: unit tests
-(`enpkg/tests/test_data`, `enpkg/tests/test_pipeline`) need no external data;
-tests marked `@pytest.mark.integration` need the DuckDB file and network access.
+### The graphical interface
+
+```bash
+poetry install --with webui     # optional dependency group
+enpkg gui                       # in a browser tab
+enpkg gui --native              # in a desktop window
+```
+
+Three pages: choosing input data, configuring and running the pipeline, and the RDF
+serializer options. A run started here executes as a separate process running the same
+`enpkg run` shown above, so the two interfaces cannot drift apart — and output appears
+while the run is going, it can be stopped, and it survives the browser being closed.
+
+How it is wired: [`webui/ARCHITECTURE.md`](enpkg/monolith/webui/ARCHITECTURE.md). A
+Streamlit interface still exists under [`gui/`](enpkg/monolith/gui/) and is being retired
+once the NiceGUI one has been used on a real dataset; see
+[`gui/ARCHITECTURE.md`](enpkg/monolith/gui/ARCHITECTURE.md) for that one. Per-enhancer
+notes are under [`docs/`](docs/).
+
+### Tests
+
+Run them with `pytest`: unit tests (`enpkg/tests/test_data`, `enpkg/tests/test_pipeline`,
+`enpkg/tests/test_cli`) need no external data, and `enpkg/tests/test_webui` additionally
+needs the `webui` group. Tests marked `@pytest.mark.integration` need the DuckDB file and
+network access.
 
 The integration suite runs against a sampled fixture database and one dataset,
 both built by a single command from a full database you already have:

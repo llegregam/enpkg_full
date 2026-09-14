@@ -20,6 +20,64 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-14 — The NiceGUI front end
+
+Three pages — input data, pipeline configuration and run, serializer options — under
+`enpkg/monolith/webui/`, launched by `enpkg gui` or `enpkg gui --native`. The Streamlit
+interface stays until this one has been used on a real dataset. Design is written up in
+[webui/ARCHITECTURE.md](enpkg/monolith/webui/ARCHITECTURE.md); this entry records the
+decisions and what they cost.
+
+**State is split by what it is made of.** Moving between pages is a full page load, so
+nothing a user chose can live in a page function's variables; and a module-level dict, the
+obvious alternative, is shared by every client in NiceGUI. So JSON-serialisable values go
+in `app.storage.user` (per visitor, and surviving a browser reload, which
+`st.session_state` did not) and everything else — subprocess handles, output buffers,
+parsed results — goes in a module-level dict indexed only by the caller's own session id.
+With one visitor, which is what the native window is, that degenerates to a single entry
+with no special case.
+
+**Runs execute as a separate process running `enpkg run`.** That is what gives output
+while the run is going, a working Cancel, and survival across a browser reload — and it
+means the command line and the interface exercise one execution path rather than two that
+drift. The decision the rest depends on is that the code reading the subprocess's output
+touches no element: it fills a buffer and nothing else, so when the client that started
+the run is destroyed — which is what navigating to another page does — nothing is left
+pointing at a dead element. Pages poll that buffer with a timer that dies with them.
+
+The cost, already recorded when the artifact was added: the `Analysis` cannot come back
+across a process boundary, so the interface can only show what the result file carries.
+
+**`config_io.save_unified_yaml` gained a `serializer` argument** so the page can write that
+section; `state`, `runs` and `forms` hold the logic and contain no page code, which is why
+they are testable without a browser.
+
+**Three defects the tests found, all in code written the same day.** Save read values that
+a one-second timer writes, so saving straight after a change wrote the previous values —
+Save and Run now read the widgets first. `state.raw` filled in missing values by replacing
+the whole mapping, so one access finding it unfamiliar discarded every choice — it now
+fills keys individually. And an assertion was passing for the wrong reason:
+`should_see("Valid")` matched the heading "Validated configuration", so it had never
+checked the status it appeared to; that heading is now "Configuration preview", which is
+what made the Save defect visible.
+
+**Two traps in the test harness**, both recorded because the symptom points nowhere near
+the cause. The test-only entry script must not be named `*_test.py` or `test_*.py`: pytest
+collects those, imports it, runs its `ui.run()` for real, and hangs collection of the whole
+directory — while each file still passes on its own. And `Storage.clear` fails on Windows
+whenever an atomic storage write is in flight, which leaves NiceGUI half-reset so every
+later test 404s; that is an upstream bug, written up in
+[docs/NICEGUI_STORAGE_CLEANUP_BUG.md](docs/NICEGUI_STORAGE_CLEANUP_BUG.md) and worked
+around in a fixture. Not yet reported.
+
+**pytest moved to 8.x** because pytest-asyncio requires it, and without pytest-asyncio
+NiceGUI's async `user` fixture is collected, skipped and reported as a passing run.
+
+**Known gap.** No test starts a real run from the page. The run registry is covered against
+a stand-in subprocess and the page is covered up to the point of launching, but the join
+between them has only been exercised by hand. That check belongs in the parity pass before
+Streamlit is removed.
+
 ### 2026-09-10 — The `enpkg` command line
 
 The pipeline could not be run without a browser. `pipeline/` imports no GUI code and was

@@ -2,10 +2,10 @@
 
 *A start-to-finish guide for contributors.*
 
-> A **block** is one selectable stage of the pipeline: a checkbox in the GUI, a
-> section in the config YAML, one step in the run, and one section in the run
-> summary. This document is the how-to. For how the GUI as a whole is wired,
-> see [../enpkg/monolith/gui/ARCHITECTURE.md](../enpkg/monolith/gui/ARCHITECTURE.md);
+> A **block** is one selectable stage of the pipeline: a checkbox in the interface, an
+> entry in `selected_blocks`, a section in the config YAML, one step in the run, and one
+> section in the run summary. This document is the how-to. For how the interface is
+> wired, see [../enpkg/monolith/webui/ARCHITECTURE.md](../enpkg/monolith/webui/ARCHITECTURE.md);
 > for what individual blocks actually do, see the walkthroughs
 > ([MS1_GRAPH_ENHANCER.md](MS1_GRAPH_ENHANCER.md), [MS1_ENHANCER.md](MS1_ENHANCER.md),
 > [MS2_ENHANCER.md](MS2_ENHANCER.md), [SIRIUS_ENHANCER.md](SIRIUS_ENHANCER.md),
@@ -17,9 +17,10 @@
 
 A block is described by exactly one `BlockSpec` entry in
 [`enpkg/monolith/pipeline/blocks.py`](../enpkg/monolith/pipeline/blocks.py). That entry is the
-**single source of truth**: the sidebar checkbox, the config tab, the YAML section, the
-execution order, and the summary report are all derived from it by iterating `BLOCKS`.
-There is no per-block step class and no `if block_id == ...` branch in the runner.
+**single source of truth**: the checkbox, the settings group, the YAML section, the
+execution order, the `enpkg blocks list` output, and the summary report are all derived
+from it by iterating `BLOCKS`. There is no per-block step class and no
+`if block_id == ...` branch in the runner.
 
 The pipeline itself is a fold over `Analysis`:
 
@@ -151,9 +152,9 @@ _BUILTIN_BLOCKS: list[BlockSpec] = [
 ]
 ```
 
-That is the whole integration. The checkbox, the tab with a bounded numeric widget and its
-tooltip, the `blank_removal:` YAML section, the run slot, its place in the execution order
-and the summary section all appear on their own.
+That is the whole integration. The checkbox, the settings group with a bounded numeric
+widget and its tooltip, the `blank_removal:` YAML section, the run slot, its place in the
+execution order and the summary section all appear on their own.
 
 ---
 
@@ -175,15 +176,17 @@ Rules that matter here:
   `@model_validator(mode="before")` the way `GeneralParams` accepts the legacy `polarity`
   key.
 - **Put the constraint in `Field(...)`, not in your code.** `gt`/`ge`/`lt`/`le` become
-  widget bounds in the GUI, and a `^(a|b|c)$` string pattern becomes a dropdown. The form
-  builder never re-implements a rule that Pydantic already owns.
+  widget bounds in the interface, and a `Literal[...]` or a `^(a|b|c)$` string pattern
+  becomes a dropdown. The form builder never re-implements a rule that Pydantic already
+  owns.
 - **Write a real `description=`.** It is the only tooltip the user gets, and it is also
   the documentation of that parameter. Say what the number means and, where it matters,
   how to pick it — compare `MS1GraphEnhancerConfig.rt_tolerance_min`.
 - **Cross-field rules go in a `@model_validator(mode='after')`**, like
   `NetworkEnhancerConfig`'s check that `mn_top_n > mn_max_links`.
 - **Read `ionization_mode` from `general_params`**, never from a field of your own. It is
-  edited once, above the tabs, and injected into every section.
+  edited once, above the per-block settings, and injected into every section by
+  `config_io.inject_shared_params`.
 
 If your block takes no parameters at all, skip this step and set `config_cls=None` in the
 registry (as the taxonomical block does).
@@ -262,7 +265,7 @@ In [`blocks.py`](../enpkg/monolith/pipeline/blocks.py), add:
 | Field | Required | Meaning |
 |---|---|---|
 | `id` | yes | Short key used in YAML, session state and widget keys. Treat it as public API: it appears in saved config files. |
-| `label` | yes | Shown on the checkbox, the tab and the summary heading. |
+| `label` | yes | Shown on the checkbox, the settings group and the summary heading. |
 | `build_enhancer` | yes | `(config, BuildContext) -> Enhancer`. |
 | `can_run` | yes | `(Analysis) -> bool` applicability guard. |
 | `config_cls` | yes | Pydantic config class, or `None` for a parameterless block. |
@@ -289,8 +292,8 @@ implies `"db_loader"` — declare both, as `ms1`/`ms2`/`weights` do.
 
 If your block must share one config instance with an existing block, add both ids to a
 shared-key constant at the bottom of `blocks.py` (the `MS_SHARED_BLOCKS` / `MS_SHARED_KEY`
-pattern) — but note that `config_io` and `app.py` special-case the MS pair by name, so a
-second shared pair needs a small amount of work in both.
+pattern) — but note that `config_io` and the pipeline page special-case the MS pair by
+name, so a second shared pair needs a small amount of work in both.
 
 ### Step 5 — Write the log summary
 
@@ -386,8 +389,10 @@ Registering the `BlockSpec` is enough for all of this:
 
 | You get | Because |
 |---|---|
-| Sidebar checkbox with tooltip | `app.py` iterates `BLOCKS` |
-| A config tab with one widget per field, bounds and tooltips | `form_builder.render_model` walks `config_cls.model_fields` |
+| A checkbox with tooltip | the pipeline page iterates `BLOCKS` |
+| A settings group with one widget per field, bounds and tooltips | `webui.forms.build_form` walks `config_cls.model_fields` |
+| A row in `enpkg blocks list` | `cli/blocks_cmd.py` iterates `BLOCKS` |
+| A section in `enpkg config init` templates | `cli/config_cmd.py` walks `config_cls.model_fields` |
 | Validation with errors surfaced verbatim | `config_io.build_configs` → `model_validate` |
 | A `<id>:` section in the saved YAML, and correct reload | `config_io.save_unified_yaml` / `load_unified_yaml` |
 | Membership in `selected_blocks`, so a config file reproduces the run | `save_unified_yaml` derives it from the validated configs |
@@ -403,21 +408,27 @@ Registering the `BlockSpec` is enough for all of this:
 The registry covers the common case. These are the three places where a block still needs
 hand-written wiring — check them against your block before assuming "one entry" is enough:
 
-**1. Extra input files need GUI work.** Blocks whose config points at a file the sidebar
-does not already list need their own picker. Sirius is the precedent: `app.py` adds a
-"Spectra for Sirius" selectbox when the block is ticked, excludes
-`sirius_params.path_to_input_spectra` from the rendered form, and writes the resolved path
-into the config just before the run.
+**1. Extra input files need interface work.** Blocks whose config points at a file the
+Imports page does not already list need their own picker. Sirius is the precedent: that
+page offers a "Spectra for SIRIUS" dropdown, the pipeline page excludes
+`sirius_params.path_to_input_spectra` from the rendered form, and the resolved path is
+written into the config just before the run. The command line does the same thing with
+`--sirius-spectra`, falling back to the `<stem>_sirius<suffix>` neighbour of the spectra
+file, so a new file of this kind needs handling in both.
 
 **2. Per-experiment config in batch mode.** `build_shared_steps` builds each step **once**
 and reuses it for every experiment. If your config carries per-experiment paths, it must be
 excluded via the `skip=` argument and rebuilt inside the batch loop — again, see how
 `batch_runner` handles `sirius` (`skip={"sirius"}` plus `_sirius_config_for(...)` per run).
 
-**3. Exotic field types fall back to a text box.** `form_builder._render_field` handles
-`bool`, `int`, `float`, `str`, `list`/`tuple`, `Optional[T]` and nested `BaseModel`.
-Anything else renders as free-form text and is validated only by Pydantic afterwards. Keep
-config fields to those types, or extend `_render_field` — it is a single function.
+**3. Exotic field types fall back to a text box.** `webui.forms._build_field` handles
+`bool`, `int`, `float`, `str`, `Literal[...]`, `list`/`tuple`, `Optional[T]` and nested
+`BaseModel`. Anything else renders as free-form text and is validated only by Pydantic
+afterwards. Keep config fields to those types, or extend `_build_field` — it is a single
+function, and the reflection it relies on lives in
+[`configuration/introspect.py`](../enpkg/monolith/configuration/introspect.py). The
+parametrised test over every block config in `test_webui/test_forms.py` is what catches a
+field the builder cannot render.
 
 ---
 
