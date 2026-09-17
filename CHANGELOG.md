@@ -20,6 +20,30 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-17 — SIRIUS summaries were written to an unwritable path
+
+A run with the SIRIUS block selected computed for 25 minutes and then reported
+`No SIRIUS summaries directory`, leaving the analysis unchanged and the graph without a
+SIRIUS layer. The run itself was recorded as successful.
+
+**The summaries path was relative.** The project path passed to `-o` was already resolved
+to an absolute path, but the `--output` given to `write-summaries` was the raw
+`output_directory` string from the configuration. `sirius.exe` resolves a relative path
+against its own installation directory rather than the working directory it was launched
+from, so on Windows it tried to create `C:\Program Files\sirius\sirius_output` and was
+refused. Both paths are now built from the same resolved project directory.
+
+**The summaries directory is now per-run.** It sits inside the stamped project directory
+rather than beside it. The previous flat layout gave every sample of a batch the same
+summaries directory, so each export overwrote the one before it.
+
+**Nothing reported the failure.** SIRIUS logged the error and still exited zero, so
+`check=True` did not fire and the branch that logs its output never ran. The only signal
+reaching the pipeline was the absent directory, which was treated as a warning. That
+warning is unchanged for now: a block that raises aborts the run and suppresses the Turtle
+export, so failing here would discard the work of every other block. Whether an absent
+summaries directory should stop a run is still open.
+
 ### 2026-09-14 — The NiceGUI front end
 
 Three pages — input data, pipeline configuration and run, serializer options — under

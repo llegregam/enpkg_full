@@ -167,9 +167,12 @@ class TestSiriusEnhancer:
         ]
         assert tool_positions == sorted(tool_positions)
 
-        assert argv[-3:] == [
-            "--output",
-            params.output_directory + "/summaries/",
-            f"--top-k-summary={params.top_k_sirius}",
-        ]
+        # The summaries directory is absolute and sits inside the project directory.
+        # `sirius.exe` resolves a relative path against its own installation directory,
+        # and it is per-run so the samples of a batch do not overwrite each other.
+        assert argv[-3] == "--output"
+        summaries_dir = Path(argv[-2])
+        assert summaries_dir.is_absolute()
+        assert summaries_dir == project_file.parent / "summaries"
+        assert argv[-1] == f"--top-k-summary={params.top_k_sirius}"
 
