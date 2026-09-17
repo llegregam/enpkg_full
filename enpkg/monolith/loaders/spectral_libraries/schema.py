@@ -30,6 +30,7 @@ REQUIRED_COLUMNS: Final[frozenset[str]] = frozenset({
 # and short_inchikey are derived rather than copied, so they are not listed here.
 COLUMN_MAP: Final[dict[str, str]] = {
     "INCHIKEY": "inchikey",
+    "INCHI": "inchi",
     "SMILES": "smiles",
     "FORMULA": "molecular_formula",
     "NAME": "compound_name",

@@ -14,7 +14,7 @@ from enpkg.monolith.loaders.database_manager import DatabaseManager
 from enpkg.monolith.loaders.spectral_libraries import FragHubCsvImporter
 
 _COLUMNS = [
-    "PRECURSORMZ", "PEAKS_LIST", "MSLEVEL", "IONMODE", "INCHIKEY",
+    "PRECURSORMZ", "PEAKS_LIST", "MSLEVEL", "IONMODE", "INCHIKEY", "INCHI",
     "PRECURSORTYPE", "NAME", "SMILES", "FORMULA", "SPLASH", "PREDICTED",
     "NPCLASS_PATHWAY", "CLASSYFIRE_CLASS", "INSTRUMENT",
 ]
@@ -28,6 +28,7 @@ def _row(**overrides) -> list[str]:
         "MSLEVEL": "2",
         "IONMODE": "positive",
         "INCHIKEY": "ABCDEFGHIJKLMN-UHFFFAOYSA-N",
+        "INCHI": "InChI=1S/C2H6O/c1-2-3/h3H,2H2,1H3",
         "PRECURSORTYPE": "[M+H]+",
         "NAME": "Compound",
         "SMILES": "CCO",
@@ -100,6 +101,26 @@ class TestFragHubImport:
         # nothing.
         assert stored[0] == inchikey[:14]
         assert stored[1] == inchikey
+
+    def test_inchi_is_stored_as_a_column_not_as_metadata(self, db, tmp_path):
+        inchi = "InChI=1S/C7H6O2/c8-7(9)6-4-2-1-3-5-6/h1-5H,(H,8,9)"
+        path = _write_library(tmp_path, [_row(INCHI=inchi)])
+        _import(db, path)
+        stored, metadata = db.connection.execute(
+            "SELECT inchi, metadata_json FROM library_spectra"
+        ).fetchone()
+        assert stored == inchi
+        assert "InChI=" not in (metadata or "")
+
+    def test_a_spectrum_without_smiles_keeps_its_inchi(self, db, tmp_path):
+        # FragHub drops a spectrum only when it has neither InChI nor SMILES, so
+        # InChI is the sole structure representation for the rows lacking SMILES.
+        inchi = "InChI=1S/CH4/h1H4"
+        path = _write_library(tmp_path, [_row(INCHI=inchi, SMILES="NOT FOUND")])
+        _import(db, path)
+        assert db.connection.execute(
+            "SELECT inchi, smiles FROM library_spectra"
+        ).fetchone() == (inchi, None)
 
     def test_peak_lists_are_parsed_into_aligned_arrays(self, db, tmp_path):
         path = _write_library(tmp_path, [

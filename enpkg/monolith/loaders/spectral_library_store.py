@@ -52,6 +52,7 @@ class LibraryCandidate:
     library_id: int
     inchikey: Optional[str]
     short_inchikey: Optional[str]
+    inchi: Optional[str]
     smiles: Optional[str]
     molecular_formula: Optional[str]
     compound_name: Optional[str]
@@ -72,6 +73,7 @@ class LibraryCandidate:
             library_id=row["library_id"],
             inchikey=row["inchikey"],
             short_inchikey=row["short_inchikey"],
+            inchi=row["inchi"],
             smiles=row["smiles"],
             molecular_formula=row["molecular_formula"],
             compound_name=row["compound_name"],
