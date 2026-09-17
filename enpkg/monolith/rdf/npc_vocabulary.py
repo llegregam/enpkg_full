@@ -63,7 +63,7 @@ class NpcVocabulary:
     """
 
     def __init__(self, path: Optional[Path] = None) -> None:
-        graph = Graph()
+        graph: Graph = Graph()
         graph.parse(path or _EMI_VOCAB_PATH)
         # (rank, casefolded label) -> IRI. Casefolded because SIRIUS's capitalisation is
         # not guaranteed to track EMI's, and the labels are otherwise identical.
