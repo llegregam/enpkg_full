@@ -124,8 +124,8 @@ class SiriusEnhancer(Enhancer):
 
         Returns ``None`` when no summary files are present (e.g. SIRIUS produced
         no output). Attaching these frames onto the ``Analysis`` data model is
-        the remaining half of SIRIUS ingestion (see docs/REFACTORING_PLAN.md
-        F-03); for now the parsed results are returned to the caller only.
+        the remaining half of SIRIUS ingestion; for now the parsed results are
+        returned to the caller only.
         """
         if not summaries_dir.is_dir():
             self._logger.warning("No SIRIUS summaries directory at %s", summaries_dir)

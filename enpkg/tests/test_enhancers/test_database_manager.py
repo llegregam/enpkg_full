@@ -112,15 +112,19 @@ class TestFragHubImport:
         assert stored == inchi
         assert "InChI=" not in (metadata or "")
 
-    def test_a_spectrum_without_smiles_keeps_its_inchi(self, db, tmp_path):
-        # FragHub drops a spectrum only when it has neither InChI nor SMILES, so
-        # InChI is the sole structure representation for the rows lacking SMILES.
+    def test_inchi_and_smiles_are_independently_nullable(self, db, tmp_path):
+        # A spectrum can reach the table with either structure representation, both
+        # or neither; only the InChIKey is relied on downstream.
         inchi = "InChI=1S/CH4/h1H4"
-        path = _write_library(tmp_path, [_row(INCHI=inchi, SMILES="NOT FOUND")])
+        path = _write_library(tmp_path, [
+            _row(PRECURSORMZ="100.0", INCHI=inchi, SMILES="NOT FOUND"),
+            _row(PRECURSORMZ="200.0", INCHI="NOT FOUND", SMILES="CCO"),
+            _row(PRECURSORMZ="300.0", INCHI="NOT FOUND", SMILES="NOT FOUND"),
+        ])
         _import(db, path)
         assert db.connection.execute(
-            "SELECT inchi, smiles FROM library_spectra"
-        ).fetchone() == (inchi, None)
+            "SELECT inchi, smiles FROM library_spectra ORDER BY precursor_mz"
+        ).fetchall() == [(inchi, None), (None, "CCO"), (None, None)]
 
     def test_peak_lists_are_parsed_into_aligned_arrays(self, db, tmp_path):
         path = _write_library(tmp_path, [

@@ -117,8 +117,9 @@ CREATE TABLE IF NOT EXISTS spectral_library_registry (
     # A column here iff it is filtered on, joined on, or read to build an
     # MS2ChemicalAnnotation; everything else FragHub carries stays in
     # metadata_json. short_inchikey is nullable and derived from inchikey.
-    # inchi and smiles are independently nullable: FragHub keeps a spectrum that
-    # carries either structure representation, so neither is guaranteed present.
+    # inchi, smiles and short_inchikey are each nullable: an export can carry a
+    # spectrum whose structure is named by InChIKey alone, with no InChI and no
+    # SMILES, so no structure representation is guaranteed present.
     """
 CREATE TABLE IF NOT EXISTS library_spectra (
     id                    BIGINT PRIMARY KEY,

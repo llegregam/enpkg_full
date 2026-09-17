@@ -20,6 +20,75 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-17 — `docs/REFACTORING_PLAN.md` removed
+
+The plan described an architecture that no longer exists: `DBLoader`, the `spectral_library`
+table, `scripts/build_duckdb.py`, `gui/app.py` and the Streamlit interface. Its P0 finding
+B-02 was "the DuckDB build script is broken", about a script that has since been split and
+renamed. A document that reads as current while describing a superseded system is worse than
+no document, and its remaining accurate parts are now covered by
+[BUILDING_THE_DATABASE.md](docs/BUILDING_THE_DATABASE.md), [ADDING_A_BLOCK.md](docs/ADDING_A_BLOCK.md)
+and [webui/ARCHITECTURE.md](enpkg/monolith/webui/ARCHITECTURE.md). It remains in git history.
+
+Findings were checked before deleting rather than assumed stale. B-09 (a duplicated
+`ott_matches` field) is fixed; B-10's `TaxonomicalEnhancementStep` no longer exists. B-08
+(inert `ReweightingParams` knobs) and F-03 (SIRIUS results are parsed but never attached to
+the `Analysis`) are still true and were already described in full in the docstrings that
+cited them — only the dangling file reference was removed from each.
+
+**One finding had no other home and is carried here. B-11: the MS1 precursor window is in
+Daltons, not ppm.** `ms1_enhancer` matches on `spectral_match_params.parent_mz_tol`, an
+absolute tolerance, while the historical workflow this pipeline replaced used a relative ppm
+tolerance for MS1 annotation. The two select different adducts, and the divergence is
+widest at the extremes of the mass range. Whether Daltons is intended has never been
+settled; if ppm is wanted it needs a new field on `SpectralMatchParams` rather than a
+reinterpretation of the existing one.
+
+### 2026-09-17 — InChI is a column, not metadata
+
+FragHub's POS_LC export carries an `INCHI` column the ingest schema did not recognise. It
+was preserved in `metadata_json` and recorded in `spectral_library_registry.unknown_columns`
+— the "core required, extras allowed" contract behaving as intended. Nothing was lost, but
+nothing on the annotation path could read it either.
+
+**It is promoted to a real column so the annotation path can reach a second, canonical
+structure representation without parsing JSON.** InChI is what an RDF export should carry
+for a structure: it is standardised and comparable across sources in a way SMILES is not.
+
+The original argument for promoting it was that InChI would be the only structure available
+for the spectra lacking SMILES. **That was inferred from FragHub's documented behaviour and
+is false for this export.** Measured on the ingested bucket: `inchi` and `smiles` are
+non-null on exactly the same 1,445,449 of 1,450,368 rows, and the count of rows with InChI
+but no SMILES is zero. The promotion still stands on the argument above, but it is a
+convenience, not a recovery of otherwise unreachable data.
+
+**The 4,919 spectra without SMILES have no InChI either — they carry an InChIKey and no
+structure at all.** FragHub's paper states that spectra lacking both InChI and SMILES are
+dropped; these rows contradict that, or the guarantee is narrower than it reads. It matters
+for the planned library-identity fields on `MS2ChemicalAnnotation`: those spectra can be
+matched and named, but there is no structure to serialize for them, so any identity field
+beyond the InChIKey has to be optional.
+
+**A re-import alone would not have applied the change.** `create_schema()` is written with
+`CREATE TABLE IF NOT EXISTS`, so running it repeatedly is harmless — and by the same token
+it does nothing at all to a table that already exists, including adding a column to it.
+Re-running the importer would have deleted and reinserted rows into the old 22-column
+table. `library_spectra` was dropped so the schema could recreate it, then re-ingested from
+the same export; the LOTUS tables were untouched.
+
+The column is now required by the read path: `get_candidate_spectra` selects every column
+and `LibraryCandidate.from_row` reads `inchi` by name, so a database written before this
+change fails with `KeyError: 'inchi'` instead of quietly annotating without it.
+
+**Rebuilding the fixtures exposed a bug in `build_test_fixtures.py` that had never run.**
+It reads the column list from `information_schema.columns` to name the columns explicitly
+instead of copying positionally. The source database is attached as `src`, and
+`information_schema` spans every attached database, so each name came back twice and the
+insert failed with `Duplicate column name "id"`. The lookup is now restricted with
+`table_catalog = current_database()`. The named-column copy dates from the
+`spectral_library` → `library_spectra` rename and had not been executed since, because the
+fixture database still carried the pre-rename schema.
+
 ### 2026-09-17 — SIRIUS summaries were written to an unwritable path
 
 A run with the SIRIUS block selected computed for 25 minutes and then reported

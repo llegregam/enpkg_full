@@ -13,8 +13,7 @@ class ReweightingParams(BaseModel):
     hard-coded), and the RDF serializer ranks candidates by NPC alignment. The
     configurable blend below (msms/taxo/chemo weights, min-score thresholds,
     top-N) is the planned final-ranking feature and has no effect until that
-    ranking is wired (see docs/REFACTORING_PLAN.md B-08). Tuning these values
-    will not change results yet.
+    ranking is wired. Tuning these values will not change results yet.
     """
 
     top_to_output: int = Field(
