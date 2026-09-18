@@ -20,6 +20,30 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-18 — The MS1 precursor window is in ppm
+
+Carried out the decision left open as B-11. `ms1_enhancer` matched on
+`spectral_match_params.parent_mz_tol`, an absolute Dalton tolerance, where the workflow this
+pipeline replaced used a relative one. A fixed 0.01 Da window is 50 ppm at m/z 200 and
+10 ppm at m/z 1000, so it was five times more permissive at the bottom of the natural-product
+mass range than at the top — the opposite of how instrument mass accuracy behaves.
+
+`ms1_ppm_tol` (default 10 ppm) is a new field on `SpectralMatchParams`, applied at both
+places MS1 uses a window: the LOTUS exact-mass query bounds and the per-feature adduct
+bisect. **`parent_mz_tol` is unchanged and now governs MS2 alone.** It stays in Daltons
+because the MS2 candidate query is what makes the SQL range join provably the same predicate
+as matchms' `PrecursorMzMatch(tolerance, "Dalton")`; expressing it in ppm would break that
+equivalence and the test that pins it.
+
+**This changes MS1 results.** At the default the window is tighter than before everywhere
+below m/z 1000, so features will carry fewer candidate adducts — which is the intent, but
+existing MS1 annotations are not comparable across the change.
+
+`MS1GraphEnhancerConfig.mz_tolerance` remains in Daltons and its docstring no longer claims
+to track `parent_mz_tol`. That tolerance is applied between two *observed* features, where a
+relative window is a different question from comparing an observed m/z against a theoretical
+adduct mass. Whether it should also become relative is untouched here.
+
 ### 2026-09-17 — `docs/REFACTORING_PLAN.md` removed
 
 The plan described an architecture that no longer exists: `DBLoader`, the `spectral_library`

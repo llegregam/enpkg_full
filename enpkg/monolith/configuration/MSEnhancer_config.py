@@ -13,9 +13,17 @@ class SpectralMatchParams(BaseModel):
     parent_mz_tol: float = Field(
         default=0.01,
         gt=0,
-        description="Parent (precursor) m/z tolerance in Daltons. Governs both the "
-        "MS2 precursor pre-filter and the MS1 adduct mass window. Note: this is a "
-        "Dalton tolerance, unlike the legacy workflow's ppm MS1 tolerance."
+        description="MS2 precursor m/z tolerance in Daltons. Bounds the library "
+        "candidate window: a library spectrum is a candidate when its precursor "
+        "lies within this distance of the feature's."
+    )
+    ms1_ppm_tol: float = Field(
+        default=10.0,
+        gt=0,
+        description="MS1 precursor mass tolerance in parts per million. Governs both "
+        "the LOTUS exact-mass query window and the per-feature adduct match. Relative "
+        "to the observed precursor m/z, so the absolute window widens with mass: "
+        "10 ppm is 0.002 Da at m/z 200 and 0.010 Da at m/z 1000."
     )
     msms_mz_tol: float = Field(
         default=0.01,

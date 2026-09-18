@@ -97,8 +97,12 @@ formula goes the wrong way. So the MS1 enhancer reasons in reverse:
 Algebraically inverting the forward formula gives the **inverse** direction:
 
 ```
-implied neutral mass M = ((observed m/z ± tolerance) × charge − Σ ingredient masses) / multimer_factor
+implied neutral mass M = ((observed m/z ± m/z × ppm × 10⁻⁶) × charge − Σ ingredient masses) / multimer_factor
 ```
+
+The tolerance is **relative**: `ms1_ppm_tol` is in parts per million of the observed
+precursor, so the absolute window widens with mass. At the default 10 ppm it spans
+±0.002 Da at m/z 200 and ±0.010 Da at m/z 1000.
 
 Because we don't know in advance which adduct form is correct, **every recipe yields a
 different candidate neutral mass** for the same peak. Collecting these across all recipes
@@ -164,9 +168,9 @@ A `ChemicalAdduct` is simply the pairing *"this reference compound, ionised this
 of these predicted ions are then **sorted by mass**.
 
 **(d) Match each peak.** For every spectrum, the enhancer defines a tolerance window
-`[m/z − tol, m/z + tol]`, uses a **binary search** to jump to the first candidate at or above
-the lower edge, then **scans upward** until it passes the upper edge. Everything in between is
-copied into `spectrum.ms1_annotations`.
+`[m/z − δ, m/z + δ]` where `δ = m/z × ms1_ppm_tol × 10⁻⁶`, uses a **binary search** to jump to
+the first candidate at or above the lower edge, then **scans upward** until it passes the
+upper edge. Everything in between is copied into `spectrum.ms1_annotations`.
 
 ```mermaid
 %%{init: {'theme':'dark'}}%%
@@ -282,7 +286,8 @@ once. Deciding which is most credible — by combining taxonomic plausibility an
 ## 8. A concrete worked example
 
 Suppose we observe a peak at **m/z 301.007** in **positive** mode, with a tolerance of
-**0.01 Da**, giving the match window **[300.997, 301.017]**.
+**10 ppm**. At this mass that is δ = 301.007 × 10 × 10⁻⁶ = **0.0030 Da**, giving the match
+window **[301.004, 301.010]**.
 
 Three *different* reference compounds, ionised three *different* ways, all land inside that
 window (numbers computed directly from `ADDUCT_MASSES`):
@@ -296,7 +301,7 @@ window (numbers computed directly from `ADDUCT_MASSES`):
 ```mermaid
 %%{init: {'theme':'dark'}}%%
 flowchart TD
-    OBS["Observed peak<br/>m/z 301.007, tol 0.01 (pos)"] --> WIN["Match window<br/>[300.997, 301.017]"]
+    OBS["Observed peak<br/>m/z 301.007, tol 10 ppm (pos)"] --> WIN["Match window<br/>[301.004, 301.010]"]
     WIN --> H["Compound A, M = 300.000<br/>as [M+H]⁺ → 301.007 ✓"]
     WIN --> NA["Compound B, M = 278.018<br/>as [M+Na]⁺ → 301.008 ✓"]
     WIN --> NH["Compound C, M = 282.974<br/>as [M+NH₄]⁺ → 301.008 ✓"]

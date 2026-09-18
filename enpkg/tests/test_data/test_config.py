@@ -35,6 +35,8 @@ def test_ionization_mode_prefers_new_key_when_both_given():
     [
         ("parent_mz_tol", 0.0),
         ("parent_mz_tol", -1.0),
+        ("ms1_ppm_tol", 0.0),
+        ("ms1_ppm_tol", -5.0),
         ("msms_mz_tol", 0.0),
         ("min_score", -0.1),
         ("min_score", 1.1),
