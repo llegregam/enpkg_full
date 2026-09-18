@@ -20,6 +20,27 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-18 — `unwrap_optional` missed `T | None` before Python 3.14
+
+`unwrap_optional` tested `get_origin(annotation) is Union`. That recognises `Optional[T]` on
+every version, but `T | None` only on Python 3.14, where `typing.Union` and
+`types.UnionType` became the same object. On 3.13 and earlier the two spellings have
+different origins — `typing.Union` and `types.UnionType` — so `T | None` fell through to the
+"not optional" branch. It now matches either origin.
+
+The consequence was not confined to the failing assertion. `unwrap_optional` is what both
+form builders call to decide whether a field may be left empty, and `enum_choices` calls it
+before looking for a `Literal`, so on 3.13 a field annotated `Literal[...] | None` would
+have rendered as free text instead of a dropdown, and no optional field written in the
+`|` spelling would have been treated as optional.
+
+**Local runs could not have caught this.** The development interpreter is 3.14, where the
+unification makes the original check correct; the bug is only reachable on an older one.
+It was found by the 3.13 CI worker. Verified under pre-unification semantics on a 3.11
+interpreter before committing, since no 3.13 is installed here: `get_origin(int | None)`
+returns `types.UnionType` there, and the fixed predicate resolves all of `Optional[T]`,
+`T | None`, a plain type and a non-optional `int | str` correctly.
+
 ### 2026-09-18 — The MS1 precursor window is in ppm
 
 Carried out the decision left open as B-11. `ms1_enhancer` matched on

@@ -14,6 +14,7 @@ testable without starting a server.
 from __future__ import annotations
 
 import re
+import types
 from typing import Any, Literal, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel
@@ -28,8 +29,13 @@ def unwrap_optional(annotation: Any) -> tuple[Any, bool]:
     difference is whether leaving it empty is legal. Callers therefore render against the
     inner type and use the flag to decide how to treat an empty input.
     """
+    # The two spellings do not share an origin on every supported interpreter. On
+    # Python 3.14 ``typing.Union`` and ``types.UnionType`` are the same object, so
+    # either check matches both; before 3.14 they are distinct and ``get_origin``
+    # returns ``typing.Union`` for ``Optional[T]`` but ``types.UnionType`` for
+    # ``T | None``. Matching both keeps the answer identical across versions.
     origin = get_origin(annotation)
-    if origin is Union:
+    if origin is Union or origin is types.UnionType:
         args = [a for a in get_args(annotation) if a is not type(None)]
         if len(args) == 1:
             return args[0], True
