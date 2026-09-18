@@ -119,7 +119,6 @@ def _serialize_maximal(make_spectrum, make_lotus, make_recipe, make_adduct, make
         make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation
     )
     serializer = AnalysisSerializer(
-        include_network=True,
         include_ions=True,
         min_relative_intensity=0.1,
         max_ions_per_spectrum=1,

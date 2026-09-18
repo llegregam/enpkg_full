@@ -42,8 +42,9 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Register a FragHub CSV spectral library in a DuckDB database.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -92,9 +93,9 @@ def _list_libraries(db) -> None:
         )
 
 
-def main() -> None:
-    parser = _build_parser()
-    args = parser.parse_args()
+def main(argv: list[str] | None = None, prog: str | None = None) -> None:
+    parser = _build_parser(prog)
+    args = parser.parse_args(argv)
     _configure_logging(args.verbose)
 
     # Late import so an argument error is reported before any DuckDB import error.

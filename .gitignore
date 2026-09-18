@@ -164,3 +164,10 @@ docs/vocab/chebi-vocab.owl
 # Personal Claude Code instructions — local working notes, not project docs.
 # The project rationale this file used to carry lives in docs/PROJECT_CONTEXT.md.
 CLAUDE.md
+
+# Per-machine Claude Code permissions: absolute paths from one checkout, no
+# meaning in another. The skills beside it are project-wide and are tracked.
+.claude/settings.local.json
+
+# NiceGUI per-visitor storage, written beside the working directory at runtime.
+.nicegui/

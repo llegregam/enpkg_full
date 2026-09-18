@@ -214,10 +214,15 @@ def build_database(
         # silently misaligns the moment either schema gains a column. Sampling is
         # per library so every registered library keeps some spectra, instead of
         # one large library crowding the others out of the LIMIT.
+        # The source database is attached, so information_schema spans both and
+        # returns every column name twice; table_catalog restricts it to the
+        # fixture being written.
         columns = ", ".join(
             row[0] for row in conn.execute(
                 "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'library_spectra' ORDER BY ordinal_position"
+                "WHERE table_name = 'library_spectra' "
+                "  AND table_catalog = current_database() "
+                "ORDER BY ordinal_position"
             ).fetchall()
         )
         conn.execute(

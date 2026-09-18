@@ -8,7 +8,7 @@ import pytest
 
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.data.ms1_data_classes.adduct_class import ChemicalAdduct
-from enpkg.monolith.enhancers.ms1_enhancer import MS1Enhancer
+from enpkg.monolith.enhancers.ms1_enhancer import MS1Enhancer, _ppm_window
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
 from enpkg.tests.test_enhancers.conftest import FIXTURE_DATASET
@@ -55,6 +55,30 @@ def lotus_objects(ms1_enhancer: MS1Enhancer, analysis: Any, logger: logging.Logg
     objects = ms1_enhancer.initialize_lotus_objects(spectrum_list=analysis.spectra)
     logger.info(f"Computed {len(objects)} formula groups in {time() - start:.2f} seconds")
     return objects
+
+
+class TestPpmWindow:
+    """The MS1 precursor window is relative, so its width depends on the mass."""
+
+    def test_window_is_symmetric_about_the_precursor(self):
+        low, high = _ppm_window(500.0, 10.0)
+        assert high - 500.0 == pytest.approx(500.0 - low)
+
+    @pytest.mark.parametrize(
+        "mz, expected_half_width",
+        [(200.0, 0.002), (400.0, 0.004), (1000.0, 0.010)],
+    )
+    def test_absolute_width_scales_with_mass(self, mz, expected_half_width):
+        low, high = _ppm_window(mz, 10.0)
+        assert (high - low) / 2 == pytest.approx(expected_half_width)
+
+    def test_a_dalton_tolerance_would_not_scale(self):
+        # The whole point of the change: at 10 ppm a feature at m/z 200 gets a
+        # window five times tighter than one at m/z 1000, where a fixed 0.01 Da
+        # tolerance gave both the same absolute width.
+        narrow = _ppm_window(200.0, 10.0)
+        wide = _ppm_window(1000.0, 10.0)
+        assert (wide[1] - wide[0]) == pytest.approx(5 * (narrow[1] - narrow[0]))
 
 
 class TestMS1Enhancer:

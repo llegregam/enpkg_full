@@ -20,6 +20,336 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-18 — `unwrap_optional` missed `T | None` before Python 3.14
+
+`unwrap_optional` tested `get_origin(annotation) is Union`. That recognises `Optional[T]` on
+every version, but `T | None` only on Python 3.14, where `typing.Union` and
+`types.UnionType` became the same object. On 3.13 and earlier the two spellings have
+different origins — `typing.Union` and `types.UnionType` — so `T | None` fell through to the
+"not optional" branch. It now matches either origin.
+
+The consequence was not confined to the failing assertion. `unwrap_optional` is what both
+form builders call to decide whether a field may be left empty, and `enum_choices` calls it
+before looking for a `Literal`, so on 3.13 a field annotated `Literal[...] | None` would
+have rendered as free text instead of a dropdown, and no optional field written in the
+`|` spelling would have been treated as optional.
+
+**Local runs could not have caught this.** The development interpreter is 3.14, where the
+unification makes the original check correct; the bug is only reachable on an older one.
+It was found by the 3.13 CI worker. Verified under pre-unification semantics on a 3.11
+interpreter before committing, since no 3.13 is installed here: `get_origin(int | None)`
+returns `types.UnionType` there, and the fixed predicate resolves all of `Optional[T]`,
+`T | None`, a plain type and a non-optional `int | str` correctly.
+
+### 2026-09-18 — The MS1 precursor window is in ppm
+
+Carried out the decision left open as B-11. `ms1_enhancer` matched on
+`spectral_match_params.parent_mz_tol`, an absolute Dalton tolerance, where the workflow this
+pipeline replaced used a relative one. A fixed 0.01 Da window is 50 ppm at m/z 200 and
+10 ppm at m/z 1000, so it was five times more permissive at the bottom of the natural-product
+mass range than at the top — the opposite of how instrument mass accuracy behaves.
+
+`ms1_ppm_tol` (default 10 ppm) is a new field on `SpectralMatchParams`, applied at both
+places MS1 uses a window: the LOTUS exact-mass query bounds and the per-feature adduct
+bisect. **`parent_mz_tol` is unchanged and now governs MS2 alone.** It stays in Daltons
+because the MS2 candidate query is what makes the SQL range join provably the same predicate
+as matchms' `PrecursorMzMatch(tolerance, "Dalton")`; expressing it in ppm would break that
+equivalence and the test that pins it.
+
+**This changes MS1 results.** At the default the window is tighter than before everywhere
+below m/z 1000, so features will carry fewer candidate adducts — which is the intent, but
+existing MS1 annotations are not comparable across the change.
+
+`MS1GraphEnhancerConfig.mz_tolerance` remains in Daltons and its docstring no longer claims
+to track `parent_mz_tol`. That tolerance is applied between two *observed* features, where a
+relative window is a different question from comparing an observed m/z against a theoretical
+adduct mass. Whether it should also become relative is untouched here.
+
+### 2026-09-17 — `docs/REFACTORING_PLAN.md` removed
+
+The plan described an architecture that no longer exists: `DBLoader`, the `spectral_library`
+table, `scripts/build_duckdb.py`, `gui/app.py` and the Streamlit interface. Its P0 finding
+B-02 was "the DuckDB build script is broken", about a script that has since been split and
+renamed. A document that reads as current while describing a superseded system is worse than
+no document, and its remaining accurate parts are now covered by
+[BUILDING_THE_DATABASE.md](docs/BUILDING_THE_DATABASE.md), [ADDING_A_BLOCK.md](docs/ADDING_A_BLOCK.md)
+and [webui/ARCHITECTURE.md](enpkg/monolith/webui/ARCHITECTURE.md). It remains in git history.
+
+Findings were checked before deleting rather than assumed stale. B-09 (a duplicated
+`ott_matches` field) is fixed; B-10's `TaxonomicalEnhancementStep` no longer exists. B-08
+(inert `ReweightingParams` knobs) and F-03 (SIRIUS results are parsed but never attached to
+the `Analysis`) are still true and were already described in full in the docstrings that
+cited them — only the dangling file reference was removed from each.
+
+**One finding had no other home and is carried here. B-11: the MS1 precursor window is in
+Daltons, not ppm.** `ms1_enhancer` matches on `spectral_match_params.parent_mz_tol`, an
+absolute tolerance, while the historical workflow this pipeline replaced used a relative ppm
+tolerance for MS1 annotation. The two select different adducts, and the divergence is
+widest at the extremes of the mass range. Whether Daltons is intended has never been
+settled; if ppm is wanted it needs a new field on `SpectralMatchParams` rather than a
+reinterpretation of the existing one.
+
+### 2026-09-17 — InChI is a column, not metadata
+
+FragHub's POS_LC export carries an `INCHI` column the ingest schema did not recognise. It
+was preserved in `metadata_json` and recorded in `spectral_library_registry.unknown_columns`
+— the "core required, extras allowed" contract behaving as intended. Nothing was lost, but
+nothing on the annotation path could read it either.
+
+**It is promoted to a real column so the annotation path can reach a second, canonical
+structure representation without parsing JSON.** InChI is what an RDF export should carry
+for a structure: it is standardised and comparable across sources in a way SMILES is not.
+
+The original argument for promoting it was that InChI would be the only structure available
+for the spectra lacking SMILES. **That was inferred from FragHub's documented behaviour and
+is false for this export.** Measured on the ingested bucket: `inchi` and `smiles` are
+non-null on exactly the same 1,445,449 of 1,450,368 rows, and the count of rows with InChI
+but no SMILES is zero. The promotion still stands on the argument above, but it is a
+convenience, not a recovery of otherwise unreachable data.
+
+**The 4,919 spectra without SMILES have no InChI either — they carry an InChIKey and no
+structure at all.** FragHub's paper states that spectra lacking both InChI and SMILES are
+dropped; these rows contradict that, or the guarantee is narrower than it reads. It matters
+for the planned library-identity fields on `MS2ChemicalAnnotation`: those spectra can be
+matched and named, but there is no structure to serialize for them, so any identity field
+beyond the InChIKey has to be optional.
+
+**A re-import alone would not have applied the change.** `create_schema()` is written with
+`CREATE TABLE IF NOT EXISTS`, so running it repeatedly is harmless — and by the same token
+it does nothing at all to a table that already exists, including adding a column to it.
+Re-running the importer would have deleted and reinserted rows into the old 22-column
+table. `library_spectra` was dropped so the schema could recreate it, then re-ingested from
+the same export; the LOTUS tables were untouched.
+
+The column is now required by the read path: `get_candidate_spectra` selects every column
+and `LibraryCandidate.from_row` reads `inchi` by name, so a database written before this
+change fails with `KeyError: 'inchi'` instead of quietly annotating without it.
+
+**Rebuilding the fixtures exposed a bug in `build_test_fixtures.py` that had never run.**
+It reads the column list from `information_schema.columns` to name the columns explicitly
+instead of copying positionally. The source database is attached as `src`, and
+`information_schema` spans every attached database, so each name came back twice and the
+insert failed with `Duplicate column name "id"`. The lookup is now restricted with
+`table_catalog = current_database()`. The named-column copy dates from the
+`spectral_library` → `library_spectra` rename and had not been executed since, because the
+fixture database still carried the pre-rename schema.
+
+### 2026-09-17 — SIRIUS summaries were written to an unwritable path
+
+A run with the SIRIUS block selected computed for 25 minutes and then reported
+`No SIRIUS summaries directory`, leaving the analysis unchanged and the graph without a
+SIRIUS layer. The run itself was recorded as successful.
+
+**The summaries path was relative.** The project path passed to `-o` was already resolved
+to an absolute path, but the `--output` given to `write-summaries` was the raw
+`output_directory` string from the configuration. `sirius.exe` resolves a relative path
+against its own installation directory rather than the working directory it was launched
+from, so on Windows it tried to create `C:\Program Files\sirius\sirius_output` and was
+refused. Both paths are now built from the same resolved project directory.
+
+**The summaries directory is now per-run.** It sits inside the stamped project directory
+rather than beside it. The previous flat layout gave every sample of a batch the same
+summaries directory, so each export overwrote the one before it.
+
+**Nothing reported the failure.** SIRIUS logged the error and still exited zero, so
+`check=True` did not fire and the branch that logs its output never ran. The only signal
+reaching the pipeline was the absent directory, which was treated as a warning. That
+warning is unchanged for now: a block that raises aborts the run and suppresses the Turtle
+export, so failing here would discard the work of every other block. Whether an absent
+summaries directory should stop a run is still open.
+
+### 2026-09-14 — The NiceGUI front end
+
+Three pages — input data, pipeline configuration and run, serializer options — under
+`enpkg/monolith/webui/`, launched by `enpkg gui` or `enpkg gui --native`. The Streamlit
+interface stays until this one has been used on a real dataset. Design is written up in
+[webui/ARCHITECTURE.md](enpkg/monolith/webui/ARCHITECTURE.md); this entry records the
+decisions and what they cost.
+
+**State is split by what it is made of.** Moving between pages is a full page load, so
+nothing a user chose can live in a page function's variables; and a module-level dict, the
+obvious alternative, is shared by every client in NiceGUI. So JSON-serialisable values go
+in `app.storage.user` (per visitor, and surviving a browser reload, which
+`st.session_state` did not) and everything else — subprocess handles, output buffers,
+parsed results — goes in a module-level dict indexed only by the caller's own session id.
+With one visitor, which is what the native window is, that degenerates to a single entry
+with no special case.
+
+**Runs execute as a separate process running `enpkg run`.** That is what gives output
+while the run is going, a working Cancel, and survival across a browser reload — and it
+means the command line and the interface exercise one execution path rather than two that
+drift. The decision the rest depends on is that the code reading the subprocess's output
+touches no element: it fills a buffer and nothing else, so when the client that started
+the run is destroyed — which is what navigating to another page does — nothing is left
+pointing at a dead element. Pages poll that buffer with a timer that dies with them.
+
+The cost, already recorded when the artifact was added: the `Analysis` cannot come back
+across a process boundary, so the interface can only show what the result file carries.
+
+**`config_io.save_unified_yaml` gained a `serializer` argument** so the page can write that
+section; `state`, `runs` and `forms` hold the logic and contain no page code, which is why
+they are testable without a browser.
+
+**Three defects the tests found, all in code written the same day.** Save read values that
+a one-second timer writes, so saving straight after a change wrote the previous values —
+Save and Run now read the widgets first. `state.raw` filled in missing values by replacing
+the whole mapping, so one access finding it unfamiliar discarded every choice — it now
+fills keys individually. And an assertion was passing for the wrong reason:
+`should_see("Valid")` matched the heading "Validated configuration", so it had never
+checked the status it appeared to; that heading is now "Configuration preview", which is
+what made the Save defect visible.
+
+**Two traps in the test harness**, both recorded because the symptom points nowhere near
+the cause. The test-only entry script must not be named `*_test.py` or `test_*.py`: pytest
+collects those, imports it, runs its `ui.run()` for real, and hangs collection of the whole
+directory — while each file still passes on its own. And `Storage.clear` fails on Windows
+whenever an atomic storage write is in flight, which leaves NiceGUI half-reset so every
+later test 404s; that is an upstream bug, written up in
+[docs/NICEGUI_STORAGE_CLEANUP_BUG.md](docs/NICEGUI_STORAGE_CLEANUP_BUG.md) and worked
+around in a fixture. Not yet reported.
+
+**pytest moved to 8.x** because pytest-asyncio requires it, and without pytest-asyncio
+NiceGUI's async `user` fixture is collected, skipped and reported as a passing run.
+
+**Known gap.** No test starts a real run from the page. The run registry is covered against
+a stand-in subprocess and the page is covered up to the point of launching, but the join
+between them has only been exercised by hand. That check belongs in the parity pass before
+Streamlit is removed.
+
+### 2026-09-10 — The `enpkg` command line
+
+The pipeline could not be run without a browser. `pipeline/` imports no GUI code and was
+kept that way deliberately, but the only entry point was `streamlit run`, so processing
+a few hundred experiments on a cluster had no supported path. This adds one.
+
+**`enpkg` is now an installable package.** `enpkg/__init__.py` did not exist, making
+`enpkg` a namespace package that resolved only because the repository root happened to be
+on `sys.path` — via `pythonpath = .` in `pytest.ini` and `PYTHONPATH=/app` in the planned
+container. Meanwhile `packages = [{include = "monolith", from = "enpkg"}]` installed the
+inner directory as a top-level `monolith`, which no import in the codebase agrees with. A
+`[project.scripts]` console script needs a genuinely importable module, so the package is
+now `{include = "enpkg"}` with tests excluded, and `poetry install` no longer needs
+`--no-root`. `PYTHONPATH` becomes belt-and-braces rather than load-bearing; it is left in
+place for the Streamlit entry point, which puts the *script's* directory on `sys.path`
+rather than the working directory.
+
+**Commands.** `run`, `batch` (+ `batch discover`), `serialize`, `config init|validate|show`,
+`db lotus|spectral-library`, `blocks list`. Each is a thin adapter over the same runner
+the GUI calls; no orchestration logic lives in `enpkg/cli/`. `enpkg gui` is not here yet —
+it arrives with the NiceGUI application.
+
+**Built on Typer**, which derives parsing, `--help` and nested subcommands from type
+annotations. It adds six packages (rich, pygments, markdown-it-py, mdurl, shellingham,
+annotated-doc); click and colorama were already present. `argparse` would have avoided
+those at the cost of hand-rolled subparser nesting for seven command groups.
+
+**`db` forwards rather than redeclares.** `enpkg db lotus` hands its arguments straight to
+`enpkg/scripts/import_lotus.py`, so the flags are defined once. Both import scripts gained
+`argv` and `prog` parameters to make that possible — `prog` so argparse's usage line reads
+`enpkg db lotus` rather than `enpkg`, which is not a command that accepts those flags.
+
+**`config init` writes a template, not a validated config.** Blocks whose config has a
+required field with no default — only `MSEnhancerConfig.duckdb_path` today — get `null`
+and are listed on stderr. Generating only the fields that happen to have defaults would
+hide from the user that a value is needed at all.
+
+**A JSON result artifact** (`pipeline/run_artifact.py`, `--json-out`). This is what lets a
+caller that runs the pipeline as a separate process learn what happened: the `Analysis`
+lives in that process's memory and cannot be returned, so the outcome, the per-stage
+durations, the `AnalysisSummary` counts and the output paths are projected into a small
+file instead. `schema_version` lets a reader reject a file it cannot interpret. The
+alternative considered was scraping stdout, which would break whenever a log line is
+reworded.
+
+**One bug found by running it rather than by testing it.** Input discovery matched "any
+accepted suffix", but metadata accepts `.tsv/.txt/.csv` while quant tables are `.csv`, so
+a normal folder resolved metadata to the quant table and the run died deep in the loader
+looking for `sample_filename_pos` among quant columns. `find_shared_metadata` had always
+iterated suffixes in preference order for exactly this reason; the CLI now does too.
+
+Verified end to end: 2159 spectra through the networking block, a 2.1 MB Turtle graph,
+logs and artifact under `--output-dir`, and nothing written to `gui_workspace/`.
+
+### 2026-09-10 — Groundwork for an `enpkg` CLI and a NiceGUI front end
+
+Work on the `GUI_MIGRATION` branch. This entry covers the shared groundwork only; the CLI
+and the NiceGUI application follow.
+
+**Why this is happening.** Two problems, both consequences of the pipeline being headless
+while the only way to reach it is a browser.
+
+The pipeline under `pipeline/` imports no GUI code, but `pyproject.toml` declares no
+`[project.scripts]` and the only `argparse` entry points are the standalone
+`enpkg/scripts/*.py` utilities. There is therefore no supported way to run a batch on a
+cluster. And the Streamlit front end pays a recurring cost to Streamlit's execution model
+rather than to the problem domain: the `form_rev` counter exists only because Streamlit
+ignores a changed `value=` for an already-registered widget key, a trailing `st.rerun()`
+works around the execution panel rendering beneath a collapsed `st.status`, `_drain_queue`
+runs only *after* `run_pipeline` returns so a run shows a spinner and nothing else until it
+finishes, and there is no way to cancel a run. NiceGUI's elements are persistent Python
+objects, which removes the first two by construction; running the pipeline as a subprocess
+of the new CLI removes the last two, and means both front ends exercise one execution path.
+
+**`configuration/introspect.py`** — the five Pydantic-reflection helpers that were private to
+`gui/form_builder.py` now live next to the models they reflect over, so the Streamlit and
+NiceGUI form builders cannot drift while both exist. Adding `enum_choices` there fixed a
+live defect: `_render_field` dispatched on `annotation is bool/int/float/str`, which
+`Literal[...]` does not match, so `SpectralMatchParams.method` and
+`MSEnhancerConfig.ms2_adduct_filter` fell through to a free-text box and had to be typed by
+hand. Both are dropdowns now. (`canopus_source` looked like the same bug but is a `str` with
+a regex constraint, and already worked.)
+
+**`config_io.inject_shared_params`** — moved out of `gui/app.py`. `GeneralParams` describes
+the run, not the block, so it is collected once and merged into every section that declares
+it; `build_configs` never did this, so any caller that skipped the GUI's private copy would
+have built each block from its Pydantic defaults and silently processed a negative-mode
+dataset as positive. It is now on the path every front end shares.
+
+**`output_dir` on `run_pipeline` and `run_batch`** — `LOG_DIR` is a module-level *relative*
+path resolved against the process working directory. That is survivable for a GUI launched
+from the repository root and not for a command line invokable from anywhere, which would
+scatter its logs. The default is unchanged, so existing callers behave as before.
+
+**Run stamps are now unique.** The stamp was one-second granular, so two runs started in the
+same second wrote to the same log paths and the second overwrote the first. Four random
+characters are appended; the stamp still sorts chronologically.
+
+**`BatchResult.runtime_log` removed.** The path was computed and stored but no handler was
+ever attached, so the file was never created. `gui/app.py` gated the "Batch folder" caption
+on that always-empty field, so the caption never appeared; it now checks `batch_dir`.
+
+**`run_batch` no longer mutates its caller's list.** It removes `"sirius"` from the selection
+when the executable cannot be validated, which silently changed the caller's list.
+
+**`SerializerConfig`.** `AnalysisSerializer` took nine keyword arguments; the runners
+hardcoded eight and derived the ninth, so eight were unreachable from any config file and
+the GUI could reach none. They now come from a Pydantic model written under a `serializer:`
+key, consumed by `runner.py`, `batch_runner.py` and `smoke_serialize.py` alike. A test
+asserts the model's field names and defaults match the constructor's, so the two cannot
+drift apart unnoticed.
+
+**`include_network` removed entirely** — from the config, from `AnalysisSerializer`, and
+from `smoke_serialize`'s flags. Whether the `emi:LFpair` edges belong in the graph is
+already answered by whether the networking block is part of the run; a second switch could
+only contradict that, and the runners were in fact overriding the serializer's own default
+on every network run. The edges are now emitted whenever a network is present.
+
+The trade-off accepted here: the edge set is worst-case quadratic in feature count, and
+`weights` declares `depends_on=("network",)`, so selecting reranking pulls the networking
+block — and therefore the edges — in with it. There is no longer a way to compute a network
+for reranking while keeping its edges out of the graph. If a large experiment produces an
+unusably large export, this is the cause, and the fix would be to reintroduce a size-based
+gate rather than a semantic one.
+
+**`max_ions_per_spectrum` now rejects a non-positive value.** The three `top_k_*` options
+normalise `<= 0` to `None` meaning "emit all", but this one is stored raw and used as a
+slice bound, so `0` drops *every* ion while writing `enpkg:maxIonsPerSpectrum 0` as
+provenance — an empty result that reads as deliberate. It was latent because `include_ions`
+defaults off, and a serializer UI is exactly what turns it on. Pydantic now rejects it at
+the config boundary (`gt=0`). This puts a hard requirement on the NiceGUI form builder: it
+must return `None` for an empty optional number, since substituting `0` the way the
+Streamlit builder does would now fail validation.
+
 ### 2026-09-10 — SIRIUS does not parallelise: four approaches measured and rejected
 
 No code changed. This records why the planned SIRIUS parallelisation was abandoned,

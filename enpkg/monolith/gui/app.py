@@ -25,7 +25,7 @@ from enpkg.monolith.pipeline.batch_runner import (
 from enpkg.monolith.pipeline.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS, MS_SHARED_KEY
 from enpkg.monolith.pipeline.runner import AnalysisSummary, run_pipeline
 
-SHARED_FIELD = "general_params"
+SHARED_FIELD = config_io.SHARED_FIELD
 
 
 # --- Default workspace layout ----------------------------------------------
@@ -372,18 +372,6 @@ def _render_forms(selected: list[str]) -> dict[str, dict]:
     return raw
 
 
-def _inject_shared_params(raw: dict[str, dict], shared: dict) -> dict[str, dict]:
-    """Merge the shared general_params into every block's form dict."""
-    merged: dict[str, dict] = {}
-    for block_id, values in raw.items():
-        block = BLOCKS_BY_ID[block_id]
-        if block.config_cls is not None and SHARED_FIELD in block.config_cls.model_fields:
-            merged[block_id] = {**values, SHARED_FIELD: shared}
-        else:
-            merged[block_id] = values
-    return merged
-
-
 def _build_configs_from_raw(selected: list[str], raw: dict[str, dict]):
     """
     Instantiate Pydantic config objects from the raw form dicts
@@ -455,7 +443,7 @@ def _render_batch_execution(batch: BatchResult) -> None:
     cols[0].metric("Total", len(batch.results))
     cols[1].metric("Succeeded", len(batch.succeeded))
     cols[2].metric("Failed", len(batch.failed))
-    if batch.runtime_log:
+    if batch.batch_dir:
         st.info(f"Batch folder: `{batch.batch_dir}`")
     if batch.summary_log:
         st.info(f"Batch summary: `{batch.summary_log}`")
@@ -515,7 +503,7 @@ def main() -> None:
     st.title("ENPKG pipeline configuration")
     shared_params = _render_general_params()
     raw = _render_forms(selected)
-    raw = _inject_shared_params(raw, shared_params)
+    raw = config_io.inject_shared_params(raw, shared_params)
     configs, error = _build_configs_from_raw(selected, raw)
     __check_and_display_if_valid(configs or {}, error)
 

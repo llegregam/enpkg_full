@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import queue
 import time
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
+from enpkg.monolith.configuration.serializer_config import SerializerConfig
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.exceptions import DatabaseError
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
@@ -110,6 +112,9 @@ class RunResult:
     error: Optional[str] = None
     log_file: Optional[Path] = None
     summary_file: Optional[Path] = None
+    # Set once the Turtle export has been written. Stays None when serialization was
+    # skipped or failed, so a reader can tell "no graph" from "graph at this path".
+    ttl_file: Optional[Path] = None
     # Wall-clock seconds per block id, plus the STAGE_* keys for the loading,
     # serialization and pickling that happen outside the block loop. A plain dict
     # of floats, so it outlives `analysis` being dropped at the end of a batch
@@ -155,19 +160,35 @@ class QueueLogHandler(logging.Handler):
             pass
 
 
-def _make_log_paths() -> tuple[Path, Path]:
-    """Create matching timestamped paths for the runtime and summary log files.
+def run_stamp() -> str:
+    """Return a filename-safe stamp that is unique within one process.
 
-    Both files share the same ``YYYYMMDD_HHMMSS`` stamp so they can be paired
-    visually in the logs directory.
+    The wall-clock part is one-second granular, so two runs started in the same second
+    would land on the same paths and the second would overwrite the first's logs. The
+    four random characters make that collision negligible without making the name
+    unreadable — the stamp still sorts chronologically.
+    """
+    return f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:4]}"
+
+
+def _make_log_paths(output_dir: Path | None = None) -> tuple[Path, Path]:
+    """Create matching stamped paths for the runtime and summary log files.
+
+    Both files share one stamp so they can be paired visually in the logs directory.
+
+    Args:
+        output_dir: Directory to write into. Defaults to ``LOG_DIR``, which is relative
+            to the process working directory — callers that must not depend on where
+            they were launched from (the command line, and the GUI spawning it) pass an
+            absolute path instead.
 
     Returns:
-        (runtime_log_path, summary_log_path) — ``run_*.log`` and ``summary_*.log``
-        under ``gui_workspace/logs/``.
+        (runtime_log_path, summary_log_path) — ``run_*.log`` and ``summary_*.log``.
     """
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return LOG_DIR / f"run_{stamp}.log", LOG_DIR / f"summary_{stamp}.log"
+    base = output_dir if output_dir is not None else LOG_DIR
+    base.mkdir(parents=True, exist_ok=True)
+    stamp = run_stamp()
+    return base / f"run_{stamp}.log", base / f"summary_{stamp}.log"
 
 
 def make_loggers(
@@ -248,10 +269,20 @@ def run_pipeline(
     quant_path: Path,
     ionization_mode: str,
     log_queue: "queue.Queue[str]",
-    verbose: bool = False
+    verbose: bool = False,
+    output_dir: Path | None = None,
+    serializer_config: SerializerConfig | None = None,
 ) -> RunResult:
-    """Load an Analysis and run each selected block in canonical order."""
-    log_file, summary_file = _make_log_paths()
+    """Load an Analysis and run each selected block in canonical order.
+
+    Args:
+        output_dir: Where the run log, summary log and Turtle export are written.
+            Defaults to ``LOG_DIR``, which is relative to the process working directory.
+        serializer_config: What the Turtle export should contain. Defaults to
+            :class:`SerializerConfig`'s own defaults.
+    """
+    serializer_config = serializer_config or SerializerConfig()
+    log_file, summary_file = _make_log_paths(output_dir)
     logger, summary_logger = make_loggers(
         log_queue, verbose=verbose, log_file=log_file, summary_file=summary_file
     )
@@ -291,9 +322,11 @@ def run_pipeline(
         try:
             with record_duration(result.durations, STAGE_RDF):
                 serialize_to_turtle(
-                    result.analysis, str(ttl_path),
-                    include_network="network" in result.executed,
+                    result.analysis,
+                    str(ttl_path),
+                    **serializer_config.model_dump(),
                 )
+            result.ttl_file = ttl_path
             # Logged rather than shown in the summary: the summary is written and
             # its file handler closed inside `_run_analysis`, which has already
             # returned by this point.

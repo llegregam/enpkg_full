@@ -28,18 +28,55 @@ scripts. The current design:
   [`pipeline/runner.py`](enpkg/monolith/pipeline/runner.py)) — a single `BLOCKS` registry
   is the source of truth for which blocks exist, how to build each enhancer, and
   when it can run; the runner executes selected blocks in canonical order.
-- **Reference data** — LOTUS compound/taxonomy metadata and the ISDB spectral
-  library are resolved from a persistent **DuckDB** file (see
-  [`loaders/`](enpkg/monolith/loaders/); build it with
-  [`enpkg/scripts/build_duckdb.py`](enpkg/scripts/build_duckdb.py)).
+- **Reference data** — LOTUS compound/taxonomy metadata and spectral libraries are
+  resolved from a persistent **DuckDB** file (see [`loaders/`](enpkg/monolith/loaders/);
+  build it with `enpkg db lotus` and `enpkg db spectral-library` — see
+  [docs/BUILDING_THE_DATABASE.md](docs/BUILDING_THE_DATABASE.md)).
 - **Output** — an RDF/Turtle knowledge graph via [`rdf/`](enpkg/monolith/rdf/)
   (`AnalysisSerializer`), mapped to the EMI vocabulary.
 
-A Streamlit GUI drives the pipeline — see
-[`gui/ARCHITECTURE.md`](enpkg/monolith/gui/ARCHITECTURE.md) and the per-enhancer
-notes under [`docs/`](docs/). Run the tests with `pytest`: unit tests
-(`enpkg/tests/test_data`, `enpkg/tests/test_pipeline`) need no external data;
-tests marked `@pytest.mark.integration` need the DuckDB file and network access.
+## Running it
+
+The `enpkg` command line is the primary entry point:
+
+```bash
+enpkg blocks list                       # what the pipeline can do
+enpkg config init --out config.yaml     # a template to edit
+enpkg config validate config.yaml       # check it before a long run
+enpkg run   --config config.yaml --input-dir data/    # one experiment
+enpkg batch --config config.yaml --parent-dir data/   # many experiments
+enpkg batch discover --parent-dir data/ # preview what a batch would pick up
+enpkg serialize run/analysis.pkl -o rdf_out/          # re-export without re-running
+```
+
+`--output-dir` puts every log, Turtle export and pickle from a run under one directory;
+`--json-out` additionally writes a machine-readable summary of what ran, for scripting.
+
+### The graphical interface
+
+```bash
+poetry install --with webui     # optional dependency group
+enpkg gui                       # in a browser tab
+enpkg gui --native              # in a desktop window
+```
+
+Three pages: choosing input data, configuring and running the pipeline, and the RDF
+serializer options. A run started here executes as a separate process running the same
+`enpkg run` shown above, so the two interfaces cannot drift apart — and output appears
+while the run is going, it can be stopped, and it survives the browser being closed.
+
+How it is wired: [`webui/ARCHITECTURE.md`](enpkg/monolith/webui/ARCHITECTURE.md). A
+Streamlit interface still exists under [`gui/`](enpkg/monolith/gui/) and is being retired
+once the NiceGUI one has been used on a real dataset; see
+[`gui/ARCHITECTURE.md`](enpkg/monolith/gui/ARCHITECTURE.md) for that one. Per-enhancer
+notes are under [`docs/`](docs/).
+
+### Tests
+
+Run them with `pytest`: unit tests (`enpkg/tests/test_data`, `enpkg/tests/test_pipeline`,
+`enpkg/tests/test_cli`) need no external data, and `enpkg/tests/test_webui` additionally
+needs the `webui` group. Tests marked `@pytest.mark.integration` need the DuckDB file and
+network access.
 
 The integration suite runs against a sampled fixture database and one dataset,
 both built by a single command from a full database you already have:

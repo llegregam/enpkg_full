@@ -9,8 +9,7 @@ class MS1GraphEnhancerConfig(EnhancerConfig):
     """Parameters for building and resolving the MS1 adduct-relationship graph.
 
     Ionization mode is taken from ``general_params.ionization_mode`` (inherited),
-    matching the MS1 enhancer. The mass tolerance mirrors the MS1 enhancer's ``parent_mz_tol``
-    default and should be kept in step with it.
+    matching the MS1 enhancer.
 
     Retention-time gating is **always applied** (there is no toggle to disable it):
     relating a whole run's features by mass alone fuses ~97% of them into a single
@@ -22,8 +21,9 @@ class MS1GraphEnhancerConfig(EnhancerConfig):
     mz_tolerance: float = Field(
         default=0.01,
         gt=0,
-        description="m/z tolerance (Da) for adduct-relationship edges. Keep in step "
-        "with the MS1 enhancer's spectral_match_params.parent_mz_tol.",
+        description="m/z tolerance (Da) for adduct-relationship edges. Applied between "
+        "two observed features, so it is absolute; the MS1 enhancer's ms1_ppm_tol is "
+        "relative because it compares an observed m/z against a theoretical adduct mass.",
     )
     rt_tolerance_min: float = Field(
         default=0.05,

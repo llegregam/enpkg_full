@@ -1,7 +1,7 @@
 """MS1 enhancer: attaches candidate adducts to each spectrum by precursor mass.
 
 For every spectrum it collects the reference adducts (LOTUS structures under
-every ionization recipe) whose computed ion mass falls within ``parent_mz_tol``
+every ionization recipe) whose computed ion mass falls within ``ms1_ppm_tol``
 of the precursor m/z, via a binary search over the mass-sorted adduct list. See
 ``docs/MS1_ENHANCER.md`` for the conceptual walkthrough.
 """
@@ -23,6 +23,16 @@ from enpkg.monolith.enhancers.adducts import NEGATIVE_RECIPES, POSITIVE_RECIPES
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.loaders.lotus_store import LotusStore
 from enpkg.monolith.utils.ms1_cluster_dispatch import inherit_satellite_annotations
+
+
+def _ppm_window(mz: float, ppm: float) -> tuple[float, float]:
+    """Return the ``(low, high)`` m/z bounds of a ppm window around ``mz``.
+
+    The tolerance is relative to the observed precursor, so the absolute width
+    scales with mass: 10 ppm spans 0.002 Da at m/z 200 and 0.010 Da at m/z 1000.
+    """
+    delta = mz * ppm * 1e-6
+    return mz - delta, mz + delta
 
 
 class MS1Enhancer(Enhancer):
@@ -111,7 +121,7 @@ class MS1Enhancer(Enhancer):
                     f"Invalid ionization mode {self.configuration.general_params.ionization_mode!r}, "
                     "expected 'pos' or 'neg'"
                 )
-        tol = self.configuration.spectral_match_params.parent_mz_tol
+        ppm = self.configuration.spectral_match_params.ms1_ppm_tol
         precursor_mzs = [s.precursor_mz for s in spectrum_list]
 
         # Widest exact-mass window reachable from all spectra × all recipes.
@@ -121,8 +131,9 @@ class MS1Enhancer(Enhancer):
         for recipe in recipes:
             adduct_sum = sum(ADDUCT_MASSES[k] * v for k, v in recipe.ingredients.items())
             for mz in precursor_mzs:
-                em_min = ((mz - tol) * recipe.charge - adduct_sum) / recipe.multimer_factor
-                em_max = ((mz + tol) * recipe.charge - adduct_sum) / recipe.multimer_factor
+                low, high = _ppm_window(mz, ppm)
+                em_min = (low * recipe.charge - adduct_sum) / recipe.multimer_factor
+                em_max = (high * recipe.charge - adduct_sum) / recipe.multimer_factor
                 global_min = min(global_min, em_min)
                 global_max = max(global_max, em_max)
 
@@ -177,7 +188,7 @@ class MS1Enhancer(Enhancer):
 
         # Pre-extract the sorted mass key once so each spectrum is two bisects.
         adduct_masses = [adduct.adduct_mass for adduct in self._adducts]
-        tol = self.configuration.spectral_match_params.parent_mz_tol
+        ppm = self.configuration.spectral_match_params.ms1_ppm_tol
 
         for spectrum in tqdm(
             search_spectra,
@@ -186,12 +197,10 @@ class MS1Enhancer(Enhancer):
             desc="Filtering precursor adducts",
             dynamic_ncols=True,
         ):
-            # Adducts whose mass lies in [precursor - tol, precursor + tol].
+            # Adducts whose mass lies in the ppm window around the precursor.
             # bisect is inclusive-safe even when the precursor is heavier than
-            # every adduct (left == right == len -> empty slice), unlike the old
-            # linear upper-bound scan which indexed before checking bounds.
-            lower = spectrum.precursor_mz - tol
-            upper = spectrum.precursor_mz + tol
+            # every adduct (left == right == len -> empty slice).
+            lower, upper = _ppm_window(spectrum.precursor_mz, ppm)
             left = bisect_left(adduct_masses, lower)
             right = bisect_right(adduct_masses, upper)
             spectrum.ms1_annotations = self._adducts[left:right]

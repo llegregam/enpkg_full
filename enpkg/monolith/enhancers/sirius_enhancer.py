@@ -119,15 +119,14 @@ class SiriusEnhancer(Enhancer):
             )
             raise
 
-    def _get_results(self, output_path: str) -> Optional[SiriusResults]:
-        """Parse the SIRIUS summary TSVs written to the summaries directory.
+    def _get_results(self, summaries_dir: Path) -> Optional[SiriusResults]:
+        """Parse the SIRIUS summary TSVs written to ``summaries_dir``.
 
         Returns ``None`` when no summary files are present (e.g. SIRIUS produced
         no output). Attaching these frames onto the ``Analysis`` data model is
-        the remaining half of SIRIUS ingestion (see docs/REFACTORING_PLAN.md
-        F-03); for now the parsed results are returned to the caller only.
+        the remaining half of SIRIUS ingestion; for now the parsed results are
+        returned to the caller only.
         """
-        summaries_dir = Path(self.config.sirius_params.output_directory) / "summaries"
         if not summaries_dir.is_dir():
             self._logger.warning("No SIRIUS summaries directory at %s", summaries_dir)
             return None
@@ -182,6 +181,12 @@ class SiriusEnhancer(Enhancer):
         project_dir = Path(self.config.sirius_params.output_directory).resolve() / stamp
         project_dir.mkdir(parents=True, exist_ok=True)
         output_path = str(project_dir / f"{sample_name}.sirius")
+        # `sirius.exe` resolves a relative path against its own installation directory
+        # rather than the working directory it was launched from, so this has to be
+        # absolute: the installation sits under Program Files and the write is refused.
+        # Keeping it inside the stamped project directory also stops the samples of a
+        # batch from overwriting each other's summaries.
+        summaries_dir = project_dir / "summaries"
         db_list = (
             "public_spectra_2506,METACYC,BloodExposome,CHEBI,COCONUT,FooDB,"
             "GNPS,HMDB,HSDB,KEGG,KNAPSACK,LOTUS,LIPIDMAPS,MACONDA,MESH,MiMeDB,NORMAN,PLANTCYC,"
@@ -218,7 +223,7 @@ class SiriusEnhancer(Enhancer):
             "classes",
             "structures",
             "write-summaries",
-            "--output", self.config.sirius_params.output_directory + "/summaries/",
+            "--output", str(summaries_dir),
             f"--top-k-summary={top_k_sirius}"
         ]
 
@@ -229,7 +234,7 @@ class SiriusEnhancer(Enhancer):
 
 
         self._run_sirius(sirius_args)
-        results = self._get_results(output_path)
+        results = self._get_results(summaries_dir)
         if results is None:
             self._logger.warning("No SIRIUS summaries parsed; analysis left unchanged.")
             return analysis

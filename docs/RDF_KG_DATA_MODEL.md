@@ -45,7 +45,7 @@ flowchart TD
     EXTT(["owl:sameAs targets<br/>Wikidata · NCBITaxon · GBIF"]):::ext
 
     ION["Ion  — gated: include_ions<br/>enpkg:productIonMz · enpkg:productIonIntensity"]:::gated
-    LF["LFpair  — gated: include_network (off)<br/>emi:hasCosine · emi:hasMassDifference"]:::gated
+    LF["LFpair<br/>emi:hasCosine · emi:hasMassDifference"]
     FBMN["FBMNComponent  — gated: include_fbmn_components (on)<br/>enpkg:componentSize"]:::cluster
 
     %% ---- spine ----
@@ -91,7 +91,7 @@ flowchart TD
     TX  -->|"owl:sameAs"| EXTT
     OTT -->|"owl:sameAs"| EXTT
 
-    %% ---- molecular network (gated) ----
+    %% ---- molecular network ----
     LF -->|"emi:hasFirstMember"| F
     LF -->|"emi:hasSecondMember"| F
     FS -->|"enpkg:hasNetworkComponent"| FBMN
@@ -171,11 +171,11 @@ flowchart TD
   also typed `emi:Taxon`.
 - **External authorities** are reached with `owl:sameAs` (Wikidata, PubChem, NCBITaxon, GBIF;
   references additionally link to DOIs).
-- **Gated layers:** product `Ion` nodes (`include_ions`, off) and the molecular-network
-  `LFpair` edges (`include_network`, off) are grey. The `FBMNComponent` nodes derived from
-  those edges are gated separately by `include_fbmn_components` and default **on** — they are
-  O(features) where the edges are O(features²), and the component is the unit consumers query.
-  All three are no-ops when the upstream enhancer did not run.
+- **Gated layers:** product `Ion` nodes (`include_ions`, off) are grey. The molecular-network
+  `LFpair` edges are emitted whenever the networking block ran. The `FBMNComponent` nodes
+  derived from those edges are gated by `include_fbmn_components` and default **on** — they
+  are O(features) where the edges are O(features²), and the component is the unit consumers
+  query. All are no-ops when the upstream enhancer did not run.
 - **Ranking note:** `annotationRank` / `annotationScore` are stamped **per channel** — MS1
   adducts and MS2 matches are each ranked by the reweighted NPC-alignment score among themselves;
   SIRIUS keeps its own `structurePerIdRank` as `annotationRank`. There is no merged cross-channel rank.
