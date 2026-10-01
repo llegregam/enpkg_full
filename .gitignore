@@ -166,7 +166,7 @@ docs/vocab/chebi-vocab.owl
 CLAUDE.md
 
 # Per-machine Claude Code permissions: absolute paths from one checkout, no
-# meaning in another. The skills beside it are project-wide and are tracked.
+# meaning in another. The rules beside it are project-wide and are tracked.
 .claude/settings.local.json
 
 # NiceGUI per-visitor storage, written beside the working directory at runtime.
