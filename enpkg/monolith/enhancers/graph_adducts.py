@@ -16,11 +16,11 @@ from enpkg.monolith.data.ms1_data_classes.adduct_class import AdductRecipe
 
 GRAPH_POSITIVE_RECIPES: list[AdductRecipe] = [
     AdductRecipe(ingredients={"proton": 1}, charge=1, positive=True),  # [M+H]+  (base)
-    AdductRecipe(ingredients={"proton": 1, "ammonium": 1}, charge=1, positive=True),  # [M+NH4]+
+    AdductRecipe(ingredients={"proton": 1, "ammonia": 1}, charge=1, positive=True),  # [M+NH4]+
     AdductRecipe(ingredients={"sodium": 1}, charge=1, positive=True),  # [M+Na]+
     AdductRecipe(ingredients={"potassium": 1}, charge=1, positive=True),  # [M+K]+
     AdductRecipe(ingredients={"proton": 1, "water": -1}, charge=1, positive=True),  # [M+H-H2O]+
-    AdductRecipe(ingredients={"proton": 1, "ammonium": -1}, charge=1, positive=True),  # [M+H-NH3]+
+    AdductRecipe(ingredients={"proton": 1, "ammonia": -1}, charge=1, positive=True),  # [M+H-NH3]+
     AdductRecipe(ingredients={"proton": 1}, charge=1, multimer_factor=2, positive=True),  # [2M+H]+
     AdductRecipe(ingredients={"proton": 1}, charge=1, multimer_factor=3, positive=True),  # [3M+H]+
 ]

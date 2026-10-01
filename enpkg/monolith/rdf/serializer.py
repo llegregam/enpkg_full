@@ -80,7 +80,7 @@ _VOCAB_PATH = Path(__file__).resolve().parents[3] / "docs" / "vocab" / "enpkg.tt
 
 # Ingredient name -> chemical symbol, for rendering emi:hasAdduct strings.
 _ADDUCT_SYMBOLS = {
-    "proton": "H", "ammonium": "NH4", "water": "H2O", "sodium": "Na",
+    "proton": "H", "ammonia": "NH3", "water": "H2O", "sodium": "Na",
     "magnesium": "Mg", "methanol": "CH3OH", "chlorine": "Cl", "potassium": "K",
     "calcium": "Ca", "acetonitrile": "ACN", "ethylamine": "EtNH2", "formic": "FA",
     "iron": "Fe", "acetic": "Hac", "isopropanol": "IsoProp", "dmso": "DMSO",
@@ -200,17 +200,31 @@ class AnalysisSerializer:
     @staticmethod
     def _format_adduct(recipe: AdductRecipe) -> str:
         """Render a recipe as a standard adduct string: "[M+H]+", "[2M+Na]+",
-        "[M+2K-H]+" — the value for emi:hasAdduct (cf. PSI-MS MS_1002813 form)."""
+        "[M+2K-H]+" — the value for emi:hasAdduct (cf. PSI-MS MS_1002813 form).
+
+        Ammonia added together with a proton is the ammonium ion: each ammonia a
+        proton accompanies is written NH4 and takes that proton with it, so
+        ``{proton: 1, ammonia: 1}`` is "[M+NH4]+" and ``{proton: 2, ammonia: 1}`` at
+        charge 2 is "[M+NH4+H]2+". Ammonia lost keeps NH3, as in "[M-NH3+H]+".
+        """
         def _int(x):
             return int(x) if float(x).is_integer() else x
         mult = _int(recipe.multimer_factor)
         core = f"{'' if mult == 1 else mult}M"
-        parts = []
+        ammonium = max(0, min(recipe.ingredients.get("ammonia", 0),
+                              recipe.ingredients.get("proton", 0)))
+        terms = []
         for name, count in sorted(recipe.ingredients.items()):
+            if name == "ammonia" and ammonium:
+                terms.append(("NH4", ammonium))
+            if name in ("ammonia", "proton"):
+                count -= ammonium
+            terms.append((_ADDUCT_SYMBOLS.get(name, name), count))
+        parts = []
+        for symbol, count in terms:
             c = _int(count)
             if c == 0:
                 continue
-            symbol = _ADDUCT_SYMBOLS.get(name, name)
             magnitude = "" if abs(c) == 1 else abs(c)
             parts.append(f"{'+' if c > 0 else '-'}{magnitude}{symbol}")
         charge = _int(recipe.charge)

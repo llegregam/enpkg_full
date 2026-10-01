@@ -55,7 +55,7 @@ Some everyday examples in **positive** mode:
 | Adduct notation | What happens to the molecule | Observed ion mass |
 |---|---|---|
 | `[M+H]⁺`  | gains one proton (H⁺)              | `M + 1.00728` |
-| `[M+Na]⁺` | gains one sodium ion               | `M + 22.98977` |
+| `[M+Na]⁺` | gains one sodium ion               | `M + 22.98922` |
 | `[M+NH₄]⁺`| gains one ammonium ion             | `M + 18.03383` |
 | `[M+2H]²⁺`| gains two protons, charge 2        | `(M + 2·1.00728) / 2` |
 | `[2M+H]⁺` | two copies of M cluster, gain H⁺   | `(2·M + 1.00728)` |
@@ -73,9 +73,12 @@ Three consequences matter for this module:
 In the code, each adduct form is an **`AdductRecipe`** — a small record of *which ions are
 added/removed* (`ingredients`), the *charge*, and a *multimer factor*. The full menu lives
 in [`adducts.py`](enpkg/monolith/enhancers/adducts.py): **40 positive recipes** and
-**15 negative recipes**. The exact masses of the building blocks (proton, sodium, ammonium,
+**15 negative recipes**. The exact masses of the building blocks (proton, sodium, ammonia,
 chloride, …) are tabulated in `ADDUCT_MASSES` in
-[`adduct_class.py`](enpkg/monolith/data/ms1_data_classes/adduct_class.py).
+[`adduct_class.py`](enpkg/monolith/data/ms1_data_classes/adduct_class.py). Charged building
+blocks carry the ion's mass (Na⁺, Ca²⁺, Cl⁻, …), one electron mass per charge away from the
+neutral atom's, so a recipe's m/z is exact. Ammonium appears as ammonia plus a proton:
+`[M+NH₄]⁺` is the recipe `{proton: 1, ammonia: 1}`.
 
 The single formula that turns a neutral mass into an observed ion m/z (the **forward**
 direction) is:
@@ -295,7 +298,7 @@ window (numbers computed directly from `ADDUCT_MASSES`):
 | Reference compound | Neutral mass M | Assumed adduct | Predicted ion m/z |
 |---|---|---|---|
 | Compound **A** | 300.000 | `[M+H]⁺`  | 300.000 + 1.00728 = **301.007** ✓ |
-| Compound **B** | 278.018 | `[M+Na]⁺` | 278.018 + 22.98977 = **301.008** ✓ |
+| Compound **B** | 278.018 | `[M+Na]⁺` | 278.018 + 22.98922 = **301.007** ✓ |
 | Compound **C** | 282.974 | `[M+NH₄]⁺`| 282.974 + 18.03383 = **301.008** ✓ |
 
 ```mermaid
@@ -303,7 +306,7 @@ window (numbers computed directly from `ADDUCT_MASSES`):
 flowchart TD
     OBS["Observed peak<br/>m/z 301.007, tol 10 ppm (pos)"] --> WIN["Match window<br/>[301.004, 301.010]"]
     WIN --> H["Compound A, M = 300.000<br/>as [M+H]⁺ → 301.007 ✓"]
-    WIN --> NA["Compound B, M = 278.018<br/>as [M+Na]⁺ → 301.008 ✓"]
+    WIN --> NA["Compound B, M = 278.018<br/>as [M+Na]⁺ → 301.007 ✓"]
     WIN --> NH["Compound C, M = 282.974<br/>as [M+NH₄]⁺ → 301.008 ✓"]
     H --> RES["3 competing ChemicalAdduct<br/>hypotheses attached to the spectrum<br/>(unranked)"]
     NA --> RES

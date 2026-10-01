@@ -8,6 +8,19 @@ from enpkg.monolith.data.ms1_data_classes.adduct_class import (
     AdductRecipe,
     ChemicalAdduct,
 )
+from enpkg.monolith.enhancers.adducts import NEGATIVE_RECIPES, POSITIVE_RECIPES
+from enpkg.monolith.enhancers.graph_adducts import GRAPH_NEGATIVE_RECIPES, GRAPH_POSITIVE_RECIPES
+
+# Monoisotopic atomic masses and the electron mass (Da), independent of ADDUCT_MASSES.
+_H, _N, _NA, _CA, _CL, _ELECTRON = (
+    1.00782503207, 14.0030740048, 22.9897692809, 39.96259098, 34.96885268, 0.00054857990946,
+)
+
+# Ionic charge of each charged ingredient; every other ingredient is neutral.
+_INGREDIENT_CHARGES = {
+    "proton": 1, "sodium": 1, "potassium": 1, "magnesium": 2, "calcium": 2, "iron": 2,
+    "chlorine": -1, "bromine": -1,
+}
 
 
 def test_protonation_mass():
@@ -29,6 +42,38 @@ def test_multiple_ingredients_sum():
     recipe = AdductRecipe(ingredients={"sodium": 1, "water": 1}, charge=1, positive=True)
     expected = 100.0 + ADDUCT_MASSES["sodium"] + ADDUCT_MASSES["water"]
     assert recipe.compute_adduct_mass(100.0) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("ingredients", "charge", "positive", "ion_mass_added"),
+    [
+        ({"proton": 1}, 1, True, _H - _ELECTRON),                              # [M+H]+
+        ({"sodium": 1}, 1, True, _NA - _ELECTRON),                             # [M+Na]+
+        ({"proton": 1, "ammonia": 1}, 1, True, _N + 4 * _H - _ELECTRON),       # [M+NH4]+
+        ({"proton": -1, "sodium": 2}, 1, True, 2 * _NA - _H - _ELECTRON),      # [M-H+2Na]+
+        ({"calcium": 1}, 2, True, _CA - 2 * _ELECTRON),                        # [M+Ca]2+
+        ({"chlorine": 1}, 1, False, _CL + _ELECTRON),                          # [M+Cl]-
+    ],
+)
+def test_ion_mz_matches_exact_masses(ingredients, charge, positive, ion_mass_added):
+    """The ion gains or loses electrons with its charge, so a sodium adduct adds Na+, not Na."""
+    recipe = AdductRecipe(ingredients=ingredients, charge=charge, positive=positive)
+
+    assert recipe.compute_adduct_mass(300.0) == pytest.approx(
+        (300.0 + ion_mass_added) / charge, abs=1e-5
+    )
+
+
+@pytest.mark.parametrize(
+    "recipe",
+    [*POSITIVE_RECIPES, *NEGATIVE_RECIPES, *GRAPH_POSITIVE_RECIPES, *GRAPH_NEGATIVE_RECIPES],
+)
+def test_recipe_charge_is_carried_by_its_ingredients(recipe):
+    """ADDUCT_MASSES holds ion masses, which give an exact m/z only if the recipe's
+    charge is the sum of its ingredients' ionic charges."""
+    carried = sum(_INGREDIENT_CHARGES.get(name, 0) * count for name, count in recipe.ingredients.items())
+
+    assert carried == (recipe.charge if recipe.positive else -recipe.charge)
 
 
 def test_compute_neutral_mass_inverts_compute_adduct_mass():

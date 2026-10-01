@@ -20,6 +20,31 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-01 — Adduct labels name ammonium correctly; charged ingredients carry ion masses
+
+- **Labels.** The ingredient named `ammonium` weighed 17.02655 Da, the mass of ammonia (NH3);
+  recipes add a proton to it, so the masses were right. The serializer printed it as `NH4`,
+  so the graph published `[M+NH4+H]+` for [M+NH4]+, `[M+NH4+2H]2+` (three charges on a 2+
+  ion) for [M+H+NH4]2+, `[2M+NH4+H]+` for [2M+NH4]+ and `[M-NH4+H]+` for the MS1 adduct
+  graph's [M+H-NH3]+, and the recipe nodes listed one ammonium beside one proton. The
+  ingredient is now `ammonia`, printed `NH3`, and each ammonia a proton accompanies is printed
+  `NH4` together with that proton: `[M+NH4]+`, `[M+NH4+H]2+`, `[2M+NH4]+`, `[M-NH3+H]+`.
+  Every other label is unchanged, and so are masses and plausibility scores. The five
+  recipes' URIs change, since recipe URIs are hashed from ingredient names; graphs serialized
+  earlier need regenerating to agree.
+- **Masses.** Seven ingredients carried the neutral atom's mass while every recipe uses them
+  as ions: each recipe's charge is the sum of its ingredients' ionic charges, as in
+  [M-H+Mg]+ (−1 + 2), which a test now checks for every recipe. Sodium and potassium were
+  0.55 mDa too heavy, magnesium, calcium and iron 1.10 mDa too heavy, chlorine and bromine
+  0.55 mDa too light; [M+Na]+ at m/z 200 was computed 2.7 ppm too heavy, against the
+  ±10 ppm window. The table now holds the ions' masses (Na+, K+, Mg2+, Ca2+, Fe2+, Cl−,
+  Br−). The proton and the neutral molecules were already right to 0.005 mDa. The tests
+  compute the expected m/z from atomic masses and the electron mass, not from the table.
+- **Effect on the fixture**, measured by running the MS1 adduct graph and MS1 with each
+  table: the MS1 hypotheses change on 374 of 660 features, 563 lost and 518 gained out of
+  10,252, mostly metal and multiply charged forms; two features change from anchor to
+  singleton in the adduct graph.
+
 ### 2026-10-01 — One MS2 annotation per structure and feature
 
 - **The problem.** The MS2 enhancer made one annotation per matching library spectrum, but

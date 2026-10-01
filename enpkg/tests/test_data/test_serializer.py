@@ -605,7 +605,7 @@ def test_no_ms2_keeps_full_topk_ms1(make_analysis, make_adduct, make_lotus, make
     spectrum = analysis.spectra[0]
     # Distinct recipes -> distinct adduct URIs. (The key is the recipe hash *plus* the
     # candidate group's formula; here the recipes are what differ.)
-    ingredients = [{"proton": 1}, {"sodium": 1}, {"potassium": 1}, {"ammonium": 1}]
+    ingredients = [{"proton": 1}, {"sodium": 1}, {"potassium": 1}, {"ammonia": 1}]
     spectrum.ms1_annotations = [
         make_adduct(
             lotus=[make_lotus(structure_inchikey=f"{_short_ik(i)}-UHFFFAOYSA-N")],
@@ -623,6 +623,24 @@ def test_no_ms2_keeps_full_topk_ms1(make_analysis, make_adduct, make_lotus, make
     adducts = set(g.subjects(RDF.type, ENPKG.AdductAnnotation))
     assert len(adducts) == 2
     assert list(g.subjects(ENPKG.hasCorrespondingAdduct, None)) == []
+
+
+@pytest.mark.parametrize(
+    ("ingredients", "charge", "multimer_factor", "label"),
+    [
+        ({"proton": 1, "ammonia": 1}, 1, 1, "[M+NH4]+"),
+        ({"proton": 2, "ammonia": 1}, 2, 1, "[M+NH4+H]2+"),
+        ({"proton": 1, "ammonia": 1}, 1, 2, "[2M+NH4]+"),
+        ({"proton": 1, "ammonia": -1}, 1, 1, "[M-NH3+H]+"),
+        ({"proton": 1, "water": -1}, 1, 1, "[M+H-H2O]+"),
+        ({"proton": -1, "sodium": 2}, 1, 1, "[M-H+2Na]+"),
+    ],
+)
+def test_adduct_label(make_recipe, ingredients, charge, multimer_factor, label):
+    """Ammonia accompanied by a proton is the ammonium ion, written NH4."""
+    recipe = make_recipe(ingredients=ingredients, charge=charge, multimer_factor=multimer_factor)
+
+    assert AnalysisSerializer._format_adduct(recipe) == label
 
 
 def test_same_recipe_different_compounds_are_two_adduct_nodes(
