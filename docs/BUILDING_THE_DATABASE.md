@@ -112,6 +112,14 @@ everything unrecognised is preserved in `metadata_json` and reported at import. 
 deliberate — a new FragHub release can add fields without breaking ingestion, and the
 addition is still visible to you.
 
+**NPClassifier labels are restored on import.** FragHub takes its NPClassifier labels from an
+ontology table it ships, in which two text errors corrupt the labels of about 9% of its
+compounds: `Ligs` instead of `Lignans`, or `Carotenoids (C40|β-β)` instead of
+`Carotenoids (C40, β-β)`.
+The import restores them from the NPClassifier vocabulary and logs each repair with the
+number of spectra it touched. The evidence, and the issue for FragHub, are in
+[upstream/FRAGHUB_NPCLASSIFIER_LABELS.md](upstream/FRAGHUB_NPCLASSIFIER_LABELS.md).
+
 ### 4.2 Check before you commit
 
 `--dry-run` validates the header and resolves twenty rows without writing anything. It is
@@ -253,6 +261,11 @@ LOTUS is present but no library has been imported. §4.
 **`… mixes 2 ionization modes` / `mixes predicted and experimental spectra`**
 
 The CSV is not a single FragHub bucket. Export per bucket and import each separately.
+
+**NPClassifier labels such as `Ligs` or `Flavas` in `library_spectra`**
+
+The library was imported without the label repair described in §4.1. Re-import it with
+`--replace` (§6); nothing else needs rebuilding.
 
 **Only want to run without MS2 for now?**
 

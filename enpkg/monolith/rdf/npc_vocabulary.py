@@ -95,6 +95,17 @@ class NpcVocabulary:
     def __len__(self) -> int:
         return len(self._terms)
 
+    def labels(self, rank: str) -> frozenset[str]:
+        """Every vendored label at ``rank``, spelled as EMI spells it.
+
+        Args:
+            rank: One of :data:`RANKS`.
+        """
+        if rank not in RANKS:
+            raise ValueError(f"Unknown NPClassifier rank {rank!r}; expected one of {RANKS}.")
+        rank_class = NPC[rank]
+        return frozenset(label for cls, label, _ in self._terms.values() if cls == rank_class)
+
     def resolve(self, rank: str, label: str) -> URIRef:
         """Return the ``npc:`` IRI for ``label`` at ``rank``, minting one if unvendored.
 

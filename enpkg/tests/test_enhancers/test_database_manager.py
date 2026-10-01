@@ -4,6 +4,8 @@ Every fixture is a small inline FragHub-shaped TSV written into ``tmp_path``, so
 none of these tests needs the multi-GB export or a prebuilt database.
 """
 
+import logging
+
 import numpy as np
 import pytest
 from matchms import Spectrum, calculate_scores
@@ -181,6 +183,34 @@ class TestFragHubImport:
         ).fetchall()}
         assert "idx_library_spectra_precursor_mz" in indexes
         assert "idx_library_spectra_short_inchikey" in indexes
+
+    def test_corrupted_npclassifier_labels_are_restored(self, db, tmp_path, caplog):
+        # FragHub's ontology table deletes "nan"/"none" inside labels and splits labels
+        # at ", "; see enpkg.monolith.loaders.spectral_libraries.npc_labels.
+        columns = [*_COLUMNS, "NPCLASS_SUPERCLASS", "NPCLASS_CLASS"]
+
+        def row(pathway, superclass, klass):
+            return [*_row(NPCLASS_PATHWAY=pathway), superclass, klass]
+
+        path = _write_library(tmp_path, [
+            row("Shikimates and Phenylpropanoids", "Ligs", "Furofuranoid ligs"),
+            row("Terpenoids", "Triterpenoids", "Lanostane|Tirucallane and Euphane triterpenoids"),
+            row("Alkaloids", "Tryptophan alkaloids", "Corythe type"),
+        ], columns=columns)
+
+        with caplog.at_level(logging.WARNING):
+            library_id = _import(db, path)
+
+        stored = db.connection.execute(
+            "SELECT npc_pathway, npc_superclass, npc_class FROM library_spectra "
+            "WHERE library_id = ? ORDER BY id", [library_id],
+        ).fetchall()
+        assert stored == [
+            ("Shikimates and Phenylpropanoids", "Lignans", "Furofuranoid lignans"),
+            ("Terpenoids", "Triterpenoids", "Lanostane, Tirucallane and Euphane triterpenoids"),
+            ("Alkaloids", "Tryptophan alkaloids", "Corynanthe type"),
+        ]
+        assert "'Ligs' -> 'Lignans'" in caplog.text
 
 
 class TestColumnContract:

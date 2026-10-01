@@ -20,6 +20,46 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-01 — FragHub's NPClassifier labels are restored on import
+
+- **The problem.** FragHub copies its NPClassifier labels from an ontology table it ships
+  (`datas/ontologies_datas/ontologies_dict_part_*.csv`). In that table the substrings `nan`
+  and `none` are deleted inside labels (`Lignans` → `Ligs`, `Flavanones` → `Flavas`), and
+  labels containing `", "` are split into separate `|`-separated labels
+  (`Carotenoids (C40, β-β)` → `Carotenoids (C40|β-β)`). 88,825 of the table's 1,001,751
+  InChIKeys (8.9%) are affected; in our `FRAGHUB_POS_LC:2026.03` export, 103,210 label
+  occurrences.
+- **Where it comes from**, traced one step at a time: not our importer, which compares
+  placeholders as whole values; present verbatim in the export file; copied unchanged by
+  FragHub's `ontologies_completion()`; present in both versions of the table in FragHub's
+  history (`7cb091f`, 2024-12-09, and `1ea0796`, 2025-09-01). The program that generated
+  the table is not in FragHub's repository, so the cause is inferred, not verified: both
+  rules match a list-to-text conversion that removes `nan`/`None` by substring replacement
+  and joins then splits on `", "`.
+- **The repair** (`loaders/spectral_libraries/npc_labels.py`) rewrites every term of the
+  vendored NPClassifier vocabulary by the same two rules and replaces any run of
+  neighbouring labels that equals a rewritten form with the term. It never replaces a run
+  containing a genuine term, leaves a fragment whose partner is missing, and skips a form
+  two terms share. It runs after the `INSERT` on distinct cell values (one `GROUP BY` per
+  column and an `UPDATE` joined on a small table), so memory stays flat, and it logs every
+  repair with the number of spectra it touched. `preview()` shows restored labels.
+- **Vocabulary.** The repair uses the vendored EMI vocabulary rather than LOTUS's NPC column
+  names. EMI is always in the repository, whereas `_meta_columns` exists only if LOTUS was
+  imported into the same database. EMI recognises all 61 corrupted labels in our export,
+  plus `Purine nucleos(t)ides`, which LOTUS's columns lack. It lacks two genuine
+  superclasses, `Alkylresorcinols` and `Sphingolipids`, which therefore pass through
+  unrecognised. NPClassifier's own `index_v1.json` has all of them; the repair proposed to
+  FragHub uses it. `NpcVocabulary.labels(rank)` is new, for this.
+- **Measured on our library** (read-only simulation over its distinct cells): all 16,394
+  superclass and 75,483 class label occurrences are restored (74,834 spectra), and no class
+  label is left outside the vocabulary. A database keeps the corrupted labels until its
+  library is re-imported.
+- Nothing reads these labels yet: library-only annotations carry them but neither the
+  reweighting nor the serializer uses them. The repair makes them correct before a consumer
+  exists, for every user who imports a FragHub export.
+- The issue for FragHub, and a repair script tested on a copy of their table, are in
+  `docs/upstream/FRAGHUB_NPCLASSIFIER_LABELS.md`.
+
 ### 2026-09-30 — MS2 annotates library matches that LOTUS does not know
 
 - **The problem.** `Ms2Enhancer._annotate` discarded any spectral-library match whose short
