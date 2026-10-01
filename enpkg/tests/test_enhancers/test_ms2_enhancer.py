@@ -9,6 +9,7 @@ import pytest
 from matchms import Spectrum
 
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
+from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
 from enpkg.monolith.loaders.analysis_loader import AnalysisLoader
 from enpkg.monolith.loaders.lotus_store import LotusStore
@@ -250,6 +251,121 @@ class TestMalformedInchikeyReport:
         assert query.ms2_annotations == []
         assert "malformed InChIKey" in caplog.text
         assert "'CCCCCCCCCCCCCC'" in caplog.text
+
+
+_PEAKS = np.array([100.0, 120.0, 140.0, 160.0, 180.0, 200.0, 220.0, 240.0])
+_INTENSITIES = np.linspace(0.3, 1.0, _PEAKS.size)
+
+
+def _library_candidate(ms2_enhancer: Ms2Enhancer, intensities, **overrides) -> LibraryCandidate:
+    """A candidate on the query's eight peaks; ``intensities`` sets its cosine."""
+    library_id = ms2_enhancer.library_store.libraries_for_mode("pos")[0].library_id
+    spectrum = Spectrum(mz=_PEAKS, intensities=intensities, metadata={"precursor_mz": 300.0})
+    return _candidate(spectrum=spectrum, library_id=library_id, **overrides)
+
+
+def _enhance_one_feature(ms2_enhancer, make_analysis, make_spectrum, monkeypatch, candidates):
+    """Run ``enhance`` on one feature whose candidates are ``candidates``, in that order."""
+    query = make_spectrum(mz=_PEAKS, intensities=_INTENSITIES, precursor_mz=300.0)
+    analysis = make_analysis(n_spectra=1).model_copy(update={"spectra": (query,)})
+    monkeypatch.setattr(
+        ms2_enhancer.library_store,
+        "candidates_for",
+        lambda precursor_mzs, mode, tolerance: (
+            candidates, [(0, index) for index in range(len(candidates))]
+        ),
+    )
+    ms2_enhancer.enhance(analysis)
+    return query
+
+
+def _annotation(score: float, n_matched_peaks: int, library: str = "LIB:1.0"):
+    zeros = np.zeros(2, dtype=np.float32)
+    return MS2ChemicalAnnotation(
+        source=library, queried_against=library, short_inchikey=_SHORT_IK,
+        score=score, n_matched_peaks=n_matched_peaks,
+        pathway_scores=zeros, superclass_scores=zeros, class_scores=zeros, organisms=[],
+    )
+
+
+class TestOneAnnotationPerStructure:
+    """A structure matched on one feature through several library spectra is annotated once."""
+
+    def test_the_best_scoring_spectrum_is_kept(
+        self, ms2_enhancer: Ms2Enhancer, make_analysis, make_spectrum, monkeypatch
+    ) -> None:
+        weaker = _library_candidate(ms2_enhancer, _INTENSITIES[::-1], compound_name="weaker")
+        stronger = _library_candidate(ms2_enhancer, _INTENSITIES, compound_name="stronger")
+
+        query = _enhance_one_feature(
+            ms2_enhancer, make_analysis, make_spectrum, monkeypatch, [weaker, stronger]
+        )
+
+        assert len(query.ms2_annotations) == 1
+        annotation = query.ms2_annotations[0]
+        assert annotation.score == pytest.approx(1.0)
+        assert annotation.library_structure.compound_name == "stronger"
+
+    def test_on_a_full_tie_the_first_listed_spectrum_is_kept(
+        self, ms2_enhancer: Ms2Enhancer, make_analysis, make_spectrum, monkeypatch
+    ) -> None:
+        """Candidates arrive ordered by library spectrum id, so the lowest id wins."""
+        first = _library_candidate(ms2_enhancer, _INTENSITIES, compound_name="first")
+        second = _library_candidate(ms2_enhancer, _INTENSITIES, compound_name="second")
+
+        query = _enhance_one_feature(
+            ms2_enhancer, make_analysis, make_spectrum, monkeypatch, [first, second]
+        )
+
+        assert [a.library_structure.compound_name for a in query.ms2_annotations] == ["first"]
+
+    def test_different_structures_stay_apart(
+        self, ms2_enhancer: Ms2Enhancer, make_analysis, make_spectrum, monkeypatch
+    ) -> None:
+        one = _library_candidate(ms2_enhancer, _INTENSITIES)
+        other = _library_candidate(
+            ms2_enhancer, _INTENSITIES,
+            inchikey="OTHERSTRUCTURE-UHFFFAOYSA-N", short_inchikey="OTHERSTRUCTURE",
+        )
+
+        query = _enhance_one_feature(
+            ms2_enhancer, make_analysis, make_spectrum, monkeypatch, [one, other]
+        )
+
+        assert [a.short_inchikey for a in query.ms2_annotations] == [_SHORT_IK, "OTHERSTRUCTURE"]
+
+    def test_merged_matches_are_reported(
+        self, ms2_enhancer: Ms2Enhancer, make_analysis, make_spectrum, monkeypatch, caplog
+    ) -> None:
+        candidates = [
+            _library_candidate(ms2_enhancer, _INTENSITIES),
+            _library_candidate(ms2_enhancer, _INTENSITIES[::-1]),
+        ]
+
+        with caplog.at_level(logging.INFO):
+            _enhance_one_feature(
+                ms2_enhancer, make_analysis, make_spectrum, monkeypatch, candidates
+            )
+
+        assert "added 1 annotations (0 LOTUS-backed, 1 library-only)" in caplog.text
+        assert "1 further scored matches named a structure already matched" in caplog.text
+
+    def test_more_matched_peaks_break_a_score_tie(self, make_spectrum) -> None:
+        spectrum = make_spectrum()
+        spectrum.ms2_annotations = [_annotation(0.8, 6), _annotation(0.8, 9), _annotation(0.7, 12)]
+
+        dropped = Ms2Enhancer._keep_best_match_per_structure(spectrum)
+
+        assert [a.n_matched_peaks for a in spectrum.ms2_annotations] == [9]
+        assert sorted(a.n_matched_peaks for a in dropped) == [6, 12]
+
+    def test_each_library_keeps_its_own_match(self, make_spectrum) -> None:
+        """The graph keys an MS2 annotation on library and structure, so both stay."""
+        spectrum = make_spectrum()
+        spectrum.ms2_annotations = [_annotation(0.8, 6, "A:1"), _annotation(0.9, 6, "B:1")]
+
+        assert Ms2Enhancer._keep_best_match_per_structure(spectrum) == []
+        assert len(spectrum.ms2_annotations) == 2
 
 
 class TestMs2Enhancer:

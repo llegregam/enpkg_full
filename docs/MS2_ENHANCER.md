@@ -179,7 +179,15 @@ it did before this feature existed.
 ## 5. What comes out
 
 Every accepted match becomes an **`MS2ChemicalAnnotation`** appended to the feature's
-`ms2_annotations` list. It carries:
+`ms2_annotations` list. A library often holds several spectra of one compound (collision
+energies, instruments, or the same spectrum supplied by two source collections, as GNPS
+redistributes MSnLib), so one feature can match one structure many times: on the fixture
+dataset, 1,569 LOTUS-backed matches named only 113 distinct structure–feature pairs. The
+feature therefore keeps **one annotation per library and structure** (2D InChIKey), from its
+best-scoring spectrum: highest cosine, then most matched peaks, then the lowest library
+spectrum id. That is also the granularity of the graph, which keys an MS2 annotation node on
+feature, library and 2D InChIKey, and it makes the reweighting count each structure once. The
+run log reports how many scored matches were merged this way. Each annotation carries:
 
 - the matched structure's **short InChIKey**,
 - the **cosine score** and **number of matched peaks**,

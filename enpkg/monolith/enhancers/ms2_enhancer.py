@@ -216,6 +216,37 @@ class Ms2Enhancer(Enhancer):
             classyfire_subclass=candidate.classyfire_subclass,
         )
 
+    @staticmethod
+    def _keep_best_match_per_structure(
+        spectrum: AnnotatedSpectrum,
+    ) -> list[MS2ChemicalAnnotation]:
+        """Reduce the spectrum's MS2 annotations to one per library and structure.
+
+        A feature can match one structure through several library spectra: several
+        spectra of one compound, or one spectrum that two source collections both
+        supplied. All of them would describe the same graph node, which is keyed on
+        library and 2D InChIKey, and the reweighting would count the structure once per
+        spectrum. Only the best is kept: highest score, then most matched peaks, then
+        the earliest in the list. Each structure stays where it first appeared.
+
+        Returns:
+            The annotations dropped.
+        """
+        best: dict[tuple[Optional[str], str], MS2ChemicalAnnotation] = {}
+        for annotation in spectrum.ms2_annotations:
+            key = (annotation.queried_against, annotation.short_inchikey)
+            kept = best.get(key)
+            if kept is None or (annotation.score, annotation.n_matched_peaks) > (
+                kept.score, kept.n_matched_peaks
+            ):
+                best[key] = annotation
+        if len(best) == len(spectrum.ms2_annotations):
+            return []
+        kept_ids = {id(annotation) for annotation in best.values()}
+        dropped = [a for a in spectrum.ms2_annotations if id(a) not in kept_ids]
+        spectrum.ms2_annotations = list(best.values())
+        return dropped
+
     def enhance(self, analysis: Analysis, chunk_size: int = 1000) -> Analysis:
         """Add MS2 chemical annotations to each spectrum via two-stage matching.
 
@@ -232,7 +263,9 @@ class Ms2Enhancer(Enhancer):
         candidate set stays bounded. Annotations passing both ``min_score`` and
         ``min_peaks`` are appended in place to ``spectrum.ms2_annotations``, whether
         or not LOTUS knows the matched structure — see :meth:`_annotate` for what
-        each kind carries.
+        each kind carries. Each feature then keeps one annotation per library and
+        structure, from its best-scoring library spectrum
+        (:meth:`_keep_best_match_per_structure`).
         """
         # Gate on the MS1 adduct-graph roles: spectral libraries are almost all
         # base-ion ([M+H]+/[M-H]-), so resolved non-base adducts are skipped.
@@ -283,6 +316,7 @@ class Ms2Enhancer(Enhancer):
                 )
 
         outcomes: Counter[str] = Counter()
+        merged: Counter[str] = Counter()
         malformed_inchikeys: set[str] = set()
         for min_range in trange(
             0,
@@ -335,10 +369,22 @@ class Ms2Enhancer(Enhancer):
                     if outcome == "malformed_inchikey":
                         malformed_inchikeys.add(candidate.inchikey)
 
+            for spectrum in spectra_chunk:
+                for annotation in self._keep_best_match_per_structure(spectrum):
+                    merged["lotus" if annotation.source == "Lotus" else "library"] += 1
+
+        lotus_backed = outcomes["lotus"] - merged["lotus"]
+        library_only = outcomes["library"] - merged["library"]
         self.logger.info(
             "MS2 enrichment added %d annotations (%d LOTUS-backed, %d library-only)",
-            outcomes["lotus"] + outcomes["library"], outcomes["lotus"], outcomes["library"],
+            lotus_backed + library_only, lotus_backed, library_only,
         )
+        if merged:
+            self.logger.info(
+                "%d further scored matches named a structure already matched on the same "
+                "feature; each structure keeps its best-scoring match",
+                merged.total(),
+            )
         if outcomes["no_hit"]:
             self.logger.warning(
                 "%d scored matches named no structure and were skipped", outcomes["no_hit"]

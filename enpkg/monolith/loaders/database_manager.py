@@ -660,7 +660,8 @@ class DatabaseManager:
             ``(rows, pairs)`` — the distinct candidate rows as column-keyed dicts,
             and ``(query_index, row_index)`` pairs naming which query each candidate
             was retrieved for. A candidate matching several queries appears once in
-            ``rows`` and once per query in ``pairs``.
+            ``rows`` and once per query in ``pairs``. ``pairs`` is ordered by query,
+            then by library spectrum id.
         """
         if len(precursor_mzs) == 0:
             return [], []
@@ -686,7 +687,8 @@ class DatabaseManager:
             "SELECT q.query_idx, s.id "
             "FROM queries q JOIN library_spectra s "
             "  ON s.precursor_mz BETWEEN q.mz - ? AND q.mz + ? "
-            f"WHERE s.mode = ?{library_filter}"
+            f"WHERE s.mode = ?{library_filter} "
+            "ORDER BY q.query_idx, s.id"
         )
         id_pairs = self._conn.execute(pairs_sql, params).fetchall()
         if not id_pairs:

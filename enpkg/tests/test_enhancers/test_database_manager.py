@@ -306,6 +306,17 @@ class TestCandidateRetrieval:
         assert len(rows) == 1
         assert rows[0]["library_id"] == id_a
 
+    def test_pairs_are_ordered_by_query_then_spectrum_id(self, db, tmp_path):
+        """The MS2 enhancer keeps the first listed of two equally good spectra of one
+        structure, so the order must not depend on how DuckDB executes the join."""
+        _import(db, _write_library(
+            tmp_path, [_row(PRECURSORMZ=f"{100 + i * 0.001:.3f}") for i in range(30)]
+        ))
+        rows, pairs = db.get_candidate_spectra([100.02, 100.0, 100.01], "pos", 0.05)
+        order = [(query, rows[index]["id"]) for query, index in pairs]
+        assert len(order) == 90
+        assert order == sorted(order)
+
     def test_a_candidate_shared_by_two_queries_is_fetched_once(self, db, tmp_path):
         _import(db, _write_library(tmp_path, [_row(PRECURSORMZ="100.0")]))
         rows, pairs = db.get_candidate_spectra([99.995, 100.005], "pos", 0.01)

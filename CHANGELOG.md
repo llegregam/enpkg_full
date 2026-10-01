@@ -20,6 +20,38 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-01 — One MS2 annotation per structure and feature
+
+- **The problem.** The MS2 enhancer made one annotation per matching library spectrum, but
+  the graph keys an MS2 annotation node on feature, library and 2D InChIKey. A library often
+  holds several spectra of one compound (collision energies, instruments), and FragHub's
+  export holds the MSnLib collections twice, since GNPS redistributes them. On the fixture,
+  1,569 LOTUS-backed matches named 113 distinct structure–feature pairs, one structure 331
+  times on one feature, and 249 library-only matches named 91. Three consequences: copies of
+  one structure took several of a feature's `top_k_ms2` slots; the node they shared received
+  one `enpkg:annotationRank` per copy (57 nodes had several), while only the first copy's
+  score was written; and the MS2 reweighting, which sums over a feature's matches, weighted a
+  structure by its number of library spectra.
+- **Correction.** The 2026-09-30 entry's volume figures (1,569 → 1,818 annotations, 1.16×)
+  counted matches, not structures. Counted per structure and feature, library-only matches
+  add 91 to 113.
+- **The change.** Once a chunk is scored, each feature keeps one annotation per library and
+  2D InChIKey: highest cosine, then most matched peaks, then the lowest library spectrum id.
+  The reduction runs after `_annotate`, so every scored match is still classified and the
+  malformed-InChIKey report still names every malformed value; collapsing before `_annotate`
+  would have merged distinct malformed strings that share their first 14 characters. The run
+  log reports how many matches were merged.
+- **Candidate order.** `get_candidate_spectra` orders its pairs by query, then library
+  spectrum id, so the last tie-break does not rest on how DuckDB executes the join. The order
+  was not observed to vary. The test that pins it also passes without the `ORDER BY` at test
+  scale, so it records the contract rather than catching its removal.
+- **Effect on the fixture**, measured from one run with and one without the reduction: the
+  graph's MS2 nodes go from 96 to 167 on the same 66 features, and none carries several
+  ranks; 18 features now show 4 or 5 distinct structures, where none showed more than 3. MS2
+  propagated scores change on 362–376 features, by up to 0.25; MS1 scores do not change. The
+  emitted MS2 matches change on 31 of the 66 features, the top-ranked one on 1; the emitted
+  MS1 hypotheses change on 4 features, through the MS1–MS2 coupling.
+
 ### 2026-10-01 — Reweighting gives the same scores on every run
 
 - **The problem.** Two runs of unchanged code gave propagated NPC scores differing by up to
