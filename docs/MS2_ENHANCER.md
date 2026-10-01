@@ -82,8 +82,21 @@ flowchart LR
 
 A match produces **no annotation** when the library row names no structure, or when LOTUS does
 not know the structure and its InChIKey is not well formed (`XXXXXXXXXXXXXX-XXXXXXXXXX-X`, 14,
-10 and 1 uppercase letters). The run log reports both counts and lists the malformed values
-found, so they can be traced back to the library export.
+10 and 1 uppercase letters), or when LOTUS does not know the structure and the match is weak
+(below). The run log reports each count and lists the malformed values found, so they can be
+traced back to the library export.
+
+**Library-only matches need a stronger score.** A LOTUS-backed match is weighed against the
+sample's taxonomy through the organisms LOTUS reports for its structure; a library-only match
+has no such evidence, and general-purpose libraries hold drugs and screening compounds as well
+as natural products. A library-only match is therefore annotated only when its cosine reaches
+`library_only_min_score` (a spectral-matching setting in the run setup, default 0.7,
+inclusive), not merely `min_score`. This is not a taxonomic check: it asks for stronger
+spectral evidence where no taxonomic evidence exists. A high-scoring match to a compound that
+is not a natural product still passes, which is correct for a contaminant such as a plastic
+additive. Setting it to `min_score` annotates every library-only match that clears `min_score`.
+The 0.7 default is the same provisional value as the serializer's `ms2_coupling_min_score`;
+§6 summarises the literature on choosing a cosine threshold.
 
 How much each kind matters depends on the library. For `FRAGHUB_POS_LC:2026.03`
 (1,450,368 spectra):
@@ -135,6 +148,9 @@ thresholds:
 
 - cosine score above `min_score` (default 0.20), **and**
 - number of matched peaks above `min_peaks` (default 6).
+
+A match whose structure LOTUS does not know must also reach `library_only_min_score`
+(default 0.7; §2).
 
 Features are processed in **chunks** (default 1000) against the full library so memory stays
 bounded regardless of dataset size.

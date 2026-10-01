@@ -41,6 +41,16 @@ class SpectralMatchParams(BaseModel):
         ge=1,
         description="Minimum number of matching peaks required"
     )
+    library_only_min_score: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Minimum spectral similarity for annotating a match whose structure is "
+        "absent from the LOTUS database (inclusive). A LOTUS-backed match is weighted by the "
+        "organisms LOTUS reports for its structure; a library-only match has no such "
+        "evidence, so it needs a stronger spectral match. Set it to min_score to annotate "
+        "every library-only match that clears min_score."
+    )
     method: Literal["cosine_greedy", "cosine_hungarian"] = Field(
         default="cosine_greedy",
         description="Spectral similarity method to use ('cosine_greedy' or 'cosine_hungarian')"

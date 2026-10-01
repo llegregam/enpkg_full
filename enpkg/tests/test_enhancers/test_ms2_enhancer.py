@@ -207,6 +207,62 @@ class TestAnnotate:
         assert outcome == "no_hit"
         assert spectrum.ms2_annotations == []
 
+    def test_weak_library_only_match_is_not_annotated(
+        self, ms2_enhancer: Ms2Enhancer, make_spectrum, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(ms2_enhancer, "_lotus_by_short_inchikey", {})
+        params = ms2_enhancer.configuration.spectral_match_params
+        monkeypatch.setattr(params, "library_only_min_score", 0.7)
+        spectrum = make_spectrum()
+
+        outcome = ms2_enhancer._annotate(spectrum, _candidate(), "LIB:1.0", 0.69, 7)
+
+        assert outcome == "weak_library_only"
+        assert spectrum.ms2_annotations == []
+
+    @pytest.mark.parametrize(("floor", "annotated"), [(0.7, True), (0.71, False), (0.2, True)])
+    def test_library_only_floor_is_inclusive_and_configurable(
+        self, ms2_enhancer: Ms2Enhancer, make_spectrum, monkeypatch, floor, annotated
+    ) -> None:
+        monkeypatch.setattr(ms2_enhancer, "_lotus_by_short_inchikey", {})
+        params = ms2_enhancer.configuration.spectral_match_params
+        monkeypatch.setattr(params, "library_only_min_score", floor)
+        spectrum = make_spectrum()
+
+        ms2_enhancer._annotate(spectrum, _candidate(), "LIB:1.0", 0.7, 7)
+
+        assert bool(spectrum.ms2_annotations) is annotated
+
+    def test_lotus_backed_match_is_not_subject_to_the_library_only_floor(
+        self, ms2_enhancer: Ms2Enhancer, make_spectrum, make_lotus, monkeypatch
+    ) -> None:
+        lotus = make_lotus(structure_inchikey=_FULL_IK)
+        monkeypatch.setattr(ms2_enhancer, "_lotus_by_short_inchikey", {_SHORT_IK: [lotus]})
+        params = ms2_enhancer.configuration.spectral_match_params
+        monkeypatch.setattr(params, "library_only_min_score", 0.7)
+        spectrum = make_spectrum()
+
+        outcome = ms2_enhancer._annotate(spectrum, _candidate(), "LIB:1.0", 0.3, 7)
+
+        assert outcome == "lotus"
+
+    def test_malformed_inchikey_is_reported_whatever_the_score(
+        self, ms2_enhancer: Ms2Enhancer, make_spectrum, monkeypatch
+    ) -> None:
+        """The InChIKey is checked before the floor, so the report stays complete."""
+        monkeypatch.setattr(ms2_enhancer, "_lotus_by_short_inchikey", {})
+        params = ms2_enhancer.configuration.spectral_match_params
+        monkeypatch.setattr(params, "library_only_min_score", 0.7)
+        spectrum = make_spectrum()
+
+        outcome = ms2_enhancer._annotate(
+            spectrum,
+            _candidate(inchikey="CCCCCCCCCCCCCC", short_inchikey="CCCCCCCCCCCCCC"),
+            "LIB:1.0", 0.3, 7,
+        )
+
+        assert outcome == "malformed_inchikey"
+
     def test_candidate_naming_no_structure_is_not_annotated(
         self, ms2_enhancer: Ms2Enhancer, make_spectrum, monkeypatch
     ) -> None:

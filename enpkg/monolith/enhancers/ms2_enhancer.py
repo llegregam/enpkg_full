@@ -132,6 +132,11 @@ class Ms2Enhancer(Enhancer):
           a well-formed InChIKey. The full key would become the structure node's
           identity and the 2D key is derived from it, so neither can be trusted and
           no annotation is added. ``enhance`` reports the offending strings.
+        * ``"weak_library_only"`` — LOTUS does not know it and its score is below
+          ``library_only_min_score``. Without organisms to weigh it, a library-only
+          match is annotated only on strong spectral evidence, so no annotation is
+          added. The InChIKey is checked first, so a malformed one is reported
+          whatever the score.
         """
         if not candidate.short_inchikey:
             return "no_hit"
@@ -176,6 +181,8 @@ class Ms2Enhancer(Enhancer):
             return "no_hit"
         if not _INCHIKEY.fullmatch(inchikey):
             return "malformed_inchikey"
+        if score < self.configuration.spectral_match_params.library_only_min_score:
+            return "weak_library_only"
         spectrum.add_ms2_annotation(
             MS2ChemicalAnnotation(
                 # `source` names where the structure detail came from; the serializer
@@ -384,6 +391,13 @@ class Ms2Enhancer(Enhancer):
                 "%d further scored matches named a structure already matched on the same "
                 "feature; each structure keeps its best-scoring match",
                 merged.total(),
+            )
+        if outcomes["weak_library_only"]:
+            self.logger.info(
+                "%d scored library-only matches were below library_only_min_score (%.2f) "
+                "and were not annotated",
+                outcomes["weak_library_only"],
+                self.configuration.spectral_match_params.library_only_min_score,
             )
         if outcomes["no_hit"]:
             self.logger.warning(

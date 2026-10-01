@@ -20,6 +20,42 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-01 — Library-only MS2 matches need a stronger score
+
+- **The problem.** A LOTUS-backed MS2 match is weighed against the sample's taxonomy through
+  the organisms LOTUS reports for its structure. A library-only match names a structure LOTUS
+  does not know, so nothing weighs it, and general-purpose libraries hold drugs and screening
+  compounds as well as natural products. On the fixture, an *Arnica montana* extract, feature
+  105 was annotated with simurosertib (a kinase inhibitor, cosine 0.69), levosulpiride (an
+  antipsychotic, 0.61), tepraloxydim (a herbicide, 0.55) and two screening compounds.
+- **Alternatives measured** on the fixture's 91 library-only structure–feature pairs:
+  - *Class-level taxonomy*, the closest LOTUS organism producing any compound of the
+    structure's chemical class: 67 of the 91 have neither an NPClassifier nor a ClassyFire
+    class, and the 18 with an NPClassifier class all score at class level (Magnoliopsida) or
+    closer. Oxybutynin, an antimuscarinic drug classified "Hydrocarbons", scores as if
+    reported from *Arnica montana* itself. It does not discriminate.
+  - *Source collection*: 19 of the 91 come from MSnLib's drug and screening collections, but
+    GNPS redistributes those, so FragHub holds each such spectrum twice and a filter on the
+    source file would have to catch both copies.
+  - *Natural-product-likeness* (Ertl et al. 2008), computed from the structure, separates
+    synthetic compounds from natural products, but needs RDKit, which is not a dependency.
+- **The change.** A library-only match is annotated only when its cosine reaches the new
+  `SpectralMatchParams.library_only_min_score` (default 0.7, inclusive), which the run setup
+  shows under the spectral-matching settings. It is not a taxonomic check: it asks for
+  stronger spectral evidence where no taxonomic evidence exists. It is applied after the
+  InChIKey checks, so malformed keys are still reported whatever their score. 0.7 is the
+  same provisional default as `ms2_coupling_min_score`, whose entry below cites the
+  literature on cosine thresholds. Setting it to `min_score` annotates every library-only
+  match that clears `min_score`, as before.
+- **Effect on the fixture**, from one run at 0.2 and one at 0.7: library-only annotations go
+  from 91 on 41 features to 34 on 21, their graph nodes from 67 to 27, and 10 features lose
+  their only MS2 matches (56 instead of 66 have any). All of feature 105's drugs and screening
+  compounds go. LOTUS-backed annotations and the emitted MS1 hypotheses do not change, the
+  latter because library-only matches below 0.7 already did not couple with MS1. High-cosine
+  matches to compounds that are not natural products remain, such as
+  tris(2,4-di-tert-butylphenyl) phosphate at 0.849, a plastic additive that is a common LC-MS
+  contaminant and probably a correct identification.
+
 ### 2026-10-01 — Adduct labels name ammonium correctly; charged ingredients carry ion masses
 
 - **Labels.** The ingredient named `ammonium` weighed 17.02655 Da, the mass of ammonia (NH3);
