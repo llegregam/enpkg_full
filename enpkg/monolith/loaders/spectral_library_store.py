@@ -183,7 +183,8 @@ class SpectralLibraryStore:
             ``(candidates, pairs)`` where each pair is
             ``(index into precursor_mzs, index into candidates)``. A candidate
             matching several queries appears once in ``candidates`` and once per
-            query in ``pairs``.
+            query in ``pairs``. ``pairs`` is ordered by query, then by library
+            spectrum id.
         """
         libraries = self.libraries_for_mode(mode)
         if not libraries:

@@ -20,6 +20,293 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-01 — Library-only MS2 matches need a stronger score
+
+- **The problem.** A LOTUS-backed MS2 match is weighed against the sample's taxonomy through
+  the organisms LOTUS reports for its structure. A library-only match names a structure LOTUS
+  does not know, so nothing weighs it, and general-purpose libraries hold drugs and screening
+  compounds as well as natural products. On the fixture, an *Arnica montana* extract, feature
+  105 was annotated with simurosertib (a kinase inhibitor, cosine 0.69), levosulpiride (an
+  antipsychotic, 0.61), tepraloxydim (a herbicide, 0.55) and two screening compounds.
+- **Alternatives measured** on the fixture's 91 library-only structure–feature pairs:
+  - *Class-level taxonomy*, the closest LOTUS organism producing any compound of the
+    structure's chemical class: 67 of the 91 have neither an NPClassifier nor a ClassyFire
+    class, and the 18 with an NPClassifier class all score at class level (Magnoliopsida) or
+    closer. Oxybutynin, an antimuscarinic drug classified "Hydrocarbons", scores as if
+    reported from *Arnica montana* itself. It does not discriminate.
+  - *Source collection*: 19 of the 91 come from MSnLib's drug and screening collections, but
+    GNPS redistributes those, so FragHub holds each such spectrum twice and a filter on the
+    source file would have to catch both copies.
+  - *Natural-product-likeness* (Ertl et al. 2008), computed from the structure, separates
+    synthetic compounds from natural products, but needs RDKit, which is not a dependency.
+- **The change.** A library-only match is annotated only when its cosine reaches the new
+  `SpectralMatchParams.library_only_min_score` (default 0.7, inclusive), which the run setup
+  shows under the spectral-matching settings. It is not a taxonomic check: it asks for
+  stronger spectral evidence where no taxonomic evidence exists. It is applied after the
+  InChIKey checks, so malformed keys are still reported whatever their score. 0.7 is the
+  same provisional default as `ms2_coupling_min_score`, whose entry below cites the
+  literature on cosine thresholds. Setting it to `min_score` annotates every library-only
+  match that clears `min_score`, as before.
+- **Effect on the fixture**, from one run at 0.2 and one at 0.7: library-only annotations go
+  from 91 on 41 features to 34 on 21, their graph nodes from 67 to 27, and 10 features lose
+  their only MS2 matches (56 instead of 66 have any). All of feature 105's drugs and screening
+  compounds go. LOTUS-backed annotations and the emitted MS1 hypotheses do not change, the
+  latter because library-only matches below 0.7 already did not couple with MS1. High-cosine
+  matches to compounds that are not natural products remain, such as
+  tris(2,4-di-tert-butylphenyl) phosphate at 0.849, a plastic additive that is a common LC-MS
+  contaminant and probably a correct identification.
+
+### 2026-10-01 — Adduct labels name ammonium correctly; charged ingredients carry ion masses
+
+- **Labels.** The ingredient named `ammonium` weighed 17.02655 Da, the mass of ammonia (NH3);
+  recipes add a proton to it, so the masses were right. The serializer printed it as `NH4`,
+  so the graph published `[M+NH4+H]+` for [M+NH4]+, `[M+NH4+2H]2+` (three charges on a 2+
+  ion) for [M+H+NH4]2+, `[2M+NH4+H]+` for [2M+NH4]+ and `[M-NH4+H]+` for the MS1 adduct
+  graph's [M+H-NH3]+, and the recipe nodes listed one ammonium beside one proton. The
+  ingredient is now `ammonia`, printed `NH3`, and each ammonia a proton accompanies is printed
+  `NH4` together with that proton: `[M+NH4]+`, `[M+NH4+H]2+`, `[2M+NH4]+`, `[M-NH3+H]+`.
+  Every other label is unchanged, and so are masses and plausibility scores. The five
+  recipes' URIs change, since recipe URIs are hashed from ingredient names; graphs serialized
+  earlier need regenerating to agree.
+- **Masses.** Seven ingredients carried the neutral atom's mass while every recipe uses them
+  as ions: each recipe's charge is the sum of its ingredients' ionic charges, as in
+  [M-H+Mg]+ (−1 + 2), which a test now checks for every recipe. Sodium and potassium were
+  0.55 mDa too heavy, magnesium, calcium and iron 1.10 mDa too heavy, chlorine and bromine
+  0.55 mDa too light; [M+Na]+ at m/z 200 was computed 2.7 ppm too heavy, against the
+  ±10 ppm window. The table now holds the ions' masses (Na+, K+, Mg2+, Ca2+, Fe2+, Cl−,
+  Br−). The proton and the neutral molecules were already right to 0.005 mDa. The tests
+  compute the expected m/z from atomic masses and the electron mass, not from the table.
+- **Effect on the fixture**, measured by running the MS1 adduct graph and MS1 with each
+  table: the MS1 hypotheses change on 374 of 660 features, 563 lost and 518 gained out of
+  10,252, mostly metal and multiply charged forms; two features change from anchor to
+  singleton in the adduct graph.
+
+### 2026-10-01 — One MS2 annotation per structure and feature
+
+- **The problem.** The MS2 enhancer made one annotation per matching library spectrum, but
+  the graph keys an MS2 annotation node on feature, library and 2D InChIKey. A library often
+  holds several spectra of one compound (collision energies, instruments), and FragHub's
+  export holds the MSnLib collections twice, since GNPS redistributes them. On the fixture,
+  1,569 LOTUS-backed matches named 113 distinct structure–feature pairs, one structure 331
+  times on one feature, and 249 library-only matches named 91. Three consequences: copies of
+  one structure took several of a feature's `top_k_ms2` slots; the node they shared received
+  one `enpkg:annotationRank` per copy (57 nodes had several), while only the first copy's
+  score was written; and the MS2 reweighting, which sums over a feature's matches, weighted a
+  structure by its number of library spectra.
+- **Correction.** The 2026-09-30 entry's volume figures (1,569 → 1,818 annotations, 1.16×)
+  counted matches, not structures. Counted per structure and feature, library-only matches
+  add 91 to 113.
+- **The change.** Once a chunk is scored, each feature keeps one annotation per library and
+  2D InChIKey: highest cosine, then most matched peaks, then the lowest library spectrum id.
+  The reduction runs after `_annotate`, so every scored match is still classified and the
+  malformed-InChIKey report still names every malformed value; collapsing before `_annotate`
+  would have merged distinct malformed strings that share their first 14 characters. The run
+  log reports how many matches were merged.
+- **Candidate order.** `get_candidate_spectra` orders its pairs by query, then library
+  spectrum id, so the last tie-break does not rest on how DuckDB executes the join. The order
+  was not observed to vary. The test that pins it also passes without the `ORDER BY` at test
+  scale, so it records the contract rather than catching its removal.
+- **Effect on the fixture**, measured from one run with and one without the reduction: the
+  graph's MS2 nodes go from 96 to 167 on the same 66 features, and none carries several
+  ranks; 18 features now show 4 or 5 distinct structures, where none showed more than 3. MS2
+  propagated scores change on 362–376 features, by up to 0.25; MS1 scores do not change. The
+  emitted MS2 matches change on 31 of the 66 features, the top-ranked one on 1; the emitted
+  MS1 hypotheses change on 4 features, through the MS1–MS2 coupling.
+
+### 2026-10-01 — Reweighting gives the same scores on every run
+
+- **The problem.** Two runs of unchanged code gave propagated NPC scores differing by up to
+  0.195 on about half the features, and graphs differing by 643 triples (784,039 against
+  783,396). The 2026-09-30 entry placed the cause upstream of MS2. It is the label propagation
+  in `WeightsEnhancer`, which runs after MS2 and computes both the MS1 and the MS2 scores.
+- **How it was located.** Two runs in separate processes, with different hash seeds, gave
+  identical outputs at every stage before propagation: the molecular network, the adduct
+  graph, the LOTUS row order, every MS1 and MS2 annotation, and the NPC matrices handed to
+  propagation. Propagation repeated on identical input in one process differed by up to 0.195
+  with Numba's 16 threads, and not at all with one.
+- **The cause.** `numba_label_propagation` updates nodes in a `prange` loop, which Numba
+  splits across threads. Inside the loop it marked each node as having values in the mask
+  that other nodes read during the same iteration. A neighbour visited later then added that
+  node's edge weight to its denominator while the node's values, read from the start of the
+  iteration, were still zero, which lowered its average. Which neighbours were already marked
+  depended on thread timing, and with one thread on node order: on a four-node chain whose
+  one end carries a vector, the chain ended at 0.5 or 0.7 depending on the order. What
+  `WEIGHTS_ENHANCER.md` describes, un-annotated features "filled purely from their
+  neighbours", gives 1.0.
+- **The fix.** Each iteration reads the mask as it stood at its start and marks nodes in a
+  copy, which the next iteration reads. Results are now bit-identical for any thread count,
+  and equal to within rounding (1e-16) for any node order. Verified end to end: two runs in
+  separate processes give bit-identical scores and the same graph (783,949 triples).
+- **Effect on the fixture**, measured against one run of the previous code on the same
+  inputs: propagated scores change on 357–370 of the 660 features, by up to 0.47. The MS2
+  scores were the most diluted, since few features carry LOTUS-backed MS2 matches and most
+  started without values: their mean sum per feature rises from 0.22 to 0.93 at class level.
+  In the graph, the emitted MS1 hypotheses change on 9 of 606 features (the top-ranked one
+  on 5); the emitted MS2 matches do not change.
+- **LOTUS row order.** The canonical LOTUS list was sorted on the 2D InChIKey alone, so
+  stereoisomers sharing it came back in whatever order DuckDB's sort produced. The first row
+  of each group supplies an MS2 match's NPC vectors and structure node, and for 7,194
+  structures the stereoisomers' NPC vectors differ. Ties are now broken by full InChIKey,
+  then SMILES, the table's key. The order was not observed to vary between runs, but nothing
+  guaranteed it. On the fixture the new order moves propagated scores by at most 0.001.
+- **Not changed.** Propagation still converges to practically one profile per connected
+  component of the network, because no feature is held at its own vector: on the fixture,
+  profiles within a component differ by at most 0.002, and the largest component holds 300
+  of the 660 features. `WEIGHTS_ENHANCER.md` said annotated features "anchor their
+  neighbourhood"; it now describes the convergence. Whether propagation should keep part of
+  each feature's own vector is open.
+
+### 2026-10-01 — MS2 matches couple with MS1 only above a score threshold; library-only matches couple on formula
+
+Revises the coupling consequence recorded in the 2026-09-30 entry below.
+
+- **The problem.** The serializer kept, on any feature with an emitted MS2 match, only the
+  MS1 adduct hypotheses sharing the match's 2D InChIKey. Once library-only matches reached
+  the graph, every feature whose matches were all library-only lost all its MS1 hypotheses,
+  since no LOTUS candidate can share a library-only structure's InChIKey: 20 features and
+  100 adducts on the fixture, measured before this branch moved onto `GUI_MIGRATION`. The
+  removing match could be as weak as cosine 0.215. The same rule already let weak
+  LOTUS-backed matches remove MS1 hypotheses (10 features).
+- **Threshold.** New `SerializerConfig.ms2_coupling_min_score` (default 0.7, range 0–1),
+  which reaches the GUI's run setup, the run YAML and the CLI with no other wiring. Only an
+  MS2 match at or above it couples; a weaker match is still emitted, but neither removes nor
+  keeps MS1 adducts and gets no link. 0 makes every emitted match decide, the previous
+  behaviour. The 0.7 default is the GNPS library-search convention and is provisional. In
+  Scheubert et al. 2017 most of 70 public datasets reached 1% FDR at cosine 0.6–0.65, with
+  the needed cosine depending on how many peaks must match. Li et al. 2021 recommend
+  scores above 0.75 for dot product. The 0.2 `min_score` this pipeline matches with comes
+  from Rutz et al. 2019, where it gated predicted ISDB spectra before taxonomic re-ranking:
+  an entry gate, not a confidence level.
+- **Formula coupling.** A library-only match above the threshold keeps the MS1 hypotheses
+  whose molecular formula equals the library structure's. LOTUS holds at most isomers of
+  that structure, so the formula is what an ionisation hypothesis can share with it.
+  Formulas are compared as strings: on both sides they are in Hill order with the same `+`
+  charge suffix (measured: no library-only formula out of Hill order; 8 inorganic LOTUS
+  formulas such as `HCl`, which cannot meet a library match). LOTUS-backed matches keep the
+  2D InChIKey rule. It selects the same hypotheses, because each MS1 hypothesis groups
+  every LOTUS isomer of one formula.
+- **Vocabulary.** Both kinds of correspondence use `enpkg:hasCorrespondingAdduct`, whose
+  `rdfs:comment` changed from "the MS1 adduct hypothesis proposing the *same* compound
+  (shared 2D InChIKey)" to the meaning it carried in its second half: the hypothesis that
+  explains how the MS2-identified molecule ionised, i.e. one with the molecule's formula.
+  The comment states that the matched structure is among the candidates only when LOTUS
+  knows it, and that the link is asserted only above the coupling threshold, so its
+  absence does not mean that no hypothesis corresponds. Every user's graph inherits this
+  wording through the inlined `enpkg.ttl`.
+- **Measured effect** on the fixture (660 features, *Arnica montana*,
+  `FRAGHUB_POS_LC:2026.03`), from one pipeline run serialized under each rule. Without any
+  coupling, 2,633 MS1 hypotheses are emitted.
+
+  | Rule | MS1 hypotheses removed | Features left with none |
+  |---|---|---|
+  | LOTUS-backed matches only, any score (before 2026-09-30) | 196 | 16 |
+  | Library-only matches added, formula coupling, any score | 282 | 27 |
+  | Same, threshold 0.5 / 0.6 / **0.7** / 0.8 | 210 / 190 / **172** / 147 | 18 / 14 / **12** / 9 |
+
+  At the 0.7 default the graph loses fewer MS1 hypotheses than before library-only matches
+  were emitted. Of the MS2 matches in the graph, 29 of 56 LOTUS-backed and 12 of 41
+  library-only reach 0.7.
+
+### 2026-10-01 — FragHub's NPClassifier labels are restored on import
+
+- **The problem.** FragHub copies its NPClassifier labels from an ontology table it ships
+  (`datas/ontologies_datas/ontologies_dict_part_*.csv`). In that table the substrings `nan`
+  and `none` are deleted inside labels (`Lignans` → `Ligs`, `Flavanones` → `Flavas`), and
+  labels containing `", "` are split into separate `|`-separated labels
+  (`Carotenoids (C40, β-β)` → `Carotenoids (C40|β-β)`). 88,825 of the table's 1,001,751
+  InChIKeys (8.9%) are affected; in our `FRAGHUB_POS_LC:2026.03` export, 103,210 label
+  occurrences.
+- **Where it comes from**, traced one step at a time: not our importer, which compares
+  placeholders as whole values; present verbatim in the export file; copied unchanged by
+  FragHub's `ontologies_completion()`; present in both versions of the table in FragHub's
+  history (`7cb091f`, 2024-12-09, and `1ea0796`, 2025-09-01). The program that generated
+  the table is not in FragHub's repository, so the cause is inferred, not verified: both
+  rules match a list-to-text conversion that removes `nan`/`None` by substring replacement
+  and joins then splits on `", "`.
+- **The repair** (`loaders/spectral_libraries/npc_labels.py`) rewrites every term of the
+  vendored NPClassifier vocabulary by the same two rules and replaces any run of
+  neighbouring labels that equals a rewritten form with the term. It never replaces a run
+  containing a genuine term, leaves a fragment whose partner is missing, and skips a form
+  two terms share. It runs after the `INSERT` on distinct cell values (one `GROUP BY` per
+  column and an `UPDATE` joined on a small table), so memory stays flat, and it logs every
+  repair with the number of spectra it touched. `preview()` shows restored labels.
+- **Vocabulary.** The repair uses the vendored EMI vocabulary rather than LOTUS's NPC column
+  names. EMI is always in the repository, whereas `_meta_columns` exists only if LOTUS was
+  imported into the same database. EMI recognises all 61 corrupted labels in our export,
+  plus `Purine nucleos(t)ides`, which LOTUS's columns lack. It lacks two genuine
+  superclasses, `Alkylresorcinols` and `Sphingolipids`, which therefore pass through
+  unrecognised. NPClassifier's own `index_v1.json` has all of them; the repair proposed to
+  FragHub uses it. `NpcVocabulary.labels(rank)` is new, for this.
+- **Measured on our library** (read-only simulation over its distinct cells): all 16,394
+  superclass and 75,483 class label occurrences are restored (74,834 spectra), and no class
+  label is left outside the vocabulary. A database keeps the corrupted labels until its
+  library is re-imported.
+- Nothing reads these labels yet: library-only annotations carry them but neither the
+  reweighting nor the serializer uses them. The repair makes them correct before a consumer
+  exists, for every user who imports a FragHub export.
+- The issue for FragHub, and a repair script tested on a copy of their table, are in
+  `docs/upstream/FRAGHUB_NPCLASSIFIER_LABELS.md`.
+
+### 2026-09-30 — MS2 annotates library matches that LOTUS does not know
+
+- **The problem.** `Ms2Enhancer._annotate` discarded any spectral-library match whose short
+  InChIKey was absent from LOTUS, silently: no log line, no counter. In
+  `FRAGHUB_POS_LC:2026.03` that is 948,975 of 1,450,368 spectra (65.4%), covering 194,515
+  distinct structures against the 9,777 LOTUS knows. The structure metadata needed to
+  annotate them was already on every `LibraryCandidate` and read by nothing.
+- **What changed.** A LOTUS miss now yields a *library-only* annotation: `source` is the
+  library's `name:version`, `library_structure` carries the library's InChIKey, InChI, SMILES,
+  formula, name and NPClassifier/ClassyFire labels, the classification vectors are zero-filled
+  at full vocabulary length, and `organisms` is empty. The serializer emits it an
+  `emi:ChemicalStructure` node, reusing only terms `_add_compound` already emits. Three things
+  `_add_compound` emits have no counterpart: `emi:inTaxon` and `prov:wasDerivedFrom` (the library
+  names no organism and no reference), and ClassyFire *subclass*, which the library carries but
+  which has no `enpkg:` term; it is kept on `LibraryStructure` and not emitted, since adding a
+  term is vocabulary work to settle on its own.
+- **Decision: graph only, no reweighting.** The library gives one NPC *label* per rank where
+  LOTUS gives a probability per term. Using a label in the reweighting would mean one-hot
+  encoding it, which drops the confidence gradation (Quercetin's 0.9955 Shikimates becomes a
+  flat 1.0) and flattens genuine ambiguity. It would also need a taxonomical similarity for an
+  annotation with no organism, and because similarities are normalised per feature, any value
+  there shifts weight away from LOTUS-backed matches. And it would help few: only 7,453 of the
+  194,515 recovered structures carry an NPC pathway at all. So library-only annotations have no
+  organism and `WeightsEnhancer`'s existing `has_organisms()` filter keeps them out.
+  `test_weights_ms2_classifications.py` pins that the MS2 feature matrices are bit-identical
+  with and without them.
+- **Decision: LOTUS keeps precedence on classification.** When LOTUS knows the structure, its
+  vectors and organisms are used exactly as before and no library label is consulted.
+- **LOTUS-backed MS2 matches now emit their compound node too.** `_add_compound` was called
+  only from the MS1 path, so a LOTUS-backed MS2 match on a feature with no corresponding MS1
+  adduct resolved to a bare `emi:InChIKey2D` node. Left alone, library-only matches would have
+  carried more structure detail than LOTUS-backed ones. `MS2ChemicalAnnotation.lotus` now holds
+  a reference to the matched entry (already retained by `LotusStore`, so one pointer), and
+  `_add_ms2_annotation` emits it.
+- **Cosine breaks ties in the MS2 ranking.** Library-only annotations all have an alignment
+  score of 0.0, and `sorted` is stable, so `top_k_ms2` kept whichever were stored first. The
+  sort key is now `(alignment, cosine)`. MS1 passes no fallback key, so its order is unchanged.
+- **Malformed InChIKeys are refused and reported.** 287 rows of the library (3 distinct values)
+  carry a SMILES in the InChIKey field, e.g. `CCCCCCCCCCCCCC`. It is 14 uppercase letters, so
+  only the full key's shape (`[A-Z]{14}-[A-Z]{10}-[A-Z]`) tells it apart. Before this change
+  those rows were dropped with the other LOTUS misses; annotating them would have minted
+  `identifiers.org/inchikey/CCCCCCCCCCCCCC`. They now produce no annotation, and `enhance()`
+  warns with the count and the distinct offending values.
+- **Measured effect** (fixture dataset, 660 features, against the workspace database): MS2
+  annotations in memory 1,569 → 1,818 (1.16×; the 1,569 LOTUS-backed ones unchanged, 249
+  library-only added). The pre-cosine candidate split was 49/51, so library-only candidates
+  clear `min_score`/`min_peaks` far less often. Zero vectors cost 3,120 bytes per library-only
+  annotation. MS2 `enhance()` 9.0 s → 9.28 s.
+- **Consequence for MS1 in the graph.** `_emit_ms1_annotations` keeps, on a feature with any
+  emitted MS2 match, only the MS1 adducts sharing a 2D InChIKey with one. MS1 candidates come
+  only from LOTUS, so a feature whose MS2 matches are all library-only keeps no MS1 adduct.
+  Measured: 20 features newly gained MS2 matches and all 20 lost their 5 adducts, 100 of 2,795
+  (3.6%), for a net −1,225 structure nodes and −30,879 triples. That coupling rule is documented
+  as intended (MS2_ENHANCER.md §6); this change only makes it fire more often.
+- **Pipeline output is not run-to-run deterministic, independently of this change.** Two runs
+  of the unchanged code gave propagated MS2 scores differing by up to 0.041 and graphs of
+  585,466 against 585,568 triples. The source is upstream of MS2 and was not investigated.
+- The design notes previously held in a TODO inside `_annotate` are resolved by the above and
+  removed.
+
 ### 2026-09-18 — `unwrap_optional` missed `T | None` before Python 3.14
 
 `unwrap_optional` tested `get_origin(annotation) is Union`. That recognises `Optional[T]` on

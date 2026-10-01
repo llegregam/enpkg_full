@@ -593,10 +593,19 @@ class DatabaseManager:
     # order is the contract LotusStore uses to build Lotus objects by index.
 
     def get_compound_metadata_sorted_by_short_inchikey(self) -> pl.DataFrame:
-        """Return all compound metadata + NPC classifications, ordered by short_inchikey."""
+        """Return all compound metadata + NPC classifications, ordered by short_inchikey.
+
+        Rows sharing a short_inchikey (stereoisomers) are ordered by full InChIKey, then
+        by SMILES, the table's key. The order is therefore the same on every run, and so
+        is the first row of each group, which callers use as the structure's
+        representative.
+        """
         logger.debug("Querying compound metadata sorted by short_inchikey")
         t0 = time()
-        df = self._conn.execute(_COMPOUND_SELECT + " ORDER BY c.short_inchikey").pl()
+        df = self._conn.execute(
+            _COMPOUND_SELECT
+            + " ORDER BY c.short_inchikey, c.structure_inchikey, c.structure_smiles"
+        ).pl()
         logger.debug(
             "get_compound_metadata_sorted_by_short_inchikey returned %d rows in %.2fs",
             len(df), time() - t0,
@@ -651,7 +660,8 @@ class DatabaseManager:
             ``(rows, pairs)`` — the distinct candidate rows as column-keyed dicts,
             and ``(query_index, row_index)`` pairs naming which query each candidate
             was retrieved for. A candidate matching several queries appears once in
-            ``rows`` and once per query in ``pairs``.
+            ``rows`` and once per query in ``pairs``. ``pairs`` is ordered by query,
+            then by library spectrum id.
         """
         if len(precursor_mzs) == 0:
             return [], []
@@ -677,7 +687,8 @@ class DatabaseManager:
             "SELECT q.query_idx, s.id "
             "FROM queries q JOIN library_spectra s "
             "  ON s.precursor_mz BETWEEN q.mz - ? AND q.mz + ? "
-            f"WHERE s.mode = ?{library_filter}"
+            f"WHERE s.mode = ?{library_filter} "
+            "ORDER BY q.query_idx, s.id"
         )
         id_pairs = self._conn.execute(pairs_sql, params).fetchall()
         if not id_pairs:

@@ -33,6 +33,20 @@ class SerializerConfig(BaseModel):
         ),
     )
 
+    ms2_coupling_min_score: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Spectral match score (cosine) from which an MS2 match is taken to identify "
+            "the feature's compound. The feature then keeps only the MS1 adduct "
+            "hypotheses that explain that compound's ionisation (same structure, or same "
+            "molecular formula when the structure is not in LOTUS) and drops the others. "
+            "Weaker matches are still emitted but leave the MS1 hypotheses untouched. "
+            "0 lets every emitted match decide."
+        ),
+    )
+
     top_k_sirius: Optional[int] = Field(
         default=None,
         description=(

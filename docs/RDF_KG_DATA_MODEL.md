@@ -148,12 +148,15 @@ flowchart TD
     (1=best), stamped as `enpkg:annotationRank` — no NPC reweighting (unlike MS1/MS2).
   - All three subclass `emi:StructuralAnnotation`, so a consumer can query them uniformly or split
     them by the `enpkg:AdductAnnotation` / `SpectralAnnotation` / `SiriusAnnotation` subclass.
-- **MS2 ↔ MS1 coupling (`enpkg:hasCorrespondingAdduct`):** on a feature with an MS2 match, the two
-  channels are joined — only the MS1 adducts whose candidate structures include the MS2-identified
-  compound (shared 2D short InChIKey) are emitted, and each MS2 annotation links to its corresponding
-  adduct(s). Every matching adduct *form* is kept (the MS1 `top_k` cap is bypassed); the
-  mass-coincidence adducts are dropped. A feature whose MS2 compound is in no MS1 group ends up with
-  no MS1 adduct at all (intended). Features with **no** MS2 keep their full top-k MS1 hypotheses.
+- **MS2 ↔ MS1 coupling (`enpkg:hasCorrespondingAdduct`):** on a feature with an MS2 match whose
+  score reaches `ms2_coupling_min_score` (a serializer setting, default 0.7), the two channels are
+  joined — only the MS1 adducts that explain how the MS2-identified molecule ionised are emitted, and
+  each such MS2 annotation links to its corresponding adduct(s). For a structure LOTUS knows those are
+  the adducts whose candidates include it (shared 2D short InChIKey); for a library-only structure,
+  the adducts with its molecular formula. Every matching adduct *form* is kept (the MS1 `top_k` cap
+  is bypassed); the mass-coincidence adducts are dropped. A feature whose confident MS2 match
+  corresponds to no MS1 adduct ends up with none (intended). Features with no MS2 match, or only
+  matches below the threshold, keep their full top-k MS1 hypotheses.
 - **`InChIKey2D` is the bridge** between the channels: MS1 reaches it via the compound's
   `emi:hasInChIKey2D`; MS2 and SIRIUS point at it directly. This is the node to join on when asking
   "did MS1, MS2 and SIRIUS agree on the same structure?".

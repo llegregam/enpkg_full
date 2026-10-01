@@ -33,8 +33,10 @@ _COMPOUND_COLS = [
 ]
 
 
-def _compound(smiles: str, short_inchikey: str, formula: str, exact_mass: float) -> dict:
-    """Build a minimal compounds row keyed by column name."""
+def _compound(
+    smiles: str, short_inchikey: str, formula: str, exact_mass: float, **columns
+) -> dict:
+    """Build a minimal compounds row keyed by column name; ``columns`` override or add."""
     return {
         "structure_smiles": smiles,
         "structure_inchikey": short_inchikey + "-XXXXXXXXXXX-N",
@@ -44,6 +46,7 @@ def _compound(smiles: str, short_inchikey: str, formula: str, exact_mass: float)
         "structure_wikidata": f"Q{smiles}",
         "structure_nameTraditional": f"name_{smiles}",
         "manual_validation": True,
+        **columns,
     }
 
 
@@ -155,6 +158,31 @@ class TestAllSortedByShortInchikey:
         short_keys = [l.short_inchikey for l in lotus_objects]
         assert short_keys == sorted(short_keys)
         assert len(lotus_objects) == 5
+
+    def test_rows_sharing_a_short_inchikey_come_in_a_fixed_order(self, tmp_path, logger):
+        """Ties on the 2D key are ordered by InChIKey, then SMILES.
+
+        The first row of each group is the structure's representative for MS2, so
+        it must not depend on the order DuckDB happens to return tied rows in.
+        """
+        path = str(tmp_path / "ties.duckdb")
+        rows = [  # inserted out of order on both tie-breaking columns
+            ("SMILES-3", "TIEDSKELETONAA-BBBBBBBBBB-N"),
+            ("SMILES-2", "TIEDSKELETONAA-AAAAAAAAAA-N"),
+            ("SMILES-1", "TIEDSKELETONAA-AAAAAAAAAA-N"),
+            ("SMILES-0", "TIEDSKELETONAA-CCCCCCCCCC-N"),
+        ]
+        _seed_duckdb(path, [
+            _compound(smiles, "TIEDSKELETONAA", "C2H7NO", 61.0528, structure_inchikey=inchikey)
+            for smiles, inchikey in rows
+        ])
+
+        store = LotusStore(duckdb_path=path, logger=logger)
+        order = [
+            (l.structure_inchikey, l.structure_smiles) for l in store.all_sorted_by_short_inchikey()
+        ]
+
+        assert order == sorted(order)
 
 
 class TestGroupedByFormulaForMassRange:

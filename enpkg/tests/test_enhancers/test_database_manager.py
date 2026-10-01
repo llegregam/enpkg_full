@@ -4,6 +4,8 @@ Every fixture is a small inline FragHub-shaped TSV written into ``tmp_path``, so
 none of these tests needs the multi-GB export or a prebuilt database.
 """
 
+import logging
+
 import numpy as np
 import pytest
 from matchms import Spectrum, calculate_scores
@@ -182,6 +184,34 @@ class TestFragHubImport:
         assert "idx_library_spectra_precursor_mz" in indexes
         assert "idx_library_spectra_short_inchikey" in indexes
 
+    def test_corrupted_npclassifier_labels_are_restored(self, db, tmp_path, caplog):
+        # FragHub's ontology table deletes "nan"/"none" inside labels and splits labels
+        # at ", "; see enpkg.monolith.loaders.spectral_libraries.npc_labels.
+        columns = [*_COLUMNS, "NPCLASS_SUPERCLASS", "NPCLASS_CLASS"]
+
+        def row(pathway, superclass, klass):
+            return [*_row(NPCLASS_PATHWAY=pathway), superclass, klass]
+
+        path = _write_library(tmp_path, [
+            row("Shikimates and Phenylpropanoids", "Ligs", "Furofuranoid ligs"),
+            row("Terpenoids", "Triterpenoids", "Lanostane|Tirucallane and Euphane triterpenoids"),
+            row("Alkaloids", "Tryptophan alkaloids", "Corythe type"),
+        ], columns=columns)
+
+        with caplog.at_level(logging.WARNING):
+            library_id = _import(db, path)
+
+        stored = db.connection.execute(
+            "SELECT npc_pathway, npc_superclass, npc_class FROM library_spectra "
+            "WHERE library_id = ? ORDER BY id", [library_id],
+        ).fetchall()
+        assert stored == [
+            ("Shikimates and Phenylpropanoids", "Lignans", "Furofuranoid lignans"),
+            ("Terpenoids", "Triterpenoids", "Lanostane, Tirucallane and Euphane triterpenoids"),
+            ("Alkaloids", "Tryptophan alkaloids", "Corynanthe type"),
+        ]
+        assert "'Ligs' -> 'Lignans'" in caplog.text
+
 
 class TestColumnContract:
     def test_missing_required_column_is_rejected(self, db, tmp_path):
@@ -275,6 +305,17 @@ class TestCandidateRetrieval:
         rows, _ = db.get_candidate_spectra([100.0], "pos", 0.01, library_ids=[id_a])
         assert len(rows) == 1
         assert rows[0]["library_id"] == id_a
+
+    def test_pairs_are_ordered_by_query_then_spectrum_id(self, db, tmp_path):
+        """The MS2 enhancer keeps the first listed of two equally good spectra of one
+        structure, so the order must not depend on how DuckDB executes the join."""
+        _import(db, _write_library(
+            tmp_path, [_row(PRECURSORMZ=f"{100 + i * 0.001:.3f}") for i in range(30)]
+        ))
+        rows, pairs = db.get_candidate_spectra([100.02, 100.0, 100.01], "pos", 0.05)
+        order = [(query, rows[index]["id"]) for query, index in pairs]
+        assert len(order) == 90
+        assert order == sorted(order)
 
     def test_a_candidate_shared_by_two_queries_is_fetched_once(self, db, tmp_path):
         _import(db, _write_library(tmp_path, [_row(PRECURSORMZ="100.0")]))

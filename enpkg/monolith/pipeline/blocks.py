@@ -351,13 +351,18 @@ def _log_ms2(logger: logging.Logger, analysis: Analysis) -> None:
     """Summarise MS2 spectral-matching (ISDB) annotations.
 
     Counts how many spectra received at least one MS2 annotation and the
-    total number of annotations across all spectra.
+    total number of annotations across all spectra, split by where the matched
+    structure's metadata came from. Only the LOTUS-backed ones carry source
+    organisms, so only they reach the reranking.
     """
     n_spectra = len(analysis.spectra)
     n_annotated = sum(1 for s in analysis.spectra if s.has_ms2_annotations())
-    total = sum(len(s.ms2_annotations) for s in analysis.spectra)
+    annotations = [a for s in analysis.spectra for a in s.ms2_annotations]
+    n_lotus = sum(1 for a in annotations if a.source == "Lotus")
     logger.info("    Spectra with MS2 annotations : %d / %d", n_annotated, n_spectra)
-    logger.info("    Total MS2 annotations        : %d", total)
+    logger.info("    Total MS2 annotations        : %d", len(annotations))
+    logger.info("      LOTUS-backed               : %d", n_lotus)
+    logger.info("      Library-only               : %d", len(annotations) - n_lotus)
 
 
 def _log_sirius(logger: logging.Logger, analysis: Analysis) -> None:

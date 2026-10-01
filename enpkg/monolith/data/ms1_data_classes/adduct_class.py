@@ -9,24 +9,29 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.otl_class import Match
 
+# Monoisotopic mass of each ingredient as it occurs in the ion: the proton and the metal
+# cations (Na+, Mg2+, K+, Ca2+, Fe2+) and halide anions (Cl-, Br-) carry the ion's mass,
+# which differs from the neutral atom's by one electron per charge; ammonia, water, the
+# solvents and the acids are neutral. A recipe's charge is the sum of its ingredients'
+# charges, so these masses give its exact m/z.
 ADDUCT_MASSES: Dict[str, float] = {
     "proton": 1.00728,
-    "ammonium": 17.02655,
+    "ammonia": 17.02655,
     "water": 18.01056,
-    "sodium": 22.98977,
-    "magnesium": 23.98504,
+    "sodium": 22.98922,
+    "magnesium": 23.98394,
     "methanol": 32.02621,
-    "chlorine": 34.96885,
-    "potassium": 38.96371,
-    "calcium": 39.96259,
+    "chlorine": 34.96940,
+    "potassium": 38.96316,
+    "calcium": 39.96149,
     "acetonitrile": 41.02655,
     "ethylamine": 45.05785,
     "formic": 46.00548,
-    "iron": 55.93494,
+    "iron": 55.93384,
     "acetic": 60.02113,
     "isopropanol": 60.05751,
     "dmso": 78.01394,
-    "bromine": 78.91834,
+    "bromine": 78.91889,
     "tfa": 113.99286,
 }
 

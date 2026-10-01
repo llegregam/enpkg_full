@@ -32,7 +32,7 @@ from rdflib import Graph, Literal, URIRef
 
 from ..data.analysis import Analysis
 from ..data.annotated_spectra_class import AnnotatedSpectrum
-from ..data.chemical_annotation import MS2ChemicalAnnotation
+from ..data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
 from ..data.lotus_class import Lotus
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.sirius_annotation import SiriusChemicalAnnotation
@@ -80,7 +80,7 @@ _VOCAB_PATH = Path(__file__).resolve().parents[3] / "docs" / "vocab" / "enpkg.tt
 
 # Ingredient name -> chemical symbol, for rendering emi:hasAdduct strings.
 _ADDUCT_SYMBOLS = {
-    "proton": "H", "ammonium": "NH4", "water": "H2O", "sodium": "Na",
+    "proton": "H", "ammonia": "NH3", "water": "H2O", "sodium": "Na",
     "magnesium": "Mg", "methanol": "CH3OH", "chlorine": "Cl", "potassium": "K",
     "calcium": "Ca", "acetonitrile": "ACN", "ethylamine": "EtNH2", "formic": "FA",
     "iron": "Fe", "acetic": "Hac", "isopropanol": "IsoProp", "dmso": "DMSO",
@@ -102,6 +102,7 @@ class AnalysisSerializer:
         include_adduct_clusters: bool = True,
         min_relative_intensity: float = 0.0,
         max_ions_per_spectrum: Optional[int] = None,
+        ms2_coupling_min_score: float = 0.7,
     ):
         self.graph = Graph()
         for prefix, namespace in _PREFIXES.items():
@@ -126,6 +127,9 @@ class AnalysisSerializer:
         self.include_adduct_clusters = include_adduct_clusters
         self.min_relative_intensity = min_relative_intensity
         self.max_ions_per_spectrum = max_ions_per_spectrum
+        # An MS2 match below this spectral score is emitted but leaves the feature's
+        # MS1 adducts alone; see _emit_ms1_annotations.
+        self.ms2_coupling_min_score = ms2_coupling_min_score
 
     # ------------------------------------------------------------------ helpers
     def _set(self, subject: URIRef, predicate, value, datatype=None) -> None:
@@ -196,17 +200,31 @@ class AnalysisSerializer:
     @staticmethod
     def _format_adduct(recipe: AdductRecipe) -> str:
         """Render a recipe as a standard adduct string: "[M+H]+", "[2M+Na]+",
-        "[M+2K-H]+" — the value for emi:hasAdduct (cf. PSI-MS MS_1002813 form)."""
+        "[M+2K-H]+" — the value for emi:hasAdduct (cf. PSI-MS MS_1002813 form).
+
+        Ammonia added together with a proton is the ammonium ion: each ammonia a
+        proton accompanies is written NH4 and takes that proton with it, so
+        ``{proton: 1, ammonia: 1}`` is "[M+NH4]+" and ``{proton: 2, ammonia: 1}`` at
+        charge 2 is "[M+NH4+H]2+". Ammonia lost keeps NH3, as in "[M-NH3+H]+".
+        """
         def _int(x):
             return int(x) if float(x).is_integer() else x
         mult = _int(recipe.multimer_factor)
         core = f"{'' if mult == 1 else mult}M"
-        parts = []
+        ammonium = max(0, min(recipe.ingredients.get("ammonia", 0),
+                              recipe.ingredients.get("proton", 0)))
+        terms = []
         for name, count in sorted(recipe.ingredients.items()):
+            if name == "ammonia" and ammonium:
+                terms.append(("NH4", ammonium))
+            if name in ("ammonia", "proton"):
+                count -= ammonium
+            terms.append((_ADDUCT_SYMBOLS.get(name, name), count))
+        parts = []
+        for symbol, count in terms:
             c = _int(count)
             if c == 0:
                 continue
-            symbol = _ADDUCT_SYMBOLS.get(name, name)
             magnitude = "" if abs(c) == 1 else abs(c)
             parts.append(f"{'+' if c > 0 else '-'}{magnitude}{symbol}")
         charge = _int(recipe.charge)
@@ -318,32 +336,37 @@ class AnalysisSerializer:
     def _emit_ms1_annotations(
         self, analysis, spectrum, spectrum_uri, ms2_emitted
     ) -> None:
-        """Emit the feature's MS1 adducts, coupled to any MS2 matches.
+        """Emit the feature's MS1 adducts, coupled to its confident MS2 matches.
 
-        Two regimes:
+        An emitted MS2 match is *confident* when its spectral score is at least
+        ``ms2_coupling_min_score``. Two regimes follow:
 
-        * **No serialized MS2** (``ms2_emitted`` empty) — emit MS1 as mass-only
-          hypotheses, ranked and capped at ``top_k_ms1`` (unchanged behaviour).
-        * **MS2-identified feature** — an MS2 match names a compound by
-          fragmentation, so only the MS1 adducts whose candidate structures include
-          an MS2-matched compound (shared 2D short InChIKey) are meaningful. Keep
-          *every* such adduct (all forms; ``top_k`` off), drop the mass-coincidence
-          rest, and link each MS2 annotation to its corresponding adduct via
-          ``enpkg:hasCorrespondingAdduct``. A feature whose MS2 compound appears in
-          no MS1 group is therefore serialized with no MS1 adduct — intended (see
-          ``docs/MS2_ENHANCER.md`` §6 caveat).
+        * **No confident match** — emit MS1 as mass-only hypotheses, ranked and
+          capped at ``top_k_ms1``. MS2 matches below the threshold are still emitted
+          as annotations, but they neither remove nor keep MS1 adducts and get no
+          correspondence link.
+        * **At least one confident match** — the match names a compound by
+          fragmentation, so only the MS1 adducts that explain how that compound
+          ionised to this precursor m/z are kept. For a match LOTUS knows, those are
+          the adducts whose candidate structures include it (shared 2D InChIKey).
+          For a library-only match, LOTUS holds at most isomers of it, so they are
+          the adducts whose molecular formula equals the library structure's. Every
+          such adduct is kept (all forms; ``top_k`` off), the rest are dropped as
+          mass coincidences, and each confident match is linked to its adducts via
+          ``enpkg:hasCorrespondingAdduct``. A feature whose confident matches
+          correspond to no MS1 adduct is serialized with none; see
+          ``docs/MS2_ENHANCER.md`` §6.
         """
         ms1_scores = (
             spectrum.ms1_pathway_scores,
             spectrum.ms1_superclass_scores,
             spectrum.ms1_class_scores,
         )
-        # short InChIKey -> the MS2 annotation URIs that matched that compound.
-        ms2_by_short_ik: dict[str, list[URIRef]] = {}
-        for _score, annotation, ms2_uri in ms2_emitted:
-            ms2_by_short_ik.setdefault(annotation.short_inchikey, []).append(ms2_uri)
-
-        if not ms2_by_short_ik:
+        confident = [
+            (annotation, ms2_uri) for _score, annotation, ms2_uri in ms2_emitted
+            if annotation.score >= self.ms2_coupling_min_score
+        ]
+        if not confident:
             self._add_ranked_annotations(
                 spectrum_uri, spectrum.ms1_annotations,
                 scores=ms1_scores, top_k=self.top_k_ms1,
@@ -351,20 +374,35 @@ class AnalysisSerializer:
             )
             return
 
-        corresponding = [
-            adduct for adduct in spectrum.ms1_annotations
-            if {lotus.short_inchikey for lotus in adduct.lotus} & ms2_by_short_ik.keys()
-        ]
+        # short InChIKey (LOTUS-backed) or molecular formula (library-only) -> the
+        # URIs of the confident matches naming it. A library-only match without a
+        # formula still puts the feature in this regime, but corresponds to nothing.
+        by_short_ik: dict[str, list[URIRef]] = {}
+        by_formula: dict[str, list[URIRef]] = {}
+        for annotation, ms2_uri in confident:
+            structure = annotation.library_structure
+            if structure is None:
+                by_short_ik.setdefault(annotation.short_inchikey, []).append(ms2_uri)
+            elif structure.molecular_formula:
+                by_formula.setdefault(structure.molecular_formula, []).append(ms2_uri)
+
+        def matches_of(adduct) -> set[URIRef]:
+            uris = {
+                uri for short_ik in {lotus.short_inchikey for lotus in adduct.lotus}
+                for uri in by_short_ik.get(short_ik, ())
+            }
+            uris.update(by_formula.get(adduct.molecular_formula, ()))
+            return uris
+
+        corresponding = [adduct for adduct in spectrum.ms1_annotations if matches_of(adduct)]
         ms1_emitted = self._add_ranked_annotations(
             spectrum_uri, corresponding,
             scores=ms1_scores, top_k=None,  # keep every corresponding adduct form
             emit=lambda ann: self._add_chemical_adduct(analysis, spectrum, ann),
         )
         for _score, adduct, adduct_uri in ms1_emitted:
-            shared = {lotus.short_inchikey for lotus in adduct.lotus} & ms2_by_short_ik.keys()
-            for short_ik in shared:
-                for ms2_uri in ms2_by_short_ik[short_ik]:
-                    self.graph.add((ms2_uri, ENPKG.hasCorrespondingAdduct, adduct_uri))
+            for ms2_uri in matches_of(adduct):
+                self.graph.add((ms2_uri, ENPKG.hasCorrespondingAdduct, adduct_uri))
 
     @staticmethod
     def _alignment_score(annotation, pathway, superclass, klass) -> float:
@@ -398,9 +436,11 @@ class AnalysisSerializer:
         pathway, superclass, klass = scores
         rankable = pathway is not None and superclass is not None and klass is not None
         if rankable:
+            # Annotations carrying no classification all score 0.0, so without a
+            # second key the cap would keep an arbitrary subset of them.
             ranked = sorted(
                 ((self._alignment_score(a, pathway, superclass, klass), a) for a in annotations),
-                key=lambda pair: pair[0],
+                key=lambda pair: (pair[0], fallback_key(pair[1]) if fallback_key else 0.0),
                 reverse=True,
             )
         elif fallback_key is not None:
@@ -606,6 +646,29 @@ class AnalysisSerializer:
             g.add((uri, PROV.wasDerivedFrom, reference_uri))
         return uri
 
+    def _add_library_structure(self, structure: LibraryStructure) -> URIRef:
+        """Emit (once) the structure node for a match only a spectral library names.
+
+        Mirrors :meth:`_add_compound` for the fields a library carries, and links to
+        the same 2D node via ``emi:hasInChIKey2D``, so a consumer reaches the
+        structure from the annotation by the same one hop either way.
+        """
+        uri = CompoundURIs.library_structure_uri(structure)
+        if uri in self._emitted:
+            return uri
+        self._emitted.add(uri)
+        g = self.graph
+        g.add((uri, RDF.type, EMI.ChemicalStructure))
+        self._set(uri, CHEMROF.inchi_key_string, structure.inchikey)
+        self._set(uri, CHEMROF.inchi_string, structure.inchi)
+        self._set(uri, EMI.hasSMILES, structure.smiles)
+        self._set(uri, CHEMROF.generalized_empirical_formula, structure.molecular_formula)
+        self._set(uri, SKOS.prefLabel, structure.compound_name)
+        self._set(uri, ENPKG.classyfireSuperclass, structure.classyfire_superclass)
+        self._set(uri, ENPKG.classyfireClass, structure.classyfire_class)
+        g.add((uri, EMI.hasInChIKey2D, self._inchikey2d_node(structure.inchikey[:14])))
+        return uri
+
     def _inchikey2d_node(self, short_inchikey: str) -> URIRef:
         """The 2D-InChIKey structure node shared by MS1 compounds and MS2 matches."""
         uri = EMI_RES[f"inchikey2d/{short_inchikey}"]
@@ -652,6 +715,13 @@ class AnalysisSerializer:
         # Matched structure attaches at the 2D (short InChIKey) level — the same
         # node the MS1 compound links to via hasInChIKey2D.
         g.add((uri, EMI.hasChemicalStructure, self._inchikey2d_node(annotation.short_inchikey)))
+        # Materialise the structure behind that 2D node from whichever source named
+        # it. Both methods link themselves to the same node, so the annotation
+        # reaches the full structure through it.
+        if annotation.lotus is not None:
+            self._add_compound(annotation.lotus)
+        elif annotation.library_structure is not None:
+            self._add_library_structure(annotation.library_structure)
         for organism in annotation.organisms:
             organism_uri = OrganismURIs.organism_uri(organism)
             if organism_uri is not None:

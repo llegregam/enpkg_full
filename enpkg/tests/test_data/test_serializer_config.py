@@ -74,3 +74,15 @@ def test_min_relative_intensity_is_bounded(value):
 def test_min_relative_intensity_accepts_the_bounds():
     assert SerializerConfig(min_relative_intensity=0.0).min_relative_intensity == 0.0
     assert SerializerConfig(min_relative_intensity=1.0).min_relative_intensity == 1.0
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1])
+def test_ms2_coupling_min_score_is_bounded(value):
+    """It is compared with a cosine score, which lies in 0-1."""
+    with pytest.raises(ValidationError):
+        SerializerConfig(ms2_coupling_min_score=value)
+
+
+def test_ms2_coupling_min_score_reaches_the_serializer():
+    cfg = SerializerConfig(ms2_coupling_min_score=0.85)
+    assert AnalysisSerializer(**cfg.model_dump()).ms2_coupling_min_score == 0.85

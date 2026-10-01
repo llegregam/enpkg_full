@@ -7,12 +7,18 @@ spectra is read in one statement.
 """
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from enpkg.monolith.exceptions import DatabaseError
 from enpkg.monolith.loaders.database_manager import DatabaseManager
+from enpkg.monolith.loaders.spectral_libraries.npc_labels import (
+    RANK_OF_COLUMN,
+    SEPARATOR,
+    npc_label_repair,
+)
 from enpkg.monolith.loaders.spectral_libraries.schema import (
     COLUMN_MAP,
     KNOWN_COLUMNS,
@@ -247,6 +253,7 @@ class FragHubCsvImporter:
         db.drop_library_spectra_indexes()
         try:
             db.connection.execute(sql, [str(self.path), self._delimiter])
+            self._repair_npc_labels(db, library_id)
             n_inserted = db.connection.execute(
                 "SELECT count(*) FROM library_spectra WHERE library_id = ?",
                 [library_id],
@@ -278,15 +285,79 @@ class FragHubCsvImporter:
             unknown_columns=unknown,
         )
 
+    def _repair_npc_labels(self, db: DatabaseManager, library_id: int) -> None:
+        """Restore the NPClassifier labels FragHub exports with corrupted text.
+
+        See :mod:`~enpkg.monolith.loaders.spectral_libraries.npc_labels` for what the
+        corruption is. The repair runs on distinct cell values, of which a library has
+        a few thousand, so it costs one GROUP BY per column and an UPDATE joined on a
+        small table.
+        """
+        repair = npc_label_repair()
+        conn = db.connection
+        restored: Counter[tuple[str, str]] = Counter()
+        unrecognised: Counter[str] = Counter()
+        for column, rank in RANK_OF_COLUMN.items():
+            cells = conn.execute(
+                f"SELECT {column}, count(*) FROM library_spectra "
+                f"WHERE library_id = ? AND {column} IS NOT NULL GROUP BY 1",
+                [library_id],
+            ).fetchall()
+            changes = []
+            for cell, n_spectra in cells:
+                fixed, replacements = repair.repair(rank, cell)
+                if replacements:
+                    changes.append((cell, fixed))
+                    for replacement in replacements:
+                        restored[replacement] += n_spectra
+                for label in fixed.split(SEPARATOR):
+                    if not repair.is_genuine(rank, label):
+                        unrecognised[label] += n_spectra
+            if not changes:
+                continue
+            conn.execute("CREATE OR REPLACE TEMP TABLE npc_label_repairs (raw VARCHAR, fixed VARCHAR)")
+            conn.executemany("INSERT INTO npc_label_repairs VALUES (?, ?)", changes)
+            conn.execute(
+                f"UPDATE library_spectra SET {column} = r.fixed FROM npc_label_repairs r "
+                f"WHERE library_spectra.library_id = ? AND library_spectra.{column} = r.raw",
+                [library_id],
+            )
+        conn.execute("DROP TABLE IF EXISTS npc_label_repairs")
+
+        if restored:
+            self.logger.warning(
+                "Restored %d NPClassifier labels corrupted in FragHub's ontology table "
+                "(%d distinct; see docs/upstream/FRAGHUB_NPCLASSIFIER_LABELS.md):",
+                sum(restored.values()), len(restored),
+            )
+            for (corrupted, term), n_spectra in restored.most_common():
+                self.logger.warning("  %r -> %r (%d spectra)", corrupted, term, n_spectra)
+        if unrecognised:
+            self.logger.info(
+                "%d distinct NPClassifier labels are not in the vendored vocabulary and "
+                "were kept as they are: %s",
+                len(unrecognised),
+                ", ".join(f"{label!r} ({n})" for label, n in unrecognised.most_common()),
+            )
+
     def preview(self, db: DatabaseManager, limit: int = 20) -> list[dict]:
         """Resolve the first ``limit`` rows without inserting anything.
 
         Validates the header and the bucket first, so a malformed export is
-        diagnosed in seconds rather than after an hour-long import.
+        diagnosed in seconds rather than after an hour-long import. NPClassifier
+        labels are shown as the import stores them, restored where corrupted.
         """
         columns = self._read_header(db)
         self.validate(db)
         sql = self._select_sql(columns, start_id=0, library_id=0) + f" LIMIT {int(limit)}"
         rows = db.connection.execute(sql, [str(self.path), self._delimiter]).fetchall()
         names = [d[0] for d in db.connection.description]
-        return [dict(zip(names, row, strict=True)) for row in rows]
+        repair = npc_label_repair()
+        previews = []
+        for row in rows:
+            record = dict(zip(names, row, strict=True))
+            for column, rank in RANK_OF_COLUMN.items():
+                if record.get(column):
+                    record[column] = repair.repair(rank, record[column])[0]
+            previews.append(record)
+        return previews

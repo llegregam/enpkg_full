@@ -41,11 +41,19 @@ def test_ionization_mode_prefers_new_key_when_both_given():
         ("min_score", -0.1),
         ("min_score", 1.1),
         ("min_peaks", 0),
+        ("library_only_min_score", -0.1),
+        ("library_only_min_score", 1.1),
     ],
 )
 def test_spectral_match_param_bounds(field, value):
     with pytest.raises(ValidationError):
         SpectralMatchParams(**{field: value})
+
+
+def test_library_only_matches_need_a_stronger_score_by_default():
+    params = SpectralMatchParams()
+    assert params.library_only_min_score == 0.7
+    assert params.library_only_min_score > params.min_score
 
 
 def test_method_must_be_a_known_similarity():
