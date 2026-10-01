@@ -35,10 +35,10 @@
 
 <https://w3id.org/enpkg#> a owl:Ontology ;
     owl:imports emi: ;
-    owl:versionInfo "0.1.0" ;
+    owl:versionInfo "0.2.0" ;
     dcterms:title "ENPKG Vocabulary" ;
     dcterms:description "Terms minted for the ENPKG knowledge-graph pipeline, reused unchanged across every knowledge graph the pipeline generates. Complements the Earth Metabolome Ontology (EMI), which this ontology imports." ;
-    dcterms:creator "Pierre-Marie Allard" , "Loïc Le Grégam" ;
+    dcterms:creator "Loïc Le Grégam" ;
     dcterms:license <https://www.gnu.org/licenses/gpl-3.0.html> .
 
 #################################################################
@@ -48,48 +48,79 @@
 ### Adduct / MS1
 
 enpkg:AdductAnnotation a owl:Class ;
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
     rdfs:subClassOf emi:StructuralAnnotation ;
     rdfs:label "adduct annotation (MS1)" ;
-    rdfs:comment "[live] A mass-based adduct hypothesis on one LCMSFeature: one (LOTUS formula-group, AdductRecipe) pairing. Carries the candidate structures as enpkg:hasCandidateStructure (mass-coincidence hits, not confirmed identifications — see enpkg:SpectralAnnotation/enpkg:SiriusAnnotation for those)." .
+    rdfs:comment """[live] A mass-based adduct hypothesis on one 
+    LCMSFeature composed of one (LOTUS formula-group, AdductRecipe) pairing. 
+    Carries the candidate structures as enpkg:hasCandidateStructure 
+    (mass-coincidence hits, not confirmed identifications — see 
+    enpkg:SpectralAnnotation/enpkg:SiriusAnnotation for those).""" .
 
 enpkg:SpectralAnnotation a owl:Class ;
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
     rdfs:subClassOf emi:StructuralAnnotation ;
-    rdfs:label "spectral library annotation (MS2)" ;
-    rdfs:comment "[live] A fragmentation-matched spectral-library identification on one LCMSFeature. Attaches to structure at the 2D-InChIKey level via emi:hasChemicalStructure, since MS2 only resolves the 2D skeleton." .
+    rdfs:label "Spectral library annotation (MS2)" ;
+    rdfs:comment """[live] A fragmentation-matched spectral-library 
+    identification on one LCMSFeature. Attaches to structure at the 
+    2D-InChIKey level via emi:hasChemicalStructure, since MS2 only 
+    resolves the 2D skeleton.""" .
 
 enpkg:SiriusAnnotation a owl:Class ;
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
     rdfs:subClassOf emi:StructuralAnnotation ;
     rdfs:label "SIRIUS structure annotation" ;
-    rdfs:comment "[live] An in-silico structure identification from SIRIUS on one LCMSFeature, attached via the same emi:hasAnnotation predicate as MS1/MS2 (unified — SIRIUS previously had its own enpkg:hasSiriusAnnotation predicate, retired). Candidates arrive pre-ranked by SIRIUS's structurePerIdRank, stamped as enpkg:annotationRank." .
+    rdfs:comment """[live] An in-silico structure identification from 
+    SIRIUS on one LCMSFeature, attached via the same emi:hasAnnotation 
+    predicate as MS1/MS2 (unified — SIRIUS previously had its own 
+    enpkg:hasSiriusAnnotation predicate, retired). Candidates arrive 
+    pre-ranked by SIRIUS's structurePerIdRank, stamped as enpkg:annotationRank.""" .
 
 enpkg:AdductRecipe a owl:Class ;
-    rdfs:label "adduct recipe" ;
-    rdfs:comment "[live] The ionization form applied to a neutral molecule to produce an observed ion: e.g. [M+H]+. Composed of Ingredients; cf. MS:1003055 (\"adduct\"), which has no structured-composition equivalent." .
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
+    rdfs:label "Recipe composing an adduct from a neutral molecule" ;
+    rdfs:comment """[live] The ionization form applied to a neutral molecule to produce 
+    an observed ion: e.g. [M+H]+. Composed of Ingredients; cf. MS:1003055 (\"adduct\"), 
+    which has no structured-composition equivalent.""" .
 
 enpkg:Ingredient a owl:Class ;
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
     rdfs:label "adduct recipe ingredient" ;
-    rdfs:comment "[target] One named, signed-count component of an AdductRecipe (e.g. proton:+1, water:-1). The *nodes* are live — _add_recipe mints them and hangs enpkg:ingredientName/ingredientCount off each — but it never stamps this rdf:type on them, so the class itself is not yet emitted (a gap; see the review doc)." .
+    rdfs:comment """[target] One named, signed-count component of an AdductRecipe 
+    (e.g. proton:+1, water:-1). The *nodes* are live — _add_recipe mints them and 
+    hangs enpkg:ingredientName/ingredientCount off each — but it never stamps this 
+    rdf:type on them, so the class itself is not yet emitted (a gap; see the review 
+    doc).""" .
 
 enpkg:AdductCluster a owl:Class ;
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
     rdfs:label "MS1 adduct cluster (a molecule and its adducts)" ;
     skos:closeMatch emi:FBMNComponent ;
-    rdfs:comment "[live] Groups the features resolved as different ionization forms of one molecule by the MS1 relationship graph (an anchor base ion + its satellite adducts). No EMI term; emi:FBMNComponent is the analogous *network* grouping (structural family, a different notion of relatedness)." .
+    rdfs:comment """[live] Groups the features resolved as different ionization forms 
+    of one molecule by the MS1 relationship graph (an anchor base ion + its satellite 
+    adducts). emi:FBMNComponent is the analogous *molecular network* grouping.""" .
 
 enpkg:MolecularFormula a owl:Class ;
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
     rdfs:label "molecular formula" ;
     skos:exactMatch ms:1000866 ;
-    rdfs:comment "[target] MS:1000866 is a PSI-MS cvParam *value* class, not meant to type nodes directly — this class is the node-typing equivalent, cross-referenced to it." .
+    rdfs:comment """[target] MS:1000866 is a PSI-MS cvParam *value* class, not meant to 
+    type nodes directly — this class is the node-typing equivalent, cross-referenced to it.""" .
 
 enpkg:Atom a owl:Class ;
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
     rdfs:label "atom" ;
     skos:closeMatch chebi:33250 ;
-    rdfs:comment "[target] One element (with signed count and optional isotope) in a MolecularFormula's composition." .
+    rdfs:comment """[target] One element (with signed count and optional isotope) in a 
+    MolecularFormula's composition.""" .
 
 ### Sample & spine
 
 enpkg:SampleMetadata a owl:Class ;
     rdfs:label "sample metadata" ;
-    rdfs:comment "[target] Collection-level metadata about a sample, sourced from the user's metadata file. Distinct from ExtractSample, which is the analytical-process side; no minted URI yet for this node (see the review doc, §1a)." .
+    rdfs:comment """[target] Collection-level metadata about a sample, sourced from the 
+    user's metadata file. Distinct from ExtractSample, which is the analytical-process 
+    side; no minted URI yet for this node (see the review doc, §1a).""" .
 
 #################################################################
 # Object properties
