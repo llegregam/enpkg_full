@@ -356,3 +356,12 @@ class OrganismURIs:
         return _organism_uri(organism.wikidata, organism.ott_id)
 
 
+class MetadataURIs:
+    """Stable URIs for metadata nodes.
+    These are minted in the context of a specific SampleMetadata.
+
+    They contain a fixed set of URI's for the known metadata columns,
+    and a variable set of URI's for any extra user-defined metadata columns.
+    """
+    pass
+
