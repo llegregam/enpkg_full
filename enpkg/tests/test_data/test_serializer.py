@@ -7,10 +7,10 @@ from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
 from enpkg.monolith.data.analysis import Analysis
-from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
+from enpkg.monolith.data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
 from enpkg.monolith.data.sample_metadata import SampleMetadata
 from enpkg.monolith.rdf import AnalysisSerializer, serialize_to_turtle
-from enpkg.monolith.rdf.namespaces import CHEMROF, EMI, EMI_RES, ENPKG, NPC
+from enpkg.monolith.rdf.namespaces import CHEMROF, EMI, EMI_RES, ENPKG, NPC, PROV
 from enpkg.monolith.rdf.uris import AnalysisURIs, CompoundURIs
 
 
@@ -314,6 +314,131 @@ def test_ms2_with_no_corresponding_adduct_emits_no_ms1(
     assert set(g.subjects(RDF.type, ENPKG.AdductAnnotation)) == set()
     ms2_uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, spectrum.ms2_annotations[0])
     assert list(g.objects(ms2_uri, ENPKG.hasCorrespondingAdduct)) == []
+
+
+def _ms2_from_library(short_inchikey="LIBRARYONLYIKX", score=0.9):
+    """An MS2 match only the spectral library knows: zero NPC vectors, no organisms."""
+    return MS2ChemicalAnnotation(
+        source="LIB:1.0",
+        queried_against="LIB:1.0",
+        short_inchikey=short_inchikey,
+        score=score,
+        pathway_scores=np.zeros(2),
+        superclass_scores=np.zeros(2),
+        class_scores=np.zeros(2),
+        library_structure=LibraryStructure(
+            inchikey=f"{short_inchikey}-UHFFFAOYSA-N",
+            inchi="InChI=1S/C2H6/c1-2/h1-2H3",
+            smiles="CC",
+            molecular_formula="C2H6",
+            compound_name="Library-only compound",
+            npc_pathway="Alkaloids|Terpenoids",
+            npc_superclass=None,
+            npc_class=None,
+            classyfire_superclass="Organoheterocyclic compounds",
+            classyfire_class="Indoles",
+            classyfire_subclass="Indolines",
+        ),
+    )
+
+
+def test_library_only_ms2_match_emits_its_structure(make_analysis):
+    """A match LOTUS does not know reaches the graph with the structure the library
+    asserts, hung off the same 2D node the annotation points at."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    annotation = _ms2_from_library()
+    spectrum.ms2_annotations = [annotation]
+
+    serializer = AnalysisSerializer()
+    serializer.add_analysis(analysis)
+    g = serializer.graph
+
+    ms2_uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, annotation)
+    structure_uri = CompoundURIs.library_structure_uri(annotation.library_structure)
+    assert (structure_uri, RDF.type, EMI.ChemicalStructure) in g
+    assert g.value(structure_uri, CHEMROF.inchi_key_string) == Literal("LIBRARYONLYIKX-UHFFFAOYSA-N")
+    assert g.value(structure_uri, CHEMROF.inchi_string) == Literal("InChI=1S/C2H6/c1-2/h1-2H3")
+    assert g.value(structure_uri, EMI.hasSMILES) == Literal("CC")
+    assert g.value(structure_uri, CHEMROF.generalized_empirical_formula) == Literal("C2H6")
+    assert g.value(structure_uri, SKOS.prefLabel) == Literal("Library-only compound")
+    assert g.value(structure_uri, ENPKG.classyfireSuperclass) == Literal("Organoheterocyclic compounds")
+    assert g.value(structure_uri, ENPKG.classyfireClass) == Literal("Indoles")
+    # Reached through the shared 2D node, exactly as MS1 compounds and SIRIUS candidates are.
+    two_d = g.value(ms2_uri, EMI.hasChemicalStructure)
+    assert g.value(structure_uri, EMI.hasInChIKey2D) == two_d
+    # The library names no organism, so neither node carries one.
+    assert (structure_uri, EMI.inTaxon, None) not in g
+    assert (ms2_uri, EMI.inTaxon, None) not in g
+    # Derived from the library, not from LOTUS.
+    assert g.value(ms2_uri, PROV.wasDerivedFrom) == EMI_RES["dataset/LIB:1.0"]
+
+
+def test_library_only_ms2_match_survives_a_turtle_round_trip(make_analysis):
+    """The library label ("name:version") lands inside minted IRIs, colon included."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    analysis.spectra[0].ms2_annotations = [_ms2_from_library()]
+
+    serializer = AnalysisSerializer()
+    serializer.add_analysis(analysis)
+    reparsed = Graph().parse(data=serializer.graph.serialize(format="turtle"), format="turtle")
+
+    assert len(reparsed) == len(serializer.graph)
+
+
+def test_lotus_backed_ms2_match_emits_its_compound_without_ms1(make_analysis, make_lotus):
+    """A LOTUS-backed match carries its full compound into the graph on its own, not
+    only when an MS1 adduct on the same feature happens to propose it too."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    lotus = make_lotus(structure_inchikey="MATCHEDCOMPND1-UHFFFAOYSA-N")
+    annotation = MS2ChemicalAnnotation(
+        source="Lotus",
+        queried_against="LIB:1.0",
+        short_inchikey=lotus.short_inchikey,
+        score=0.9,
+        pathway_scores=lotus.structure_taxonomy_hammer_pathways,
+        superclass_scores=lotus.structure_taxonomy_hammer_superclasses,
+        class_scores=lotus.structure_taxonomy_hammer_classes,
+        lotus=lotus,
+    )
+    spectrum.ms1_annotations = []
+    spectrum.ms2_annotations = [annotation]
+
+    serializer = AnalysisSerializer()
+    serializer.add_analysis(analysis)
+    g = serializer.graph
+
+    ms2_uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, annotation)
+    compound_uri = CompoundURIs.lotus_uri(lotus)
+    assert (compound_uri, RDF.type, EMI.ChemicalStructure) in g
+    assert g.value(compound_uri, EMI.hasSMILES) == Literal(lotus.structure_smiles)
+    assert g.value(compound_uri, SKOS.prefLabel) == Literal(lotus.structure_name_traditional)
+    assert g.value(compound_uri, EMI.hasInChIKey2D) == g.value(ms2_uri, EMI.hasChemicalStructure)
+
+
+def test_ms2_matches_tied_on_alignment_are_ranked_by_cosine(make_analysis):
+    """Matches carrying no classification all align at 0.0; the cap must then keep the
+    best spectral match, not whichever was stored first."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    # Propagated scores present, so the alignment ranking runs (not the cosine fallback).
+    spectrum.ms2_pathway_scores = np.array([0.5, 0.5])
+    spectrum.ms2_superclass_scores = np.array([0.5, 0.5])
+    spectrum.ms2_class_scores = np.array([0.5, 0.5])
+    # Stored weaker-first: a stable sort on the alignment score alone keeps this order.
+    weaker = _ms2_from_library("WEAKERMATCHAAA", score=0.5)
+    stronger = _ms2_from_library("STRONGERMATCHA", score=0.9)
+    spectrum.ms2_annotations = [weaker, stronger]
+
+    serializer = AnalysisSerializer(top_k_ms2=1)
+    serializer.add_analysis(analysis)
+    g = serializer.graph
+
+    stronger_uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, stronger)
+    weaker_uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, weaker)
+    assert g.value(stronger_uri, ENPKG.annotationRank) == Literal(1)
+    assert (weaker_uri, None, None) not in g
 
 
 def test_no_ms2_keeps_full_topk_ms1(make_analysis, make_adduct, make_lotus, make_recipe):

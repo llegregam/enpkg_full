@@ -32,7 +32,7 @@ from rdflib import Graph, Literal, URIRef
 
 from ..data.analysis import Analysis
 from ..data.annotated_spectra_class import AnnotatedSpectrum
-from ..data.chemical_annotation import MS2ChemicalAnnotation
+from ..data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
 from ..data.lotus_class import Lotus
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.sirius_annotation import SiriusChemicalAnnotation
@@ -398,9 +398,11 @@ class AnalysisSerializer:
         pathway, superclass, klass = scores
         rankable = pathway is not None and superclass is not None and klass is not None
         if rankable:
+            # Annotations carrying no classification all score 0.0, so without a
+            # second key the cap would keep an arbitrary subset of them.
             ranked = sorted(
                 ((self._alignment_score(a, pathway, superclass, klass), a) for a in annotations),
-                key=lambda pair: pair[0],
+                key=lambda pair: (pair[0], fallback_key(pair[1]) if fallback_key else 0.0),
                 reverse=True,
             )
         elif fallback_key is not None:
@@ -606,6 +608,29 @@ class AnalysisSerializer:
             g.add((uri, PROV.wasDerivedFrom, reference_uri))
         return uri
 
+    def _add_library_structure(self, structure: LibraryStructure) -> URIRef:
+        """Emit (once) the structure node for a match only a spectral library names.
+
+        Mirrors :meth:`_add_compound` for the fields a library carries, and links to
+        the same 2D node via ``emi:hasInChIKey2D``, so a consumer reaches the
+        structure from the annotation by the same one hop either way.
+        """
+        uri = CompoundURIs.library_structure_uri(structure)
+        if uri in self._emitted:
+            return uri
+        self._emitted.add(uri)
+        g = self.graph
+        g.add((uri, RDF.type, EMI.ChemicalStructure))
+        self._set(uri, CHEMROF.inchi_key_string, structure.inchikey)
+        self._set(uri, CHEMROF.inchi_string, structure.inchi)
+        self._set(uri, EMI.hasSMILES, structure.smiles)
+        self._set(uri, CHEMROF.generalized_empirical_formula, structure.molecular_formula)
+        self._set(uri, SKOS.prefLabel, structure.compound_name)
+        self._set(uri, ENPKG.classyfireSuperclass, structure.classyfire_superclass)
+        self._set(uri, ENPKG.classyfireClass, structure.classyfire_class)
+        g.add((uri, EMI.hasInChIKey2D, self._inchikey2d_node(structure.inchikey[:14])))
+        return uri
+
     def _inchikey2d_node(self, short_inchikey: str) -> URIRef:
         """The 2D-InChIKey structure node shared by MS1 compounds and MS2 matches."""
         uri = EMI_RES[f"inchikey2d/{short_inchikey}"]
@@ -652,6 +677,13 @@ class AnalysisSerializer:
         # Matched structure attaches at the 2D (short InChIKey) level — the same
         # node the MS1 compound links to via hasInChIKey2D.
         g.add((uri, EMI.hasChemicalStructure, self._inchikey2d_node(annotation.short_inchikey)))
+        # Materialise the structure behind that 2D node from whichever source named
+        # it. Both methods link themselves to the same node, so the annotation
+        # reaches the full structure through it.
+        if annotation.lotus is not None:
+            self._add_compound(annotation.lotus)
+        elif annotation.library_structure is not None:
+            self._add_library_structure(annotation.library_structure)
         for organism in annotation.organisms:
             organism_uri = OrganismURIs.organism_uri(organism)
             if organism_uri is not None:

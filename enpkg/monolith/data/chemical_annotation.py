@@ -6,6 +6,7 @@ from typing import Optional
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
+from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.data.otl_class import Match
 from enpkg.monolith.data.taxonomy import normalized_rank_similarity, rank_similarity
 
@@ -45,6 +46,33 @@ class AnnotationOrganism:
         return normalized_rank_similarity(self, match)
 
 
+@dataclass(slots=True)
+class LibraryStructure:
+    """What a matched library spectrum asserts about its own structure.
+
+    Carried by an MS2 annotation whose structure is absent from the LOTUS database,
+    so the match still reaches the knowledge graph with a structure attached.
+    ``slots=True`` keeps it light, as one is materialised per such match.
+
+    The three ``npc_*`` fields hold the library's raw NPClassifier labels, which are
+    free strings and may name several ranks separated by ``|``. They are literals
+    only: nothing converts them into the classification score vectors that
+    ``pathway_scores`` and its siblings carry.
+    """
+
+    inchikey: str
+    inchi: Optional[str]
+    smiles: Optional[str]
+    molecular_formula: Optional[str]
+    compound_name: Optional[str]
+    npc_pathway: Optional[str]
+    npc_superclass: Optional[str]
+    npc_class: Optional[str]
+    classyfire_superclass: Optional[str]
+    classyfire_class: Optional[str]
+    classyfire_subclass: Optional[str]
+
+
 class ChemicalAnnotation(BaseModel):
     """Class to store a chemical annotation."""
 
@@ -58,10 +86,16 @@ class ChemicalAnnotation(BaseModel):
 class MS2ChemicalAnnotation(ChemicalAnnotation):
     """Chemical annotation for an MS2 spectral-library match.
 
-    Holds only what downstream needs rather than the full matched ``Lotus``
-    objects: the matched structure (short InChIKey), the spectral match score,
-    the structure's NPC classification arrays (for chemical-class reweighting),
-    and the list of source organisms (for taxonomical reranking).
+    Carries the matched structure (short InChIKey), the spectral match score, the
+    NPC classification arrays used for chemical-class reweighting, and the source
+    organisms used for taxonomical reranking.
+
+    Exactly one of ``lotus`` and ``library_structure`` is set, naming where the
+    structure detail comes from. A match whose structure is in the LOTUS database
+    carries ``lotus`` plus real classification arrays and organisms; a match only
+    the spectral library knows carries ``library_structure``, zero-filled
+    classification arrays and no organisms, which keeps it out of the reweighting
+    (``has_organisms()`` is False) while still letting it reach the graph.
     """
 
     short_inchikey: str = Field(
@@ -89,6 +123,17 @@ class MS2ChemicalAnnotation(ChemicalAnnotation):
     organisms: list[AnnotationOrganism] = Field(
         default_factory=list,
         description="Source organisms for the matched structure (taxonomical DB).",
+    )
+    lotus: Optional[Lotus] = Field(
+        default=None,
+        description="The matched LOTUS entry, when the structure is in the LOTUS "
+        "database. A reference to an entry the LotusStore already retains for the "
+        "run, so it costs one pointer per annotation.",
+    )
+    library_structure: Optional[LibraryStructure] = Field(
+        default=None,
+        description="Structure metadata asserted by the matched library spectrum, "
+        "present when the structure is absent from the LOTUS database.",
     )
 
     def has_organisms(self) -> bool:

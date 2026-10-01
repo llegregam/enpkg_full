@@ -6,7 +6,11 @@ from rdflib import URIRef
 
 from ..data.analysis import Analysis
 from ..data.annotated_spectra_class import AnnotatedSpectrum
-from ..data.chemical_annotation import AnnotationOrganism, MS2ChemicalAnnotation
+from ..data.chemical_annotation import (
+    AnnotationOrganism,
+    LibraryStructure,
+    MS2ChemicalAnnotation,
+)
 from ..data.lotus_class import Lotus
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.otl_class import Match
@@ -323,6 +327,15 @@ class CompoundURIs:
         # TODO: Discuss if this fallback is a good compromise, given that SMILES
         # can be non-canonical and may not be stable across LOTUS versions.
         return EMI_RES[f"compound/smiles/{_short_hash(lotus.structure_smiles)}"]
+
+    @staticmethod
+    def library_structure_uri(structure: LibraryStructure) -> URIRef:
+        """Mint the URI for a structure known only to a spectral library.
+
+        Keyed on the full InChIKey via identifiers.org, the same first branch as
+        :meth:`lotus_uri`, so a structure named by both sources is one node.
+        """
+        return INCHIKEY[structure.inchikey]
 
 
 class OrganismURIs:

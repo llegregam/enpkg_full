@@ -18,7 +18,7 @@ from rdflib import Graph
 from rdflib.namespace import OWL, RDF, RDFS
 
 from enpkg.monolith.data.analysis import Analysis
-from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
+from enpkg.monolith.data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
 from enpkg.monolith.data.otl_class import Match, Taxon
 from enpkg.monolith.data.sample_metadata import SampleMetadata
 from enpkg.monolith.rdf import AnalysisSerializer
@@ -30,9 +30,10 @@ _TTL_PATH = Path(__file__).resolve().parents[3] / "docs" / "vocab" / "enpkg.ttl"
 def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation):
     """An Analysis exercising every enpkg:-emitting branch of the serializer at
     once: an MS1 adduct cluster (anchor + 2 satellites), an MS1 candidate
-    coupled to an MS2 match, SIRIUS candidates, an OTT match, and a molecular
-    network with both an edge and a >=2-member component — plus sample fields
-    (source_id, filenames) that only ever come from user metadata."""
+    coupled to an MS2 match, an MS2 match only the spectral library knows,
+    SIRIUS candidates, an OTT match, and a molecular network with both an edge
+    and a >=2-member component — plus sample fields (source_id, filenames)
+    that only ever come from user metadata."""
     anchor = make_spectrum(feature_id=1, precursor_mz=201.0)
     sat_na = make_spectrum(feature_id=2, precursor_mz=223.0)
     sat_k = make_spectrum(feature_id=3, precursor_mz=239.0)
@@ -69,6 +70,31 @@ def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct,
     sirius_spectrum.sirius_annotations = [
         make_sirius_annotation(rank=1),
         make_sirius_annotation(rank=2, inchikey_2d="SKELETON00002X"),
+    ]
+    sirius_spectrum.ms2_annotations = [
+        MS2ChemicalAnnotation(
+            source="LIB:1.0",
+            queried_against="LIB:1.0",
+            short_inchikey="LIBRARYONLYIKX",
+            score=0.8,
+            n_matched_peaks=6,
+            pathway_scores=np.array([]),
+            superclass_scores=np.array([]),
+            class_scores=np.array([]),
+            library_structure=LibraryStructure(
+                inchikey="LIBRARYONLYIKX-UHFFFAOYSA-N",
+                inchi="InChI=1S/C2H6/c1-2/h1-2H3",
+                smiles="CC",
+                molecular_formula="C2H6",
+                compound_name="Library-only compound",
+                npc_pathway="Alkaloids",
+                npc_superclass=None,
+                npc_class=None,
+                classyfire_superclass="Organoheterocyclic compounds",
+                classyfire_class="Indoles",
+                classyfire_subclass="Indolines",
+            ),
+        )
     ]
 
     ott_taxon = Taxon(

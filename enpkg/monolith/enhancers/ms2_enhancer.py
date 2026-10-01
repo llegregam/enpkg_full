@@ -1,10 +1,13 @@
 """Submodule for the MS2 spectral-matching enhancer."""
 
+import re
+from collections import Counter
 from itertools import groupby
 from logging import Logger
 from time import time
 from typing import Optional
 
+import numpy as np
 from matchms.similarity import CosineGreedy, CosineHungarian
 from tqdm.auto import trange
 from tqdm.contrib import tzip
@@ -12,7 +15,11 @@ from tqdm.contrib import tzip
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
-from enpkg.monolith.data.chemical_annotation import AnnotationOrganism, MS2ChemicalAnnotation
+from enpkg.monolith.data.chemical_annotation import (
+    AnnotationOrganism,
+    LibraryStructure,
+    MS2ChemicalAnnotation,
+)
 from enpkg.monolith.data.lotus_class import Lotus
 from enpkg.monolith.enhancers.enhancer import Enhancer
 from enpkg.monolith.loaders.lotus_store import LotusStore
@@ -21,6 +28,12 @@ from enpkg.monolith.loaders.spectral_library_store import (
     SpectralLibraryStore,
 )
 from enpkg.monolith.utils.ms2_adduct_gating import select_spectra_for_ms2
+
+# Standard InChIKey: 14-letter skeleton block, 10-letter stereo/version block,
+# 1-letter protonation flag. Library exports can carry other strings in their
+# InChIKey field (a SMILES such as "CCCCCCCCCCCCCC" is 14 uppercase letters too),
+# so the full key's shape is what tells a real one apart.
+_INCHIKEY = re.compile(r"[A-Z]{14}-[A-Z]{10}-[A-Z]")
 
 
 class Ms2Enhancer(Enhancer):
@@ -101,79 +114,107 @@ class Ms2Enhancer(Enhancer):
         library_label: str,
         score: float,
         n_matches: int,
-    ) -> bool:
-        """Attach one MS2 annotation for a scored candidate, if LOTUS knows it.
+    ) -> str:
+        """Attach one MS2 annotation for a scored candidate.
 
-        Returns True when an annotation was added. A candidate whose structure is
-        absent from LOTUS currently yields nothing: the annotation model carries
-        the classification vectors and source organisms that only LOTUS provides.
+        Returns which path was taken:
+
+        * ``"lotus"`` — LOTUS knows the structure, so the annotation carries its
+          classification vectors and every source organism LOTUS lists for it.
+        * ``"library"`` — LOTUS does not know it, so the annotation carries what the
+          library asserts about the structure, zero-filled classification vectors
+          and no organisms. Having no organism keeps it out of the reweighting
+          (``WeightsEnhancer`` filters on ``has_organisms()``); the zero vectors are
+          full length so every elementwise product downstream still lines up.
+        * ``"no_hit"`` — the library row names no structure, so there is nothing to
+          annotate and no annotation is added.
+        * ``"malformed_inchikey"`` — LOTUS does not know it and its InChIKey is not
+          a well-formed InChIKey. The full key would become the structure node's
+          identity and the 2D key is derived from it, so neither can be trusted and
+          no annotation is added. ``enhance`` reports the offending strings.
         """
-        # TODO: let MS2ChemicalAnnotation carry classifications from a source other
-        # than LOTUS, so a candidate LOTUS does not know is annotated rather than
-        # dropped. Three things block that today, and they are separable:
-        #
-        #  1. The model is LOTUS-shaped. `source` is hardcoded "Lotus";
-        #     `pathway_scores` / `superclass_scores` / `class_scores` are the LOTUS
-        #     probability vectors; `organisms` has no library equivalent at all;
-        #     `short_inchikey` is required, but a library hit is identified by its
-        #     own INCHIKEY/SMILES/FORMULA, which are not currently stored anywhere.
-        #  2. The types differ. LOTUS gives a score per NPC term over the whole
-        #     vocabulary; `candidate.npc_pathway` / `npc_superclass` / `npc_class`
-        #     give one label per rank. Reweighting multiplies elementwise against
-        #     LOTUS-length vectors, so a library label is only usable once one-hot
-        #     encoded into `LotusStore.pathways_col_names` and the two sibling
-        #     vocabularies — a different vocabulary misaligns silently.
-        #  3. `weights_enhancer` filters on `has_organisms()`, so an annotation with
-        #     no source organism is dropped downstream even if it is emitted here.
-        #
-        # Open question — precedence, once an annotation can have two sources.
-        # Identity cannot conflict: the LOTUS entry is looked up *by* the
-        # candidate's short InChIKey, so both describe the same structure. The
-        # classifications can conflict, and it is not settled which wins when a
-        # structure is in LOTUS and the library also carries NPC labels: a LOTUS
-        # score vector is strictly more informative than a one-hot, which argues
-        # for LOTUS first and the library as fallback, but the library label is the
-        # one attached to the spectrum that actually matched. ClassyFire has no
-        # LOTUS counterpart and no consumer, so it is additive either way. Record
-        # the winner on the annotation (a `classification_source` field) rather
-        # than resolving it silently, or the reranking input becomes unattributable.
         if not candidate.short_inchikey:
-            return False
-        lotus_entries = self._lotus_by_short_inchikey.get(candidate.short_inchikey)
-        if not lotus_entries:
-            return False
+            return "no_hit"
 
-        representative = lotus_entries[0]
-        organisms = [
-            AnnotationOrganism(
-                name=entry.organism_name,
-                wikidata=entry.organism_wikidata,
-                ott_id=entry.organism_taxonomy_ottid,
-                domain=entry.domain,
-                kingdom=entry.kingdom,
-                phylum=entry.phylum,
-                klass=entry.klass,
-                order=entry.order,
-                family=entry.family,
-                genus=entry.genus,
-                species=entry.species,
+        lotus_entries = self._lotus_by_short_inchikey.get(candidate.short_inchikey)
+        if lotus_entries:
+            representative = lotus_entries[0]
+            organisms = [
+                AnnotationOrganism(
+                    name=entry.organism_name,
+                    wikidata=entry.organism_wikidata,
+                    ott_id=entry.organism_taxonomy_ottid,
+                    domain=entry.domain,
+                    kingdom=entry.kingdom,
+                    phylum=entry.phylum,
+                    klass=entry.klass,
+                    order=entry.order,
+                    family=entry.family,
+                    genus=entry.genus,
+                    species=entry.species,
+                )
+                for entry in lotus_entries
+            ]
+            spectrum.add_ms2_annotation(
+                MS2ChemicalAnnotation(
+                    source="Lotus",
+                    queried_against=library_label,
+                    short_inchikey=representative.short_inchikey,
+                    score=float(score),
+                    n_matched_peaks=int(n_matches),
+                    pathway_scores=representative.structure_taxonomy_hammer_pathways,
+                    superclass_scores=representative.structure_taxonomy_hammer_superclasses,
+                    class_scores=representative.structure_taxonomy_hammer_classes,
+                    organisms=organisms,
+                    lotus=representative,
+                )
             )
-            for entry in lotus_entries
-        ]
+            return "lotus"
+
+        inchikey = candidate.inchikey
+        if not inchikey:
+            return "no_hit"
+        if not _INCHIKEY.fullmatch(inchikey):
+            return "malformed_inchikey"
         spectrum.add_ms2_annotation(
             MS2ChemicalAnnotation(
-                source="Lotus",
+                # `source` names where the structure detail came from; the serializer
+                # emits it as prov:wasDerivedFrom.
+                source=library_label,
                 queried_against=library_label,
-                short_inchikey=representative.short_inchikey,
+                short_inchikey=candidate.short_inchikey,
                 score=float(score),
                 n_matched_peaks=int(n_matches),
-                pathway_scores=representative.structure_taxonomy_hammer_pathways,
-                superclass_scores=representative.structure_taxonomy_hammer_superclasses,
-                class_scores=representative.structure_taxonomy_hammer_classes,
-                organisms=organisms,
+                pathway_scores=np.zeros(self.lotus_store.number_of_pathways, dtype=np.float32),
+                superclass_scores=np.zeros(
+                    self.lotus_store.number_of_superclasses, dtype=np.float32
+                ),
+                class_scores=np.zeros(self.lotus_store.number_of_classes, dtype=np.float32),
+                organisms=[],
+                library_structure=self._library_structure(candidate, inchikey),
             )
         )
-        return True
+        return "library"
+
+    @staticmethod
+    def _library_structure(candidate: LibraryCandidate, inchikey: str) -> LibraryStructure:
+        """The structure metadata a candidate asserts, filed under ``inchikey``.
+
+        ``inchikey`` is the candidate's own key, already checked to be well formed.
+        """
+        return LibraryStructure(
+            inchikey=inchikey,
+            inchi=candidate.inchi,
+            smiles=candidate.smiles,
+            molecular_formula=candidate.molecular_formula,
+            compound_name=candidate.compound_name,
+            npc_pathway=candidate.npc_pathway,
+            npc_superclass=candidate.npc_superclass,
+            npc_class=candidate.npc_class,
+            classyfire_superclass=candidate.classyfire_superclass,
+            classyfire_class=candidate.classyfire_class,
+            classyfire_subclass=candidate.classyfire_subclass,
+        )
 
     def enhance(self, analysis: Analysis, chunk_size: int = 1000) -> Analysis:
         """Add MS2 chemical annotations to each spectrum via two-stage matching.
@@ -189,7 +230,9 @@ class Ms2Enhancer(Enhancer):
 
         Features are processed in chunks of ``chunk_size`` so the retrieved
         candidate set stays bounded. Annotations passing both ``min_score`` and
-        ``min_peaks`` are appended in place to ``spectrum.ms2_annotations``.
+        ``min_peaks`` are appended in place to ``spectrum.ms2_annotations``, whether
+        or not LOTUS knows the matched structure — see :meth:`_annotate` for what
+        each kind carries.
         """
         # Gate on the MS1 adduct-graph roles: spectral libraries are almost all
         # base-ion ([M+H]+/[M-H]-), so resolved non-base adducts are skipped.
@@ -239,7 +282,8 @@ class Ms2Enhancer(Enhancer):
                     f"{self.configuration.spectral_match_params.method!r}"
                 )
 
-        n_annotations = 0
+        outcomes: Counter[str] = Counter()
+        malformed_inchikeys: set[str] = set()
         for min_range in trange(
             0,
             number_of_spectra,
@@ -280,15 +324,34 @@ class Ms2Enhancer(Enhancer):
                     msms_score > self.configuration.spectral_match_params.min_score
                     and n_matches >= self.configuration.spectral_match_params.min_peaks
                 ):
-                    n_annotations += self._annotate(
+                    outcome = self._annotate(
                         spectra_chunk[feature_idx],
                         candidate,
                         libraries[candidate.library_id].label,
                         msms_score,
                         n_matches,
                     )
+                    outcomes[outcome] += 1
+                    if outcome == "malformed_inchikey":
+                        malformed_inchikeys.add(candidate.inchikey)
 
-        self.logger.info("MS2 enrichment added %d annotations", n_annotations)
+        self.logger.info(
+            "MS2 enrichment added %d annotations (%d LOTUS-backed, %d library-only)",
+            outcomes["lotus"] + outcomes["library"], outcomes["lotus"], outcomes["library"],
+        )
+        if outcomes["no_hit"]:
+            self.logger.warning(
+                "%d scored matches named no structure and were skipped", outcomes["no_hit"]
+            )
+        if malformed_inchikeys:
+            self.logger.warning(
+                "%d scored matches carried a malformed InChIKey and were skipped. "
+                "%d distinct value%s found in the library's InChIKey field: %s",
+                outcomes["malformed_inchikey"],
+                len(malformed_inchikeys),
+                "" if len(malformed_inchikeys) == 1 else "s",
+                ", ".join(repr(key) for key in sorted(malformed_inchikeys)),
+            )
         # Spectra are annotated in place; the same Analysis is returned (uniform
         # enhancer contract).
         return analysis

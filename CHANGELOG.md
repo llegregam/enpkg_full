@@ -20,6 +20,66 @@ to version numbers.
 
 ## Entries
 
+### 2026-09-30 — MS2 annotates library matches that LOTUS does not know
+
+- **The problem.** `Ms2Enhancer._annotate` discarded any spectral-library match whose short
+  InChIKey was absent from LOTUS, silently: no log line, no counter. In
+  `FRAGHUB_POS_LC:2026.03` that is 948,975 of 1,450,368 spectra (65.4%), covering 194,515
+  distinct structures against the 9,777 LOTUS knows. The structure metadata needed to
+  annotate them was already on every `LibraryCandidate` and read by nothing.
+- **What changed.** A LOTUS miss now yields a *library-only* annotation: `source` is the
+  library's `name:version`, `library_structure` carries the library's InChIKey, InChI, SMILES,
+  formula, name and NPClassifier/ClassyFire labels, the classification vectors are zero-filled
+  at full vocabulary length, and `organisms` is empty. The serializer emits it an
+  `emi:ChemicalStructure` node, reusing only terms `_add_compound` already emits. Three things
+  `_add_compound` emits have no counterpart: `emi:inTaxon` and `prov:wasDerivedFrom` (the library
+  names no organism and no reference), and ClassyFire *subclass*, which the library carries but
+  which has no `enpkg:` term; it is kept on `LibraryStructure` and not emitted, since adding a
+  term is vocabulary work to settle on its own.
+- **Decision: graph only, no reweighting.** The library gives one NPC *label* per rank where
+  LOTUS gives a probability per term. Using a label in the reweighting would mean one-hot
+  encoding it, which drops the confidence gradation (Quercetin's 0.9955 Shikimates becomes a
+  flat 1.0) and flattens genuine ambiguity. It would also need a taxonomical similarity for an
+  annotation with no organism, and because similarities are normalised per feature, any value
+  there shifts weight away from LOTUS-backed matches. And it would help few: only 7,453 of the
+  194,515 recovered structures carry an NPC pathway at all. So library-only annotations have no
+  organism and `WeightsEnhancer`'s existing `has_organisms()` filter keeps them out.
+  `test_weights_ms2_classifications.py` pins that the MS2 feature matrices are bit-identical
+  with and without them.
+- **Decision: LOTUS keeps precedence on classification.** When LOTUS knows the structure, its
+  vectors and organisms are used exactly as before and no library label is consulted.
+- **LOTUS-backed MS2 matches now emit their compound node too.** `_add_compound` was called
+  only from the MS1 path, so a LOTUS-backed MS2 match on a feature with no corresponding MS1
+  adduct resolved to a bare `emi:InChIKey2D` node. Left alone, library-only matches would have
+  carried more structure detail than LOTUS-backed ones. `MS2ChemicalAnnotation.lotus` now holds
+  a reference to the matched entry (already retained by `LotusStore`, so one pointer), and
+  `_add_ms2_annotation` emits it.
+- **Cosine breaks ties in the MS2 ranking.** Library-only annotations all have an alignment
+  score of 0.0, and `sorted` is stable, so `top_k_ms2` kept whichever were stored first. The
+  sort key is now `(alignment, cosine)`. MS1 passes no fallback key, so its order is unchanged.
+- **Malformed InChIKeys are refused and reported.** 287 rows of the library (3 distinct values)
+  carry a SMILES in the InChIKey field, e.g. `CCCCCCCCCCCCCC`. It is 14 uppercase letters, so
+  only the full key's shape (`[A-Z]{14}-[A-Z]{10}-[A-Z]`) tells it apart. Before this change
+  those rows were dropped with the other LOTUS misses; annotating them would have minted
+  `identifiers.org/inchikey/CCCCCCCCCCCCCC`. They now produce no annotation, and `enhance()`
+  warns with the count and the distinct offending values.
+- **Measured effect** (fixture dataset, 660 features, against the workspace database): MS2
+  annotations in memory 1,569 → 1,818 (1.16×; the 1,569 LOTUS-backed ones unchanged, 249
+  library-only added). The pre-cosine candidate split was 49/51, so library-only candidates
+  clear `min_score`/`min_peaks` far less often. Zero vectors cost 3,120 bytes per library-only
+  annotation. MS2 `enhance()` 9.0 s → 9.28 s.
+- **Consequence for MS1 in the graph.** `_emit_ms1_annotations` keeps, on a feature with any
+  emitted MS2 match, only the MS1 adducts sharing a 2D InChIKey with one. MS1 candidates come
+  only from LOTUS, so a feature whose MS2 matches are all library-only keeps no MS1 adduct.
+  Measured: 20 features newly gained MS2 matches and all 20 lost their 5 adducts, 100 of 2,795
+  (3.6%), for a net −1,225 structure nodes and −30,879 triples. That coupling rule is documented
+  as intended (MS2_ENHANCER.md §6); this change only makes it fire more often.
+- **Pipeline output is not run-to-run deterministic, independently of this change.** Two runs
+  of the unchanged code gave propagated MS2 scores differing by up to 0.041 and graphs of
+  585,466 against 585,568 triples. The source is upstream of MS2 and was not investigated.
+- The design notes previously held in a TODO inside `_annotate` are resolved by the above and
+  removed.
+
 ### 2026-09-18 — `unwrap_optional` missed `T | None` before Python 3.14
 
 `unwrap_optional` tested `get_origin(annotation) is Union`. That recognises `Optional[T]` on

@@ -52,18 +52,51 @@ standards). Each library entry carries:
 - the predicted **fragment peaks** (m/z + intensities);
 - a **short InChIKey** identifying the structure.
 
-In this pipeline the library lives in a DuckDB table (`spectral_library`) and is loaded as a
-list of `matchms.Spectrum` objects. Crucially, each library spectrum is **linked back to
-LOTUS** by its short InChIKey, so a match can inherit the structure's chemical classification
-and its source organisms:
+In this pipeline the library lives in a DuckDB table (`library_spectra`), and only the spectra
+whose precursor falls near a feature are read from it (Stage 1, §3). Each library spectrum
+names its structure by InChIKey, and a match is **looked up in LOTUS** by the 14-character
+short InChIKey. What the resulting annotation carries depends on whether LOTUS knows the
+structure:
 
 ```mermaid
 %%{init: {'theme':'dark'}}%%
 flowchart LR
-    LIB["ISDB library spectrum<br/>(precursor m/z, fragment peaks,<br/>short InChIKey)"] -->|"match on short InChIKey"| LOT["LOTUS entries<br/>(structure, NPC classes,<br/>source organisms)"]
-    LOT --> ANN["a matched annotation can now carry<br/>chemistry + biology metadata"]
-    style ANN fill:#14532d,stroke:#86efac,color:#ffffff,stroke-width:2px
+    LIB["library spectrum<br/>(precursor m/z, fragment peaks,<br/>InChIKey, InChI, SMILES, name)"] --> Q{"short InChIKey<br/>in LOTUS?"}
+    Q -->|yes| LOT["<b>LOTUS-backed</b><br/>NPC score vectors +<br/>source organisms"]
+    Q -->|no| LONLY["<b>library-only</b><br/>the library's own<br/>structure metadata"]
+    LOT --> RW["reweighting + graph"]
+    LONLY --> KG["graph only"]
+    style LOT fill:#14532d,stroke:#86efac,color:#ffffff,stroke-width:2px
+    style LONLY fill:#1e3a8a,stroke:#93c5fd,color:#ffffff,stroke-width:2px
 ```
+
+- **LOTUS-backed.** The annotation carries LOTUS's NPC classification vectors and every source
+  organism LOTUS lists for the structure. It is the only kind that feeds the
+  taxonomical/chemical reweighting.
+- **Library-only.** The annotation carries what the library asserts about the structure:
+  InChIKey, InChI, SMILES, formula, name, and its NPClassifier and ClassyFire labels as plain
+  strings. It has no source organism, so the reweighting skips it (`WeightsEnhancer` filters on
+  `has_organisms()`), but it reaches the knowledge graph with its structure attached. Its
+  classification vectors are zero-filled at full vocabulary length, so every array product
+  downstream still lines up.
+
+A match produces **no annotation** when the library row names no structure, or when LOTUS does
+not know the structure and its InChIKey is not well formed (`XXXXXXXXXXXXXX-XXXXXXXXXX-X`, 14,
+10 and 1 uppercase letters). The run log reports both counts and lists the malformed values
+found, so they can be traced back to the library export.
+
+How much each kind matters depends on the library. For `FRAGHUB_POS_LC:2026.03`
+(1,450,368 spectra):
+
+| | spectra | distinct structures |
+|---|---|---|
+| short InChIKey in LOTUS | 501,393 (34.6%) | 9,777 |
+| short InChIKey not in LOTUS | 948,975 (65.4%) | 194,515 |
+| of which the InChIKey is malformed | 287 | 3 |
+
+The 287 malformed values are SMILES strings sitting in the export's InChIKey field (for example
+`CCCCCCCCCCCCCC`). They are 14 uppercase letters, like the first block of a real InChIKey, so only
+the full key's shape tells them apart.
 
 ---
 
@@ -146,13 +179,18 @@ it did before this feature existed.
 ## 5. What comes out
 
 Every accepted match becomes an **`MS2ChemicalAnnotation`** appended to the feature's
-`ms2_annotations` list. It deliberately carries only what downstream steps need — not the full
-matched structure — namely:
+`ms2_annotations` list. It carries:
 
 - the matched structure's **short InChIKey**,
 - the **cosine score** and **number of matched peaks**,
-- the structure's **NPC classification arrays** (pathway / superclass / class), and
-- the list of **source organisms** (for taxonomic reweighting later).
+- the structure's **NPC classification arrays** (pathway / superclass / class) — LOTUS's
+  scores, or zeros for a library-only match,
+- the list of **source organisms** (for taxonomic reweighting later) — empty for a
+  library-only match,
+- `source` — `"Lotus"`, or the library's `name:version` label when the structure detail came
+  from the library, and
+- exactly one of `lotus` (a reference to the matched LOTUS entry, which the `LotusStore`
+  already holds for the whole run) or `library_structure` (the library's own record).
 
 ```mermaid
 %%{init: {'theme':'dark'}}%%
@@ -162,6 +200,7 @@ classDiagram
       +list ms2_annotations
     }
     class MS2ChemicalAnnotation {
+      +str source
       +str short_inchikey
       +float score
       +int n_matched_peaks
@@ -176,9 +215,30 @@ classDiagram
       +str genus
       +str family
     }
+    class Lotus {
+      +str structure_inchikey
+      +str structure_smiles
+      +str structure_name_traditional
+    }
+    class LibraryStructure {
+      +str inchikey
+      +str inchi
+      +str smiles
+      +str molecular_formula
+      +str compound_name
+      +str npc_pathway
+      +str classyfire_class
+    }
     AnnotatedSpectrum "1" --> "0..*" MS2ChemicalAnnotation : ms2_annotations
     MS2ChemicalAnnotation "1" --> "0..*" AnnotationOrganism : organisms
+    MS2ChemicalAnnotation "1" --> "0..1" Lotus : lotus
+    MS2ChemicalAnnotation "1" --> "0..1" LibraryStructure : library_structure
 ```
+
+In the knowledge graph, each annotation points at the shared 2D-InChIKey node
+(`emi:hasChemicalStructure`), and the full structure node — built from `lotus` or from
+`library_structure` — hangs off that same node via `emi:hasInChIKey2D`. Either way the
+structure's SMILES, InChI and name are one hop from the annotation.
 
 As with MS1, these are **competing, scored-but-not-yet-ranked** hypotheses. A single feature
 may collect several MS2 annotations.
@@ -226,6 +286,15 @@ flowchart LR
 > corroboration for the fragmentation-confirmed identity, so an MS1 set with nothing to
 > corroborate carries no information worth emitting. Features with **no** MS2 keep their full
 > top-k MS1 adducts unchanged. (See [MS2_MS1_ADDUCT_COUPLING_PLAN.md](MS2_MS1_ADDUCT_COUPLING_PLAN.md).)
+>
+> **Library-only matches always trigger this.** MS1 candidates come only from LOTUS, and a
+> library-only match names a structure LOTUS does not know, so no MS1 adduct can share its 2D
+> InChIKey. A feature whose emitted MS2 matches are all library-only is therefore serialized
+> with **no** MS1 adducts. Measured on the fixture dataset (660 features) against
+> `FRAGHUB_POS_LC:2026.03`: 20 features gained library-only matches, and all 20 lost their
+> 5 MS1 adducts — 100 of 2,795 (3.6%). Each adduct lists every LOTUS isomer of its formula as
+> a candidate structure, so the graph ended up with a net 1,225 fewer structure nodes despite
+> the ones the new MS2 matches added.
 
 ---
 
@@ -241,8 +310,10 @@ flowchart LR
 - **Lazy library + LOTUS linking.** The expensive build (materialising the LOTUS list and
   attaching it to library spectra by short InChIKey) is deferred to the first `enhance()`
   call, so in batch mode only the first experiment pays for it; later experiments reuse it.
-- **Slim annotations.** Each `MS2ChemicalAnnotation` keeps just the InChIKey, score, NPC
-  arrays, and organisms — not full structure objects — so thousands of them stay light.
+- **Slim annotations.** Each `MS2ChemicalAnnotation` keeps the InChIKey, score, NPC arrays and
+  organisms, plus either a *reference* to the matched LOTUS entry (already held for the run, so
+  it costs one pointer) or the library's small structure record — so thousands of them stay
+  light.
 
 ---
 
