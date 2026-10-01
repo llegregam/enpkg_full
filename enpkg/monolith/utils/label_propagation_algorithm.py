@@ -13,9 +13,18 @@ def numba_label_propagation(
     weights_data: np.ndarray,
     weights_indices: np.ndarray,
     weights_indptr: np.ndarray,
-) -> np.ndarray:
-    """Executes one iteration of the LPA using Numba."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Executes one iteration of the LPA using Numba.
+
+    Returns the propagated features and the mask of nodes that still have no features.
+    Every node reads ``zeroed_mask`` as it stood at the start of the iteration, and a
+    node that receives features is marked only in the returned copy. A neighbour that
+    receives features during this iteration therefore does not count in this
+    iteration's weighted average, where its features are still zero, and the result
+    does not depend on the order or the threads in which ``prange`` visits nodes.
+    """
     new_features = np.zeros_like(features)
+    new_zeroed_mask = zeroed_mask.copy()
 
     for node in prange(features.shape[0]):  # pylint: disable=not-an-iterable
         row_weights = weights_data[weights_indptr[node] : weights_indptr[node + 1]]
@@ -44,9 +53,9 @@ def numba_label_propagation(
             for i in range(features.shape[1]):
                 new_features[node, i] += features[neighbor, i] * normalized_weight
 
-        zeroed_mask[node] = False
+        new_zeroed_mask[node] = False
 
-    return new_features
+    return new_features, new_zeroed_mask
 
 
 def label_propagation_algorithm(
@@ -119,7 +128,7 @@ def label_propagation_algorithm(
     zeroed_mask: np.ndarray = features.sum(axis=1) == 0
 
     while True:
-        new_features = numba_label_propagation(
+        new_features, zeroed_mask = numba_label_propagation(
             features, zeroed_mask, weights.data, weights.indices, weights.indptr
         )
 

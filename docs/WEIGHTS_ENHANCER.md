@@ -111,9 +111,11 @@ relatedness**. Structurally related molecules tend to share a chemical class.
 
 So the enhancer runs the **Label Propagation Algorithm (LPA)**: it lets each feature's class
 vector **diffuse to its network neighbours**, iterating until the whole network settles
-(converges). The effect is a denoising — confident, well-supported features anchor their
-neighbourhood, and weakly- or un-annotated features **inherit** a class profile from the
-company they keep.
+(converges). Un-annotated features **inherit** a class profile from their neighbours.
+Annotated features are averaged with their neighbours too: nothing holds a feature at its own
+vector, so at convergence every feature of a connected component carries practically the same
+profile. On the fixture dataset the profiles within a component differ by at most 0.002, and
+the largest component holds 300 of the 660 features.
 
 ```mermaid
 %%{init: {'theme':'dark'}}%%
@@ -141,6 +143,10 @@ A few details that matter conceptually:
 - Features that start with an **all-zero** vector (no annotations) are flagged as *unlabeled*
   and are filled purely from their neighbours — the network lets us say something about a
   feature even when its own spectrum matched nothing.
+- Every iteration reads the state the previous one left: a feature that receives values
+  during an iteration counts in its neighbours' averages from the next iteration on. Features
+  are updated in parallel threads, and the result does not depend on their number or on the
+  order features are visited in.
 - The process **iterates to convergence** (it stops when the change between iterations drops
   below a small threshold), and is implemented to run fast over the network's adjacency matrix.
 

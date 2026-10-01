@@ -20,6 +20,49 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-01 — Reweighting gives the same scores on every run
+
+- **The problem.** Two runs of unchanged code gave propagated NPC scores differing by up to
+  0.195 on about half the features, and graphs differing by 643 triples (784,039 against
+  783,396). The 2026-09-30 entry placed the cause upstream of MS2. It is the label propagation
+  in `WeightsEnhancer`, which runs after MS2 and computes both the MS1 and the MS2 scores.
+- **How it was located.** Two runs in separate processes, with different hash seeds, gave
+  identical outputs at every stage before propagation: the molecular network, the adduct
+  graph, the LOTUS row order, every MS1 and MS2 annotation, and the NPC matrices handed to
+  propagation. Propagation repeated on identical input in one process differed by up to 0.195
+  with Numba's 16 threads, and not at all with one.
+- **The cause.** `numba_label_propagation` updates nodes in a `prange` loop, which Numba
+  splits across threads. Inside the loop it marked each node as having values in the mask
+  that other nodes read during the same iteration. A neighbour visited later then added that
+  node's edge weight to its denominator while the node's values, read from the start of the
+  iteration, were still zero, which lowered its average. Which neighbours were already marked
+  depended on thread timing, and with one thread on node order: on a four-node chain whose
+  one end carries a vector, the chain ended at 0.5 or 0.7 depending on the order. What
+  `WEIGHTS_ENHANCER.md` describes, un-annotated features "filled purely from their
+  neighbours", gives 1.0.
+- **The fix.** Each iteration reads the mask as it stood at its start and marks nodes in a
+  copy, which the next iteration reads. Results are now bit-identical for any thread count,
+  and equal to within rounding (1e-16) for any node order. Verified end to end: two runs in
+  separate processes give bit-identical scores and the same graph (783,949 triples).
+- **Effect on the fixture**, measured against one run of the previous code on the same
+  inputs: propagated scores change on 357–370 of the 660 features, by up to 0.47. The MS2
+  scores were the most diluted, since few features carry LOTUS-backed MS2 matches and most
+  started without values: their mean sum per feature rises from 0.22 to 0.93 at class level.
+  In the graph, the emitted MS1 hypotheses change on 9 of 606 features (the top-ranked one
+  on 5); the emitted MS2 matches do not change.
+- **LOTUS row order.** The canonical LOTUS list was sorted on the 2D InChIKey alone, so
+  stereoisomers sharing it came back in whatever order DuckDB's sort produced. The first row
+  of each group supplies an MS2 match's NPC vectors and structure node, and for 7,194
+  structures the stereoisomers' NPC vectors differ. Ties are now broken by full InChIKey,
+  then SMILES, the table's key. The order was not observed to vary between runs, but nothing
+  guaranteed it. On the fixture the new order moves propagated scores by at most 0.001.
+- **Not changed.** Propagation still converges to practically one profile per connected
+  component of the network, because no feature is held at its own vector: on the fixture,
+  profiles within a component differ by at most 0.002, and the largest component holds 300
+  of the 660 features. `WEIGHTS_ENHANCER.md` said annotated features "anchor their
+  neighbourhood"; it now describes the convergence. Whether propagation should keep part of
+  each feature's own vector is open.
+
 ### 2026-10-01 — MS2 matches couple with MS1 only above a score threshold; library-only matches couple on formula
 
 Revises the coupling consequence recorded in the 2026-09-30 entry below.

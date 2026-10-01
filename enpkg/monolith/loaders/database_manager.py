@@ -593,10 +593,19 @@ class DatabaseManager:
     # order is the contract LotusStore uses to build Lotus objects by index.
 
     def get_compound_metadata_sorted_by_short_inchikey(self) -> pl.DataFrame:
-        """Return all compound metadata + NPC classifications, ordered by short_inchikey."""
+        """Return all compound metadata + NPC classifications, ordered by short_inchikey.
+
+        Rows sharing a short_inchikey (stereoisomers) are ordered by full InChIKey, then
+        by SMILES, the table's key. The order is therefore the same on every run, and so
+        is the first row of each group, which callers use as the structure's
+        representative.
+        """
         logger.debug("Querying compound metadata sorted by short_inchikey")
         t0 = time()
-        df = self._conn.execute(_COMPOUND_SELECT + " ORDER BY c.short_inchikey").pl()
+        df = self._conn.execute(
+            _COMPOUND_SELECT
+            + " ORDER BY c.short_inchikey, c.structure_inchikey, c.structure_smiles"
+        ).pl()
         logger.debug(
             "get_compound_metadata_sorted_by_short_inchikey returned %d rows in %.2fs",
             len(df), time() - t0,
