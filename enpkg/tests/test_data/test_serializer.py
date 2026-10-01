@@ -316,7 +316,91 @@ def test_ms2_with_no_corresponding_adduct_emits_no_ms1(
     assert list(g.objects(ms2_uri, ENPKG.hasCorrespondingAdduct)) == []
 
 
-def _ms2_from_library(short_inchikey="LIBRARYONLYIKX", score=0.9):
+def _matched_and_coincidence(make_adduct, make_lotus, make_recipe):
+    """An MS1 adduct proposing MATCHEDCOMPND1, and one that is a mass coincidence."""
+    matched = make_adduct(
+        lotus=[make_lotus(structure_inchikey="MATCHEDCOMPND1-UHFFFAOYSA-N")],
+        recipe=make_recipe(ingredients={"proton": 1}),
+    )
+    coincidence = make_adduct(
+        lotus=[make_lotus(structure_inchikey="COINCIDENCE123-UHFFFAOYSA-N")],
+        recipe=make_recipe(ingredients={"sodium": 1}),
+    )
+    return matched, coincidence
+
+
+def _emitted_adducts(g):
+    return set(g.subjects(RDF.type, ENPKG.AdductAnnotation))
+
+
+def test_weak_ms2_match_leaves_ms1_untouched(make_analysis, make_adduct, make_lotus, make_recipe):
+    """Below the coupling threshold an MS2 match is still emitted, but the feature keeps
+    its MS1 hypotheses as if it had no MS2 match, and nothing is linked."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    matched, coincidence = _matched_and_coincidence(make_adduct, make_lotus, make_recipe)
+    spectrum.ms1_annotations = [matched, coincidence]
+    spectrum.ms2_annotations = [_ms2("MATCHEDCOMPND1", score=0.5)]
+
+    serializer = AnalysisSerializer(ms2_coupling_min_score=0.7)
+    serializer.add_analysis(analysis)
+    g = serializer.graph
+
+    ms2_uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, spectrum.ms2_annotations[0])
+    assert (ms2_uri, RDF.type, ENPKG.SpectralAnnotation) in g
+    assert _emitted_adducts(g) == {
+        AnalysisURIs.chemical_adduct_uri(analysis, spectrum, matched),
+        AnalysisURIs.chemical_adduct_uri(analysis, spectrum, coincidence),
+    }
+    assert list(g.subjects(ENPKG.hasCorrespondingAdduct, None)) == []
+
+
+@pytest.mark.parametrize(("threshold", "coupled"), [(0.7, True), (0.71, False), (0.0, True)])
+def test_coupling_threshold_is_inclusive_and_configurable(
+    make_analysis, make_adduct, make_lotus, make_recipe, threshold, coupled
+):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    matched, coincidence = _matched_and_coincidence(make_adduct, make_lotus, make_recipe)
+    spectrum.ms1_annotations = [matched, coincidence]
+    spectrum.ms2_annotations = [_ms2("MATCHEDCOMPND1", score=0.7)]
+
+    serializer = AnalysisSerializer(ms2_coupling_min_score=threshold)
+    serializer.add_analysis(analysis)
+
+    coincidence_uri = AnalysisURIs.chemical_adduct_uri(analysis, spectrum, coincidence)
+    assert (coincidence_uri in _emitted_adducts(serializer.graph)) is not coupled
+
+
+def test_only_confident_matches_decide_which_adducts_stay(
+    make_analysis, make_adduct, make_lotus, make_recipe
+):
+    """With one confident and one weak match on a feature, only the confident one keeps
+    adducts and gets links; an adduct proposing the weak match's compound is dropped."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    matched, coincidence = _matched_and_coincidence(make_adduct, make_lotus, make_recipe)
+    weak_target = make_adduct(
+        lotus=[make_lotus(structure_inchikey="WEAKTARGETAAAA-UHFFFAOYSA-N")],
+        recipe=make_recipe(ingredients={"potassium": 1}),
+    )
+    spectrum.ms1_annotations = [matched, coincidence, weak_target]
+    confident, weak = _ms2("MATCHEDCOMPND1", score=0.9), _ms2("WEAKTARGETAAAA", score=0.4)
+    spectrum.ms2_annotations = [confident, weak]
+
+    serializer = AnalysisSerializer(ms2_coupling_min_score=0.7)
+    serializer.add_analysis(analysis)
+    g = serializer.graph
+
+    matched_uri = AnalysisURIs.chemical_adduct_uri(analysis, spectrum, matched)
+    assert _emitted_adducts(g) == {matched_uri}
+    confident_uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, confident)
+    weak_uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, weak)
+    assert list(g.objects(confident_uri, ENPKG.hasCorrespondingAdduct)) == [matched_uri]
+    assert list(g.objects(weak_uri, ENPKG.hasCorrespondingAdduct)) == []
+
+
+def _ms2_from_library(short_inchikey="LIBRARYONLYIKX", score=0.9, formula="C2H6"):
     """An MS2 match only the spectral library knows: zero NPC vectors, no organisms."""
     return MS2ChemicalAnnotation(
         source="LIB:1.0",
@@ -330,7 +414,7 @@ def _ms2_from_library(short_inchikey="LIBRARYONLYIKX", score=0.9):
             inchikey=f"{short_inchikey}-UHFFFAOYSA-N",
             inchi="InChI=1S/C2H6/c1-2/h1-2H3",
             smiles="CC",
-            molecular_formula="C2H6",
+            molecular_formula=formula,
             compound_name="Library-only compound",
             npc_pathway="Alkaloids|Terpenoids",
             npc_superclass=None,
@@ -340,6 +424,80 @@ def _ms2_from_library(short_inchikey="LIBRARYONLYIKX", score=0.9):
             classyfire_subclass="Indolines",
         ),
     )
+
+
+def _adducts_for_formulas(make_adduct, make_lotus, make_recipe):
+    """Two MS1 adducts with distinct formulas: C10H12O2 (two LOTUS isomers) and C9H8O4."""
+    isomers = [
+        make_lotus(structure_inchikey=f"{key}-UHFFFAOYSA-N", structure_molecular_formula="C10H12O2",
+                   structure_exact_mass=164.08373)
+        for key in ("ISOMERONEAAAAA", "ISOMERTWOAAAAA")
+    ]
+    same_formula = make_adduct(lotus=isomers, recipe=make_recipe(ingredients={"proton": 1}))
+    other_formula = make_adduct(
+        lotus=[make_lotus(structure_inchikey="OTHERFORMULAAA-UHFFFAOYSA-N",
+                          structure_molecular_formula="C9H8O4", structure_exact_mass=180.04226)],
+        recipe=make_recipe(ingredients={"proton": 1}),
+    )
+    return same_formula, other_formula
+
+
+def test_library_only_match_keeps_the_adducts_with_its_formula(
+    make_analysis, make_adduct, make_lotus, make_recipe
+):
+    """LOTUS holds at most isomers of a library-only structure, so the MS1 adducts that
+    explain its ionisation are the ones with its molecular formula."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    same_formula, other_formula = _adducts_for_formulas(make_adduct, make_lotus, make_recipe)
+    spectrum.ms1_annotations = [same_formula, other_formula]
+    match = _ms2_from_library("LIBRARYONLYIKX", score=0.9, formula="C10H12O2")
+    spectrum.ms2_annotations = [match]
+
+    serializer = AnalysisSerializer(ms2_coupling_min_score=0.7)
+    serializer.add_analysis(analysis)
+    g = serializer.graph
+
+    same_uri = AnalysisURIs.chemical_adduct_uri(analysis, spectrum, same_formula)
+    assert _emitted_adducts(g) == {same_uri}
+    ms2_uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, match)
+    assert list(g.objects(ms2_uri, ENPKG.hasCorrespondingAdduct)) == [same_uri]
+
+
+def test_library_only_match_without_a_formula_still_removes_ms1(
+    make_analysis, make_adduct, make_lotus, make_recipe
+):
+    """A confident match names another compound even when its formula is unknown, so
+    the mass-coincidence adducts go, and none can be shown to correspond."""
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    spectrum.ms1_annotations = list(_adducts_for_formulas(make_adduct, make_lotus, make_recipe))
+    spectrum.ms2_annotations = [_ms2_from_library(score=0.9, formula=None)]
+
+    serializer = AnalysisSerializer(ms2_coupling_min_score=0.7)
+    serializer.add_analysis(analysis)
+
+    assert _emitted_adducts(serializer.graph) == set()
+
+
+def test_weak_library_only_match_leaves_ms1_untouched(
+    make_analysis, make_adduct, make_lotus, make_recipe
+):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    same_formula, other_formula = _adducts_for_formulas(make_adduct, make_lotus, make_recipe)
+    spectrum.ms1_annotations = [same_formula, other_formula]
+    spectrum.ms2_annotations = [_ms2_from_library(score=0.3, formula="C10H12O2")]
+
+    serializer = AnalysisSerializer(ms2_coupling_min_score=0.7)
+    serializer.add_analysis(analysis)
+    g = serializer.graph
+
+    assert _emitted_adducts(g) == {
+        AnalysisURIs.chemical_adduct_uri(analysis, spectrum, same_formula),
+        AnalysisURIs.chemical_adduct_uri(analysis, spectrum, other_formula),
+    }
+    assert list(g.subjects(ENPKG.hasCorrespondingAdduct, None)) == []
 
 
 def test_library_only_ms2_match_emits_its_structure(make_analysis):

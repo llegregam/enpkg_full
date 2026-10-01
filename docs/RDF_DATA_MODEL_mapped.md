@@ -173,7 +173,7 @@ rank — see §4/§5/§8a/§8b.
 | n_matched_peaks | lit | xsd:integer | ⛏ custom `enpkg:nMatchedPeaks` |
 | queried_against | lit/obj | library | ✅ `dcterms:source` (the spectral library, e.g. ISDB) |
 | pathway/superclass/class_scores | obj | → ChemicalTaxonAnnotation | 🟡 via `emi:ChemicalTaxonAnnotation` (§ NPC) — still unemitted; gate for size. CANOPUS's argmax prediction *is* emitted. |
-| (corresponding MS1 adduct) | obj | → `enpkg:AdductAnnotation` (§4) | ⛏ custom `enpkg:hasCorrespondingAdduct` — the MS1 adduct proposing the same compound (shared 2D InChIKey); emitted only on MS2-identified features, which also prunes the non-corresponding MS1 adducts. See D2. |
+| (corresponding MS1 adduct) | obj | → `enpkg:AdductAnnotation` (§4) | ⛏ custom `enpkg:hasCorrespondingAdduct` — the MS1 adduct explaining how the MS2-identified molecule ionised: same structure (shared 2D InChIKey) when LOTUS knows it, same molecular formula when only the spectral library does. Emitted only from MS2 matches whose score reaches the serializer's `ms2_coupling_min_score`, which also prune the non-corresponding MS1 adducts. See D2. |
 
 ## 7. AnnotationOrganism — `organism_uri`
 | Element | Shape | Target / type | Vocab term |

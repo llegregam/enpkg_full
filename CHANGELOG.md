@@ -20,6 +20,57 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-01 — MS2 matches couple with MS1 only above a score threshold; library-only matches couple on formula
+
+Revises the coupling consequence recorded in the 2026-09-30 entry below.
+
+- **The problem.** The serializer kept, on any feature with an emitted MS2 match, only the
+  MS1 adduct hypotheses sharing the match's 2D InChIKey. Once library-only matches reached
+  the graph, every feature whose matches were all library-only lost all its MS1 hypotheses,
+  since no LOTUS candidate can share a library-only structure's InChIKey: 20 features and
+  100 adducts on the fixture, measured before this branch moved onto `GUI_MIGRATION`. The
+  removing match could be as weak as cosine 0.215. The same rule already let weak
+  LOTUS-backed matches remove MS1 hypotheses (10 features).
+- **Threshold.** New `SerializerConfig.ms2_coupling_min_score` (default 0.7, range 0–1),
+  which reaches the GUI's run setup, the run YAML and the CLI with no other wiring. Only an
+  MS2 match at or above it couples; a weaker match is still emitted, but neither removes nor
+  keeps MS1 adducts and gets no link. 0 makes every emitted match decide, the previous
+  behaviour. The 0.7 default is the GNPS library-search convention and is provisional. In
+  Scheubert et al. 2017 most of 70 public datasets reached 1% FDR at cosine 0.6–0.65, with
+  the needed cosine depending on how many peaks must match. Li et al. 2021 recommend
+  scores above 0.75 for dot product. The 0.2 `min_score` this pipeline matches with comes
+  from Rutz et al. 2019, where it gated predicted ISDB spectra before taxonomic re-ranking:
+  an entry gate, not a confidence level.
+- **Formula coupling.** A library-only match above the threshold keeps the MS1 hypotheses
+  whose molecular formula equals the library structure's. LOTUS holds at most isomers of
+  that structure, so the formula is what an ionisation hypothesis can share with it.
+  Formulas are compared as strings: on both sides they are in Hill order with the same `+`
+  charge suffix (measured: no library-only formula out of Hill order; 8 inorganic LOTUS
+  formulas such as `HCl`, which cannot meet a library match). LOTUS-backed matches keep the
+  2D InChIKey rule. It selects the same hypotheses, because each MS1 hypothesis groups
+  every LOTUS isomer of one formula.
+- **Vocabulary.** Both kinds of correspondence use `enpkg:hasCorrespondingAdduct`, whose
+  `rdfs:comment` changed from "the MS1 adduct hypothesis proposing the *same* compound
+  (shared 2D InChIKey)" to the meaning it carried in its second half: the hypothesis that
+  explains how the MS2-identified molecule ionised, i.e. one with the molecule's formula.
+  The comment states that the matched structure is among the candidates only when LOTUS
+  knows it, and that the link is asserted only above the coupling threshold, so its
+  absence does not mean that no hypothesis corresponds. Every user's graph inherits this
+  wording through the inlined `enpkg.ttl`.
+- **Measured effect** on the fixture (660 features, *Arnica montana*,
+  `FRAGHUB_POS_LC:2026.03`), from one pipeline run serialized under each rule. Without any
+  coupling, 2,633 MS1 hypotheses are emitted.
+
+  | Rule | MS1 hypotheses removed | Features left with none |
+  |---|---|---|
+  | LOTUS-backed matches only, any score (before 2026-09-30) | 196 | 16 |
+  | Library-only matches added, formula coupling, any score | 282 | 27 |
+  | Same, threshold 0.5 / 0.6 / **0.7** / 0.8 | 210 / 190 / **172** / 147 | 18 / 14 / **12** / 9 |
+
+  At the 0.7 default the graph loses fewer MS1 hypotheses than before library-only matches
+  were emitted. Of the MS2 matches in the graph, 29 of 56 LOTUS-backed and 12 of 41
+  library-only reach 0.7.
+
 ### 2026-10-01 — FragHub's NPClassifier labels are restored on import
 
 - **The problem.** FragHub copies its NPClassifier labels from an ontology table it ships

@@ -276,25 +276,38 @@ flowchart LR
     style O fill:#14532d,stroke:#86efac,color:#ffffff,stroke-width:2px
 ```
 
-> **Caveat — MS2 prunes MS1 at export (RDF coupling).** In the RDF serializer the two channels
-> are *coupled* on features that carry an MS2 match: only the MS1 adducts whose candidate
-> structures include an MS2-identified compound (shared 2D InChIKey) are kept, each linked from
-> the MS2 annotation via `enpkg:hasCorrespondingAdduct`; the mass-coincidence adducts are dropped.
-> A consequence to expect: **if an MS2 match's compound appears in *none* of the feature's MS1
-> adduct groups, that feature is serialized with no MS1 adduct hypotheses at all** — the MS2
-> annotation stands alone. This is **intended**, not a data-loss bug: MS1 here is mass-only
-> corroboration for the fragmentation-confirmed identity, so an MS1 set with nothing to
-> corroborate carries no information worth emitting. Features with **no** MS2 keep their full
-> top-k MS1 adducts unchanged. (See [MS2_MS1_ADDUCT_COUPLING_PLAN.md](MS2_MS1_ADDUCT_COUPLING_PLAN.md).)
+> **Caveat — confident MS2 matches prune MS1 at export (RDF coupling).** In the RDF serializer
+> the two channels are *coupled* on features that carry a **confident** MS2 match: one whose
+> spectral score reaches `ms2_coupling_min_score`, a setting in the serializer section of the
+> run setup (default 0.7). On such a feature, only the MS1 adducts that explain how the matched
+> compound ionised are kept, each linked from the MS2 annotation via
+> `enpkg:hasCorrespondingAdduct`; the mass-coincidence adducts are dropped. Which adducts
+> explain the ionisation depends on what the match names:
 >
-> **Library-only matches always trigger this.** MS1 candidates come only from LOTUS, and a
-> library-only match names a structure LOTUS does not know, so no MS1 adduct can share its 2D
-> InChIKey. A feature whose emitted MS2 matches are all library-only is therefore serialized
-> with **no** MS1 adducts. Measured on the fixture dataset (660 features) against
-> `FRAGHUB_POS_LC:2026.03`: 20 features gained library-only matches, and all 20 lost their
-> 5 MS1 adducts — 100 of 2,795 (3.6%). Each adduct lists every LOTUS isomer of its formula as
-> a candidate structure, so the graph ended up with a net 1,225 fewer structure nodes despite
-> the ones the new MS2 matches added.
+> - a structure **LOTUS knows**: the adducts whose candidate structures include it (shared 2D
+>   InChIKey);
+> - a **library-only** structure: the adducts whose molecular formula equals the library
+>   structure's. LOTUS holds at most isomers of it, so those adducts list the isomers as
+>   candidates, not the structure itself.
+>
+> A consequence to expect: **if a confident match corresponds to none of the feature's MS1
+> adducts, the feature is serialized with no MS1 adduct hypotheses at all**. This is
+> **intended**: MS1 here is mass-only corroboration for the fragmentation-confirmed identity, so
+> MS1 hypotheses that contradict it carry no information worth emitting. MS2 matches **below**
+> the threshold are still emitted, but they neither remove nor keep MS1 adducts and get no
+> link; a feature whose matches are all below it keeps its top-k MS1 adducts, as does a feature
+> with no MS2 match. (See [MS2_MS1_ADDUCT_COUPLING_PLAN.md](MS2_MS1_ADDUCT_COUPLING_PLAN.md).)
+>
+> **Choosing the threshold.** The spectral match itself only requires `min_score` 0.2: a low
+> entry gate inherited from matching predicted ISDB spectra before taxonomic re-ranking
+> ([Rutz et al. 2019](https://doi.org/10.3389/fpls.2019.01329)), not a confidence level. The
+> 0.7 default follows the GNPS library-search convention. Across 70 public datasets, most
+> reached 1% FDR at cosine 0.6–0.65, and the cosine needed falls as more peaks must match
+> ([Scheubert et al. 2017](https://doi.org/10.1038/s41467-017-01318-5)); a fixed threshold
+> gives a different FDR in every dataset. Setting it to 0 makes every emitted match decide.
+> On the fixture dataset (660 features, 2,633 MS1 hypotheses without coupling), coupling
+> removed 282 MS1 hypotheses with no threshold, and 210, 190, 172 and 147 at 0.5, 0.6, 0.7
+> and 0.8.
 
 ---
 

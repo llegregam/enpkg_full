@@ -175,7 +175,7 @@ enpkg:hasCorrespondingAdduct a owl:ObjectProperty ;
     rdfs:label "corresponding MS1 adduct hypothesis" ;
     rdfs:domain enpkg:SpectralAnnotation ;
     rdfs:range enpkg:AdductAnnotation ;
-    rdfs:comment "[live] Links an MS2 spectral annotation to the MS1 adduct hypothesis proposing the *same* compound (shared 2D InChIKey) — the adduct that explains how the fragmentation-identified molecule ionised to this feature's precursor m/z." .
+    rdfs:comment "[live] Links an MS2 spectral annotation to an MS1 adduct hypothesis that explains how the fragmentation-identified molecule ionised to this feature's precursor m/z, i.e. one whose molecular formula is the molecule's. When the molecule is in LOTUS it is among the hypothesis's candidate structures (shared 2D InChIKey); when only the spectral library knows it, the candidates are LOTUS isomers of the same formula. Asserted only from MS2 matches whose spectral score reaches the serializer's coupling threshold (ms2_coupling_min_score), so its absence does not mean no hypothesis corresponds." .
 
 ### Molecular network
 
