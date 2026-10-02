@@ -21,8 +21,10 @@ optional ("gated") layers are included for completeness.
 %%{init: {'theme':'dark'}}%%
 flowchart TD
     %% ---- node definitions ----
-    A["LCMSAnalysis  (Pos / Neg)<br/>dcterms:identifier · emi:hasMassiveDOI"]
-    SA["ExtractSample<br/>identifier · enpkg:sourceId · sampleFilenamePos/Neg · label=taxon"]
+    A["LCMSAnalysis  (Pos / Neg)<br/>dcterms:identifier · emi:hasMassiveDOI<br/>enpkg:ionizationMode · operator · instrument"]
+    SA["ExtractSample<br/>identifier · enpkg:sourceId · sampleFilenamePos/Neg · label=taxon<br/>enpkg:extractionMethod · extractionSolvent"]
+    SM["SampleMetadata<br/>identifier · enpkg:sampleName · sampleType<br/>collectionDate · collectionLocation"]
+    XM["ExtraMetadata<br/>one attribute per other metadata column<br/>metadatafield:{column}"]
     FS["LCMSFeatureSet"]
     F["LCMSFeature  (a spectrum)<br/>hasRowId · hasParentMass · hasRetentionTime · hasFeatureArea<br/>enpkg:clusterRole · enpkg:resolvedAdduct '[M+Na]+' (if clustered)"]
 
@@ -50,6 +52,8 @@ flowchart TD
 
     %% ---- spine ----
     SA -->|"enpkg:hasLabProcess"| A
+    SA -->|"enpkg:hasSampleMetadata"| SM
+    SM -->|"enpkg:hasExtraMetadata"| XM
     A -->|"emi:hasLCMSFeatureSet"| FS
     A -->|"enpkg:hasOTTMatch"| OTT
     FS -->|"emi:hasLCMSFeature"| F
@@ -111,6 +115,20 @@ flowchart TD
 - **Spine:** `ExtractSample → LCMSAnalysis` (the sample/metadata, via `enpkg:hasLabProcess` —
   `emi:hasSample` doesn't actually exist in EMI) and `LCMSAnalysis → LCMSFeatureSet →
   LCMSFeature`. One `LCMSFeature` per spectrum.
+- **Sample identity:** `ExtractSample` (`emi-res:extractsample/{sample_id}`) and its
+  `SampleMetadata` (`emi-res:samplemetadata/{sample_id}`) are keyed on the metadata row's
+  `sample_id`, not the run, so the pos and neg runs of one sample point at the same two nodes (one
+  `enpkg:hasLabProcess` edge per run). The extract carries the extraction fields; the metadata node
+  carries the collection fields; `operator`, `instrument` and `ionizationMode` sit on the analysis.
+- **User-defined metadata columns:** every metadata-file column without a dedicated `enpkg:` term
+  (including the `organism_*` lineage columns) becomes an attribute of one `enpkg:ExtraMetadata`
+  node per sample (`emi-res:samplemetadata/{sample_id}/extra`). The predicate is minted from the
+  column header as `metadatafield:{header}` (`https://w3id.org/emi/resource/metadatafield/{header}`,
+  percent-encoded) and declared in the graph as an `owl:DatatypeProperty`,
+  `rdfs:subPropertyOf enpkg:extraMetadataField`, with the header as its `rdfs:label`. Values keep
+  the type the file reader inferred (`xsd:double`, `xsd:date`, `xsd:dateTime`, …). To list every
+  extra column of every sample:
+  `?x ?p ?v . ?p rdfs:subPropertyOf enpkg:extraMetadataField ; rdfs:label ?column .`
 - **Adduct clusters (MS1 graph):** each resolved molecule is one `enpkg:AdductCluster`
   (`enpkg:hasAdductCluster` off the `LCMSFeatureSet`), carrying the mzAdan indices
   (`clusterConnectivity`/`clusterIntensityCoverage`/`clusterCountCoverage`). It names its base ion

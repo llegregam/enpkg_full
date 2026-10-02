@@ -32,8 +32,9 @@ def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct,
     once: an MS1 adduct cluster (anchor + 2 satellites), an MS1 candidate
     coupled to an MS2 match, an MS2 match only the spectral library knows,
     SIRIUS candidates, an OTT match, and a molecular network with both an edge
-    and a >=2-member component — plus sample fields (source_id, filenames)
-    that only ever come from user metadata."""
+    and a >=2-member component — plus every sample-metadata field with an
+    enpkg: term and one user-defined column, all of which only ever come from
+    user metadata."""
     anchor = make_spectrum(feature_id=1, precursor_mz=201.0)
     sat_na = make_spectrum(feature_id=2, precursor_mz=223.0)
     sat_k = make_spectrum(feature_id=3, precursor_mz=239.0)
@@ -115,6 +116,11 @@ def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct,
     metadata = SampleMetadata(
         sample_id="S1", source_taxon="Artemisia annua", source_id="SRC1",
         sample_filename_pos="pos.mzml", sample_filename_neg="neg.mzml",
+        sample_name="Artemisia leaves", sample_type="sample",
+        collection_date="2019-03-14", collection_location="Geneva, CH",
+        extraction_method="maceration", extraction_solvent="MeOH",
+        operator="LLG", instrument="Orbitrap Exploris 120",
+        extra_fields={"organism_organe": "leaf"},
     )
 
     return Analysis(

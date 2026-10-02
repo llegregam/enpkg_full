@@ -4,10 +4,12 @@ from rdflib import URIRef
 
 from enpkg.monolith.data.chemical_annotation import AnnotationOrganism
 from enpkg.monolith.data.ms1_data_classes.adduct_class import AdductRecipe
+from enpkg.monolith.data.sample_metadata import SampleMetadata
 from enpkg.monolith.rdf.namespaces import EMI_RES, INCHIKEY
 from enpkg.monolith.rdf.uris import (
     AnalysisURIs,
     CompoundURIs,
+    MetadataURIs,
     OrganismURIs,
     _formula_segment,
     _organism_uri,
@@ -45,8 +47,24 @@ def test_recipe_hash_distinguishes_charge():
 def test_analysis_scoped_uris(make_analysis):
     analysis = make_analysis(run_name="RUNX")
     assert AnalysisURIs.analysis_uri(analysis) == EMI_RES["analysis/RUNX"]
-    assert AnalysisURIs.analysis_metadata_uri(analysis) == EMI_RES["metadata/RUNX"]
     assert AnalysisURIs.featureset_uri(analysis) == EMI_RES["featureset/RUNX"]
+
+
+def test_sample_uris_are_keyed_on_the_sample_not_the_run(make_analysis):
+    pos = make_analysis(run_name="RUN_POS")
+    neg = make_analysis(run_name="RUN_NEG")
+    assert MetadataURIs.extract_sample_uri(pos.metadata) == EMI_RES["extractsample/S1"]
+    assert MetadataURIs.sample_metadata_uri(pos.metadata) == EMI_RES["samplemetadata/S1"]
+    assert MetadataURIs.extra_metadata_uri(pos.metadata) == EMI_RES["samplemetadata/S1/extra"]
+    assert MetadataURIs.extract_sample_uri(neg.metadata) == MetadataURIs.extract_sample_uri(
+        pos.metadata
+    )
+
+
+def test_metadata_uri_segments_are_percent_encoded():
+    metadata = SampleMetadata(sample_id="plate 1/A10")
+    assert MetadataURIs.sample_metadata_uri(metadata) == EMI_RES["samplemetadata/plate%201%2FA10"]
+    assert MetadataURIs.metadata_field_uri("plate/well") == EMI_RES["metadatafield/plate%2Fwell"]
 
 
 def test_spectrum_and_adduct_uris(make_analysis, make_adduct):

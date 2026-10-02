@@ -1,6 +1,7 @@
 """Sample metadata model for Analysis."""
 
 import math
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel, field_validator
@@ -19,15 +20,9 @@ class SampleMetadata(BaseModel):
     source_taxon: Optional[str] = None
     sample_type: Optional[str] = None
     source_id: Optional[str] = None
-    organism_kingdom: Optional[str] = None
-    organism_phylum: Optional[str] = None
-    organism_class: Optional[str] = None
-    organism_order: Optional[str] = None
-    organism_family: Optional[str] = None
-    organism_genus: Optional[str] = None
 
     # Collection provenance
-    collection_date: Optional[str] = None
+    collection_date: Optional[date] = None
     collection_location: Optional[str] = None
 
     # Extraction (backs the RDF ExtractSample node's own attributes)
@@ -35,11 +30,16 @@ class SampleMetadata(BaseModel):
     extraction_solvent: Optional[str] = None
 
     # TODO: Externalize these fields
+    # Run-level values carried by the per-sample metadata row; the serializer
+    # places operator, instrument and massive_id on the LCMSAnalysis node.
     sample_filename_pos: Optional[str] = None
     sample_filename_neg: Optional[str] = None
     massive_id: Optional[str] = None
+    operator: Optional[str] = None
+    instrument: Optional[str] = None
 
-    # Store any additional fields not explicitly defined
+    # Every other column of the metadata row, keyed by its header. Values keep
+    # the type the CSV reader inferred (str, int, float, bool, date, datetime).
     extra_fields: dict = {}
 
     @field_validator("source_taxon", mode="before")
@@ -54,6 +54,15 @@ class SampleMetadata(BaseModel):
             return None
         return value
 
+    @field_validator("collection_date", mode="before")
+    @classmethod
+    def collection_date_to_date(cls, value):
+        """Reduce a datetime to its date; ``date`` objects and ISO strings pass
+        through to pydantic's own date parsing, which rejects anything else."""
+        if isinstance(value, datetime):
+            return value.date()
+        return value
+
     @classmethod
     def from_dict(cls, data: dict) -> "SampleMetadata":
         """
@@ -63,11 +72,10 @@ class SampleMetadata(BaseModel):
         """
         known_fields = {
             "sample_id", "sample_name", "source_taxon", "sample_type", "source_id",
-            "organism_kingdom", "organism_phylum", "organism_class",
-            "organism_order", "organism_family", "organism_genus",
             "collection_date", "collection_location",
             "extraction_method", "extraction_solvent",
-            "sample_filename_pos", "sample_filename_neg", "massive_id"
+            "sample_filename_pos", "sample_filename_neg", "massive_id",
+            "operator", "instrument",
         }
 
         known_data = {k: v for k, v in data.items() if k in known_fields}

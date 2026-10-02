@@ -1,5 +1,7 @@
 """Smoke tests for the RDF serializer (spine + idempotency + round-trip)."""
 
+from datetime import date, datetime
+
 import networkx as nx
 import numpy as np
 import pytest
@@ -10,8 +12,8 @@ from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
 from enpkg.monolith.data.sample_metadata import SampleMetadata
 from enpkg.monolith.rdf import AnalysisSerializer, serialize_to_turtle
-from enpkg.monolith.rdf.namespaces import CHEMROF, EMI, EMI_RES, ENPKG, NPC, PROV
-from enpkg.monolith.rdf.uris import AnalysisURIs, CompoundURIs
+from enpkg.monolith.rdf.namespaces import CHEMROF, DCTERMS, EMI, EMI_RES, ENPKG, NPC, PROV
+from enpkg.monolith.rdf.uris import AnalysisURIs, CompoundURIs, MetadataURIs
 
 
 def test_serialize_emits_the_analysis_node(make_analysis):
@@ -60,6 +62,150 @@ def test_massive_doi_absent_when_massive_id_unset(make_analysis):
 
     uri = AnalysisURIs.analysis_uri(analysis)
     assert serializer.graph.value(uri, EMI.hasMassiveDOI) is None
+
+
+def _with_metadata(analysis, **fields):
+    return analysis.model_copy(
+        update={"metadata": analysis.metadata.model_copy(update=fields)}
+    )
+
+
+def _graph_of(*analyses):
+    serializer = AnalysisSerializer()
+    for analysis in analyses:
+        serializer.add_analysis(analysis)
+    return serializer.graph
+
+
+def test_sample_metadata_is_its_own_node_linked_from_the_extract(make_analysis):
+    analysis = _with_metadata(
+        make_analysis(run_name="RUNX"),
+        sample_name="Arnica 1", sample_type="sample",
+        collection_date=date(2019, 3, 14), collection_location="Geneva, CH",
+        extraction_method="maceration", extraction_solvent="MeOH",
+    )
+    g = _graph_of(analysis)
+
+    extract = MetadataURIs.extract_sample_uri(analysis.metadata)
+    metadata = MetadataURIs.sample_metadata_uri(analysis.metadata)
+    assert extract != metadata
+    assert (extract, RDF.type, EMI.ExtractSample) in g
+    assert (metadata, RDF.type, ENPKG.SampleMetadata) in g
+    assert (extract, ENPKG.hasSampleMetadata, metadata) in g
+    assert (extract, ENPKG.hasLabProcess, AnalysisURIs.analysis_uri(analysis)) in g
+
+    assert g.value(metadata, DCTERMS.identifier) == Literal("S1")
+    assert g.value(metadata, ENPKG.sampleName) == Literal("Arnica 1")
+    assert g.value(metadata, ENPKG.sampleType) == Literal("sample")
+    assert g.value(metadata, ENPKG.collectionDate) == Literal("2019-03-14", datatype=XSD.date)
+    assert g.value(metadata, ENPKG.collectionLocation) == Literal("Geneva, CH")
+    assert g.value(extract, ENPKG.extractionMethod) == Literal("maceration")
+    assert g.value(extract, ENPKG.extractionSolvent) == Literal("MeOH")
+
+
+def test_pos_and_neg_runs_of_one_sample_share_its_nodes(make_analysis):
+    pos = make_analysis(run_name="RUN_POS", ionization_mode="pos")
+    neg = make_analysis(run_name="RUN_NEG", ionization_mode="neg")
+    g = _graph_of(pos, neg)
+
+    extract = MetadataURIs.extract_sample_uri(pos.metadata)
+    assert set(g.subjects(RDF.type, EMI.ExtractSample)) == {extract}
+    assert set(g.subjects(RDF.type, ENPKG.SampleMetadata)) == {
+        MetadataURIs.sample_metadata_uri(pos.metadata)
+    }
+    assert set(g.objects(extract, ENPKG.hasLabProcess)) == {
+        AnalysisURIs.analysis_uri(pos), AnalysisURIs.analysis_uri(neg)
+    }
+
+
+def test_run_level_metadata_lands_on_the_analysis(make_analysis):
+    analysis = _with_metadata(
+        make_analysis(ionization_mode="neg"), operator="LLG", instrument="Orbitrap Exploris 120"
+    )
+    g = _graph_of(analysis)
+
+    uri = AnalysisURIs.analysis_uri(analysis)
+    assert (uri, RDF.type, EMI.LCMSAnalysisNeg) in g
+    assert g.value(uri, ENPKG.ionizationMode) == Literal("neg")
+    assert g.value(uri, ENPKG.operator) == Literal("LLG")
+    assert g.value(uri, ENPKG.instrument) == Literal("Orbitrap Exploris 120")
+
+
+def test_unrecognised_ionization_mode_emits_neither_type_nor_literal(make_analysis):
+    analysis = make_analysis(ionization_mode="both")
+    g = _graph_of(analysis)
+
+    uri = AnalysisURIs.analysis_uri(analysis)
+    assert g.value(uri, ENPKG.ionizationMode) is None
+    assert set(g.objects(uri, RDF.type)) == {EMI.LCMSAnalysis}
+
+
+def test_extra_columns_become_typed_attributes_of_one_node(make_analysis):
+    analysis = _with_metadata(
+        make_analysis(),
+        extra_fields={
+            "organism_organe": "rhizome",
+            "bio_inhibition": 0.42,
+            "pos_injection_date": datetime(2026, 7, 5, 22, 35, 43),
+            "sample_note": "",
+            "plate_id": None,
+        },
+    )
+    g = _graph_of(analysis)
+
+    metadata = MetadataURIs.sample_metadata_uri(analysis.metadata)
+    extra = MetadataURIs.extra_metadata_uri(analysis.metadata)
+    assert (metadata, ENPKG.hasExtraMetadata, extra) in g
+    assert (extra, RDF.type, ENPKG.ExtraMetadata) in g
+
+    def value(column):
+        return g.value(extra, MetadataURIs.metadata_field_uri(column))
+
+    assert value("organism_organe") == Literal("rhizome")
+    assert value("bio_inhibition").datatype == XSD.double
+    assert value("pos_injection_date").datatype == XSD.dateTime
+    assert value("sample_note") is None
+    assert value("plate_id") is None
+
+
+def test_extra_column_predicates_hang_off_the_vocabulary_hook(make_analysis):
+    """Each column's predicate is declared once per graph and reused by every sample."""
+    first = _with_metadata(
+        make_analysis(run_name="R1"), sample_id="S1", extra_fields={"organism_organe": "rhizome"}
+    )
+    second = _with_metadata(
+        make_analysis(run_name="R2"), sample_id="S2", extra_fields={"organism_organe": "leaf"}
+    )
+    g = _graph_of(first, second)
+
+    predicate = MetadataURIs.metadata_field_uri("organism_organe")
+    assert (predicate, RDF.type, OWL.DatatypeProperty) in g
+    assert (predicate, RDFS.subPropertyOf, ENPKG.extraMetadataField) in g
+    assert list(g.objects(predicate, RDFS.label)) == [Literal("organism_organe")]
+    assert set(g.subjects(predicate, None)) == {
+        MetadataURIs.extra_metadata_uri(first.metadata),
+        MetadataURIs.extra_metadata_uri(second.metadata),
+    }
+
+
+def test_no_extra_metadata_node_when_every_extra_column_is_empty(make_analysis):
+    analysis = _with_metadata(
+        make_analysis(), extra_fields={"note": "  ", "score": float("nan"), "plate_id": None}
+    )
+    g = _graph_of(analysis)
+
+    assert not set(g.subjects(RDF.type, ENPKG.ExtraMetadata))
+    assert g.value(MetadataURIs.sample_metadata_uri(analysis.metadata), ENPKG.hasExtraMetadata) is None
+
+
+def test_extra_columns_with_awkward_headers_survive_a_turtle_round_trip(make_analysis):
+    analysis = _with_metadata(
+        make_analysis(), extra_fields={"sample note": "x", "plate/well": "A10"}
+    )
+    g = _graph_of(analysis)
+
+    reparsed = Graph().parse(data=g.serialize(format="turtle"), format="turtle")
+    assert len(reparsed) == len(g)
 
 
 def test_add_analysis_is_idempotent(make_analysis):

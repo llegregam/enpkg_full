@@ -163,13 +163,13 @@ bare "mass" meant.
 
 ## 6. Two speeds: `[live]` and `[target]`
 
-The vocabulary deliberately runs ahead of the code. Every one of its 78 terms carries exactly one
+The vocabulary deliberately runs ahead of the code. Every one of its 81 terms carries exactly one
 status tag in its `rdfs:comment`:
 
 | Tag | Count | Meaning |
 |---|---|---|
-| `[live]` | 54 | The serializer emits this today |
-| `[target]` | 24 | Declared and agreed, not yet wired in |
+| `[live]` | 68 | The serializer emits this today |
+| `[target]` | 13 | Declared and agreed, not yet wired in |
 
 A `[target]` term is not a TODO comment — it is a *decision already made*, recorded so it does not
 have to be re-litigated. `enpkg:Atom` and `enpkg:MolecularFormula` have their domains and ranges
@@ -221,7 +221,7 @@ what `[target]` means.
 ```mermaid
 %%{init: {'theme':'dark'}}%%
 flowchart LR
-    T["<b>docs/vocab/enpkg.ttl</b><br/>78 terms, source of truth"]:::vocab
+    T["<b>docs/vocab/enpkg.ttl</b><br/>81 terms, source of truth"]:::vocab
     S["AnalysisSerializer<br/>_declare_vocabulary()"]
     O["exported .ttl<br/><i>vocabulary + data</i>"]
     D["drift tests<br/>emitted ⊆ declared<br/>[live] == emitted"]:::test

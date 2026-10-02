@@ -2,9 +2,8 @@ classDiagram
     %% ========================================================================
     %% ROLE: the TARGET model — where the ENPKG schema is going.
     %%
-    %% Not everything drawn here is emitted yet: MolecularFormula, Atom, the
-    %% SampleMetadata fields and several annotation attributes are still
-    %% targets. Terms carry a [live] / [target] tag in docs/vocab/enpkg.ttl —
+    %% Not everything drawn here is emitted yet: RawMaterial, MolecularFormula,
+    %% Atom and several annotation attributes are still targets. Terms carry a [live] / [target] tag in docs/vocab/enpkg.ttl —
     %% that file, not this diagram, is the authority on what any enpkg: term
     %% means (domain, range, and why it was minted rather than reused).
     %%
@@ -22,6 +21,9 @@ classDiagram
         +sampleType: string
         +collectionDate: date
         +collectionLocation: string
+    }
+    class ExtraMetadata["enpkg:ExtraMetadata"]{
+        +one attribute per user-defined column
     }
     class LCMSAnalysis["emi:LCMSAnalysis"]{
         +ionizationMode: string
@@ -132,6 +134,7 @@ classDiagram
     Taxon <-- RawMaterial : sosa_isSampleOf
     RawMaterial <-- ExtractSample  : sosa_isSampleOf
     ExtractSample --> SampleMetadata : enpkg_hasSampleMetadata
+    SampleMetadata --> ExtraMetadata : enpkg_hasExtraMetadata
     ExtractSample --> LCMSAnalysis : enpkg_hasLabProcess
     LCMSAnalysis --> LCMSFeatureSet : emi_hasLCMSFeatureSet
     LCMSAnalysis --> OTTMatch : enpkg_hasOTTMatch

@@ -35,6 +35,7 @@ from ..data.annotated_spectra_class import AnnotatedSpectrum
 from ..data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
 from ..data.lotus_class import Lotus
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
+from ..data.sample_metadata import SampleMetadata
 from ..data.sirius_annotation import SiriusChemicalAnnotation
 from .namespaces import (
     CHEMROF,
@@ -46,6 +47,7 @@ from .namespaces import (
     GBIF,
     INCHIKEY,
     MASSIVE,
+    METADATA_FIELD,
     MS,
     NCBITAXON,
     NCBITAXON_PROP,
@@ -61,7 +63,7 @@ from .namespaces import (
     XSD,
 )
 from .npc_vocabulary import npc_vocabulary
-from .uris import AnalysisURIs, CompoundURIs, OrganismURIs, _organism_uri
+from .uris import AnalysisURIs, CompoundURIs, MetadataURIs, OrganismURIs, _organism_uri
 
 # Prefixes bound on the output graph (cosmetic — controls Turtle prefix display).
 _PREFIXES = {
@@ -69,7 +71,7 @@ _PREFIXES = {
     "taxon": NCBITAXON, "ncbitaxon": NCBITAXON_PROP,
     "prov": PROV, "dcterms": DCTERMS, "skos": SKOS, "emi-res": EMI_RES,
     "wd": WD, "inchikey": INCHIKEY, "pubchem": PUBCHEM, "gbif": GBIF, "doi": DOI,
-    "massive": MASSIVE,
+    "massive": MASSIVE, "metadatafield": METADATA_FIELD,
 }
 
 # The single source of truth for every enpkg: term's rdf:type / rdfs:domain /
@@ -138,14 +140,19 @@ class AnalysisSerializer:
         Skips ``None``, NaN floats and empty strings so missing data produces no
         triple rather than a junk literal.
         """
-        if value is None:
-            return
-        if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):  # NaN/inf
-            return
-        if isinstance(value, str) and value.strip() == "":
+        if self._is_empty(value):
             return
         literal = Literal(value, datatype=datatype) if datatype is not None else Literal(value)
         self.graph.add((subject, predicate, literal))
+
+    @staticmethod
+    def _is_empty(value) -> bool:
+        """True for ``None``, NaN/inf floats and blank strings: values carrying no data."""
+        if value is None:
+            return True
+        if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):  # NaN/inf
+            return True
+        return isinstance(value, str) and value.strip() == ""
 
     @staticmethod
     def _as_int(value) -> Optional[int]:
@@ -244,9 +251,13 @@ class AnalysisSerializer:
         ionization_mode = (analysis.ionization_mode or "").lower()
         if ionization_mode.startswith("pos"):
             g.add((uri, RDF.type, EMI.LCMSAnalysisPos))
+            g.add((uri, ENPKG.ionizationMode, Literal("pos")))
         elif ionization_mode.startswith("neg"):
             g.add((uri, RDF.type, EMI.LCMSAnalysisNeg))
+            g.add((uri, ENPKG.ionizationMode, Literal("neg")))
         self._set(uri, DCTERMS.identifier, analysis.run_name)
+        self._set(uri, ENPKG.operator, analysis.metadata.operator)
+        self._set(uri, ENPKG.instrument, analysis.metadata.instrument)
         massive_uri = self._massive_uri(getattr(analysis.metadata, "massive_id", None))
         if massive_uri is not None:
             g.add((uri, EMI.hasMassiveDOI, massive_uri))
@@ -267,17 +278,20 @@ class AnalysisSerializer:
         return uri
 
     def _add_sample(self, analysis: Analysis) -> URIRef:
-        uri = AnalysisURIs.analysis_metadata_uri(analysis)
+        g, md = self.graph, analysis.metadata
+        uri = MetadataURIs.extract_sample_uri(md)
         if uri in self._emitted:
             return uri
         self._emitted.add(uri)
-        g, md = self.graph, analysis.metadata
         g.add((uri, RDF.type, EMI.ExtractSample))
         self._set(uri, DCTERMS.identifier, md.sample_id)
         self._set(uri, RDFS.label, md.source_taxon)
         self._set(uri, ENPKG.sourceId, md.source_id)
         self._set(uri, ENPKG.sampleFilenamePos, md.sample_filename_pos)
         self._set(uri, ENPKG.sampleFilenameNeg, md.sample_filename_neg)
+        self._set(uri, ENPKG.extractionMethod, md.extraction_method)
+        self._set(uri, ENPKG.extractionSolvent, md.extraction_solvent)
+        g.add((uri, ENPKG.hasSampleMetadata, self._add_sample_metadata(md)))
 
         organism_uri = AnalysisURIs.source_organism_uri(analysis)
         if organism_uri is not None:
@@ -290,6 +304,48 @@ class AnalysisSerializer:
                 ott_id=taxon.open_tree_taxon_id,
             )
         return uri
+
+    def _add_sample_metadata(self, md: SampleMetadata) -> URIRef:
+        """Emit the sample's ``enpkg:SampleMetadata`` node.
+
+        Keyed on ``sample_id`` like the ExtractSample that links to it, so it is
+        only reached when that ExtractSample is first emitted.
+        """
+        uri = MetadataURIs.sample_metadata_uri(md)
+        self.graph.add((uri, RDF.type, ENPKG.SampleMetadata))
+        self._set(uri, DCTERMS.identifier, md.sample_id)
+        self._set(uri, ENPKG.sampleName, md.sample_name)
+        self._set(uri, ENPKG.sampleType, md.sample_type)
+        self._set(uri, ENPKG.collectionDate, md.collection_date)
+        self._set(uri, ENPKG.collectionLocation, md.collection_location)
+        self._add_extra_metadata(md, uri)
+        return uri
+
+    def _add_extra_metadata(self, md: SampleMetadata, sample_metadata_uri: URIRef) -> None:
+        """Emit the user-defined columns as attributes of one ``enpkg:ExtraMetadata`` node.
+
+        Each column's predicate is minted from its header and declared once per
+        graph as an ``owl:DatatypeProperty``, ``rdfs:subPropertyOf
+        enpkg:extraMetadataField``, labelled with the header — so a query can list
+        every extra column without knowing any column name. Values keep the type
+        the CSV reader inferred (rdflib maps date/datetime/int/float/bool to their
+        xsd datatypes). A sample whose extra columns are all empty gets no node.
+        """
+        fields = {k: v for k, v in md.extra_fields.items() if not self._is_empty(v)}
+        if not fields:
+            return
+        g = self.graph
+        uri = MetadataURIs.extra_metadata_uri(md)
+        g.add((uri, RDF.type, ENPKG.ExtraMetadata))
+        g.add((sample_metadata_uri, ENPKG.hasExtraMetadata, uri))
+        for column, value in fields.items():
+            predicate = MetadataURIs.metadata_field_uri(column)
+            if predicate not in self._emitted:
+                self._emitted.add(predicate)
+                g.add((predicate, RDF.type, OWL.DatatypeProperty))
+                g.add((predicate, RDFS.subPropertyOf, ENPKG.extraMetadataField))
+                g.add((predicate, RDFS.label, Literal(column)))
+            g.add((uri, predicate, Literal(value)))
 
     def _add_featureset(self, analysis: Analysis) -> URIRef:
         uri = AnalysisURIs.featureset_uri(analysis)

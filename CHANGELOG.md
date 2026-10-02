@@ -20,6 +20,53 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-01 — The sample metadata is emitted
+
+- **The problem.** The vocabulary declared a sample-metadata layer (`enpkg:SampleMetadata`,
+  `hasSampleMetadata`, `sampleName`, `sampleType`, `collectionDate`, `collectionLocation`,
+  `extractionMethod`, `extractionSolvent`, `operator`, `instrument`, `ionizationMode`), all
+  `[target]`. The serializer emitted one `emi:ExtractSample` node carrying the sample id, the
+  source taxon, `sourceId` and the two filenames; every other column of the metadata file was
+  dropped. All 11 terms are now `[live]` (vocabulary 0.3.0).
+- **Sample nodes are keyed on `sample_id`, not the run.** `emi-res:metadata/{run_name}` becomes
+  `emi-res:extractsample/{sample_id}`, plus a separate `emi-res:samplemetadata/{sample_id}`. One
+  metadata row describes one sample, and keyed on the run the pos and neg injections of one
+  extract appeared as two extracts. This assumes `sample_id` is unique within a project, the
+  same assumption the run-keyed IRIs already make about `run_name`. Every existing `.ttl` has to
+  be regenerated.
+- **Columns without an `enpkg:` term go on one `enpkg:ExtraMetadata` node per sample**, one
+  attribute per column. The predicate is minted from the header as
+  `emi-res:metadatafield/{header}`, declared in the graph as an `owl:DatatypeProperty`,
+  `rdfs:subPropertyOf enpkg:extraMetadataField` and labelled with the header. The predicates are
+  not `enpkg:` terms because headers are open-ended: an `enpkg:` IRI built from a header would
+  have no declaration in `enpkg.ttl` (the drift test rejects that), and a header such as
+  `formula` or `charge` would produce an existing term, whose declared domain would then be
+  inferred for the sample. The fixed `extraMetadataField` super-property lets a query list every
+  extra column of any project without knowing the headers. Key/value entry nodes (fixed
+  predicates, one node per value) were considered and turned down in favour of direct
+  attributes; both identify a column by its header string, so they line up across projects in
+  the same way.
+- **`organism_kingdom … organism_genus` removed from `SampleMetadata`.** They had no vocabulary
+  term and nothing in the code read them, so they were dropped from the graph. They now arrive
+  as ordinary extra columns and land on the ExtraMetadata node.
+- **`operator` and `instrument` moved from `Analysis` to `SampleMetadata`**, reversing where
+  Group C (2026-08-07) put them. No loader ever set the `Analysis` fields, and the only source
+  of either value is the metadata row, the same place `massive_id` (also emitted on the
+  analysis node) comes from. The arnica fixture's `operator` column had been landing in
+  `extra_fields`.
+- **`collection_date` is a `date`.** polars' `try_parse_dates` turns an ISO date column into
+  `datetime.date`, which the `str`-typed field rejected, so any metadata file with that column
+  failed to load. A datetime is reduced to its date; a string that is not an ISO date still
+  fails validation, naming the field.
+- **`enpkg:ionizationMode` is emitted alongside `emi:LCMSAnalysisPos/Neg`**, both from the same
+  branch, so they cannot disagree. The vocabulary had left "type, literal or both" open.
+- **Not done:** `emi:RawMaterial` between the extract and the taxon (target diagram) is a
+  separate change: it alters a live `sosa:isSampleOf` edge and needs a rule for files without
+  `source_id`. Column names are not aliased, so a file using `sample_extraction_solvent` or
+  `instrument_type` gets those values on the ExtraMetadata node, not on the vocabulary terms.
+- **Regenerate:** every `.ttl` export, and the pickled `gui_workspace/logs/batch_*/analysis.pkl`
+  files (fields changed on both `SampleMetadata` and `Analysis`).
+
 ### 2026-10-01 — Library-only MS2 matches need a stronger score
 
 - **The problem.** A LOTUS-backed MS2 match is weighed against the sample's taxonomy through

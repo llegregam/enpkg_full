@@ -30,6 +30,7 @@ SKOS      = Namespace("http://www.w3.org/2004/02/skos/core#")  # prefLabel / alt
 
 # --- Resources: instance IRIs we mint ---------------------------------------
 EMI_RES   = Namespace("https://w3id.org/emi/resource/")       # minted entity URIs (see rdf/uris.py)
+METADATA_FIELD = Namespace("https://w3id.org/emi/resource/metadatafield/")  # predicates minted from metadata-file headers
 
 # --- External identifier authorities (object IRIs / owl:sameAs targets) ------
 WD        = Namespace("http://www.wikidata.org/entity/")
@@ -44,6 +45,6 @@ __all__ = [
     "RDF", "RDFS", "OWL", "XSD",
     "EMI", "ENPKG", "NPC", "SOSA", "MS", "CHEMROF", "NCBITAXON", "NCBITAXON_PROP",
     "PROV", "DCTERMS", "SKOS",
-    "EMI_RES",
+    "EMI_RES", "METADATA_FIELD",
     "WD", "INCHIKEY", "PUBCHEM", "GBIF", "DOI", "MASSIVE",
 ]

@@ -35,7 +35,7 @@
 
 <https://w3id.org/enpkg#> a owl:Ontology ;
     owl:imports emi: ;
-    owl:versionInfo "0.2.0" ;
+    owl:versionInfo "0.3.0" ;
     dcterms:title "ENPKG Vocabulary" ;
     dcterms:description "Terms minted for the ENPKG knowledge-graph pipeline, reused unchanged across every knowledge graph the pipeline generates. Complements the Earth Metabolome Ontology (EMI), which this ontology imports." ;
     dcterms:creator "Loïc Le Grégam" ;
@@ -117,10 +117,24 @@ enpkg:Atom a owl:Class ;
 ### Sample & spine
 
 enpkg:SampleMetadata a owl:Class ;
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
     rdfs:label "sample metadata" ;
-    rdfs:comment """[target] Collection-level metadata about a sample, sourced from the 
-    user's metadata file. Distinct from ExtractSample, which is the analytical-process 
-    side; no minted URI yet for this node (see the review doc, §1a).""" .
+    rdfs:comment """[live] Collection-level metadata about a sample, sourced from one 
+    row of the user's metadata file. One node per sample_id 
+    (emi-res:samplemetadata/<sample_id>), linked from that sample's emi:ExtractSample 
+    by enpkg:hasSampleMetadata. Distinct from ExtractSample, which is the 
+    analytical-process side.""" .
+
+enpkg:ExtraMetadata a owl:Class ;
+    rdfs:definedBy <https://w3id.org/enpkg#> ;
+    rdfs:label "extra sample metadata" ;
+    rdfs:comment """[live] The columns of one sample's metadata row that have no 
+    dedicated enpkg: term, as attributes of a single node 
+    (emi-res:samplemetadata/<sample_id>/extra) linked from that sample's 
+    SampleMetadata by enpkg:hasExtraMetadata. The attributes' predicates are minted 
+    from the column headers and are not enpkg: terms — see 
+    enpkg:extraMetadataField. Not emitted for a sample whose extra columns are all 
+    empty.""" .
 
 #################################################################
 # Object properties
@@ -138,7 +152,13 @@ enpkg:hasSampleMetadata a owl:ObjectProperty ;
     rdfs:label "has sample metadata" ;
     rdfs:domain emi:ExtractSample ;
     rdfs:range enpkg:SampleMetadata ;
-    rdfs:comment "[target] ExtractSample -> its collection-level SampleMetadata." .
+    rdfs:comment "[live] ExtractSample -> its collection-level SampleMetadata. Both nodes are keyed on sample_id, so the pos and neg runs of one sample share them." .
+
+enpkg:hasExtraMetadata a owl:ObjectProperty ;
+    rdfs:label "has extra metadata" ;
+    rdfs:domain enpkg:SampleMetadata ;
+    rdfs:range enpkg:ExtraMetadata ;
+    rdfs:comment "[live] SampleMetadata -> the node carrying its user-defined columns." .
 
 enpkg:hasOTTMatch a owl:ObjectProperty ;
     rdfs:label "has Open Tree of Life match" ;
@@ -273,39 +293,44 @@ enpkg:searchString a owl:DatatypeProperty ;
 
 enpkg:sampleName a owl:DatatypeProperty ;
     rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:string ;
-    rdfs:comment "[target] Python field exists (SampleMetadata.sample_name); not yet wired into the serializer." .
+    rdfs:comment "[live] From the metadata file's sample_name column." .
 
 enpkg:sampleType a owl:DatatypeProperty ;
     rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:string ;
-    rdfs:comment "[target] Pragmatic plain literal. RDF_DATA_MODEL_mapped.md §2 originally proposed EMI sample subclassing by value (emi:QCSample/Blank/ExtractSample) instead — not implemented (the serializer always types the node emi:ExtractSample) — worth reconsidering later." .
+    rdfs:comment "[live] Pragmatic plain literal, from the metadata file's sample_type column. RDF_DATA_MODEL_mapped.md §2 originally proposed EMI sample subclassing by value (emi:QCSample/Blank/ExtractSample) instead — not implemented (the serializer always types the node emi:ExtractSample) — worth reconsidering later." .
 
 enpkg:collectionDate a owl:DatatypeProperty ;
     rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:date ;
-    rdfs:comment "[target] Python field exists (SampleMetadata.collection_date); not yet wired into the serializer." .
+    rdfs:comment "[live] From the metadata file's collection_date column; a date-time value is reduced to its date." .
 
 enpkg:collectionLocation a owl:DatatypeProperty ;
     rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:string ;
-    rdfs:comment "[target] Python field exists (SampleMetadata.collection_location); not yet wired into the serializer." .
+    rdfs:comment "[live] Free text, from the metadata file's collection_location column." .
 
 enpkg:extractionMethod a owl:DatatypeProperty ;
     rdfs:domain emi:ExtractSample ; rdfs:range xsd:string ;
-    rdfs:comment "[target] Python field exists (SampleMetadata.extraction_method, backing ExtractSample's RDF attributes); not yet wired into the serializer." .
+    rdfs:comment "[live] From the metadata file's extraction_method column." .
 
 enpkg:extractionSolvent a owl:DatatypeProperty ;
     rdfs:domain emi:ExtractSample ; rdfs:range xsd:string ;
-    rdfs:comment "[target] Python field exists (SampleMetadata.extraction_solvent); not yet wired into the serializer." .
+    rdfs:comment "[live] From the metadata file's extraction_solvent column." .
 
 enpkg:operator a owl:DatatypeProperty ;
     rdfs:domain emi:LCMSAnalysis ; rdfs:range xsd:string ;
-    rdfs:comment "[target] Python field exists (Analysis.operator); not yet wired into the serializer." .
+    rdfs:comment "[live] From the metadata file's operator column. The metadata row describes a sample, so the pos and neg runs of one sample carry the same value." .
 
 enpkg:instrument a owl:DatatypeProperty ;
     rdfs:domain emi:LCMSAnalysis ; rdfs:range xsd:string ;
-    rdfs:comment "[target] Python field exists (Analysis.instrument); not yet wired into the serializer." .
+    rdfs:comment "[live] From the metadata file's instrument column. The metadata row describes a sample, so the pos and neg runs of one sample carry the same value." .
 
 enpkg:ionizationMode a owl:DatatypeProperty ;
     rdfs:domain emi:LCMSAnalysis ; rdfs:range xsd:string ;
-    rdfs:comment "[target] Value 'pos' or 'neg'. The serializer currently encodes this only via the emi:LCMSAnalysisPos/Neg rdf:type subclass, not also as this literal — decide whether both should be emitted before wiring this in." .
+    rdfs:comment "[live] 'pos' or 'neg', always emitted together with the matching emi:LCMSAnalysisPos / emi:LCMSAnalysisNeg rdf:type. Neither is emitted when the run's ionization mode is not recognised as positive or negative." .
+
+enpkg:extraMetadataField a owl:DatatypeProperty ;
+    rdfs:label "extra metadata field" ;
+    rdfs:domain enpkg:ExtraMetadata ;
+    rdfs:comment "[live] Super-property of every predicate minted from a metadata-file column header (emi-res:metadatafield/<percent-encoded header>). Each minted predicate is declared in the graph that uses it as an owl:DatatypeProperty, rdfs:subPropertyOf this term, with the column header as its rdfs:label; this term itself is never asserted on a node. No rdfs:range: each value keeps the datatype inferred from the file (xsd:string, xsd:integer, xsd:double, xsd:boolean, xsd:date, xsd:dateTime). Graphs whose files share a column header share its minted predicate, whatever the column means in each." .
 
 ### Adduct / MS1
 

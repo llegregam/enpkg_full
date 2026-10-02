@@ -14,8 +14,9 @@ from ..data.chemical_annotation import (
 from ..data.lotus_class import Lotus
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.otl_class import Match
+from ..data.sample_metadata import SampleMetadata
 from ..data.sirius_annotation import SiriusChemicalAnnotation
-from .namespaces import EMI_RES, INCHIKEY
+from .namespaces import EMI_RES, INCHIKEY, METADATA_FIELD
 
 
 class AnalysisURIs:
@@ -198,15 +199,6 @@ class AnalysisURIs:
         return EMI_RES[f"canopus/{analysis.run_name}/{spectrum.feature_id}"]
 
     @staticmethod
-    def analysis_metadata_uri(analysis: Analysis) -> URIRef:
-        """Mint the URI for the metadata of an analysis.
-
-        This is a separate entity from the analysis itself, since it has a
-        different set of attributes and may be used in different contexts.
-        """
-        return EMI_RES[f"metadata/{analysis.run_name}"]
-
-    @staticmethod
     def source_organism_uri(analysis: Analysis) -> Optional[URIRef]:
         """Mint the URI for the sample's source organism.
 
@@ -357,11 +349,49 @@ class OrganismURIs:
 
 
 class MetadataURIs:
-    """Stable URIs for metadata nodes.
-    These are minted in the context of a specific SampleMetadata.
+    """Stable URIs for the sample nodes and the user-defined metadata columns.
 
-    They contain a fixed set of URI's for the known metadata columns,
-    and a variable set of URI's for any extra user-defined metadata columns.
+    The sample nodes are keyed on ``sample_id``, never on the run: one metadata
+    row describes one sample, and the pos and neg runs of that sample both point
+    at the same nodes. This assumes ``sample_id`` is unique within a project.
+
+    Columns with a dedicated ``enpkg:`` term are emitted with that term. Every
+    other column gets a predicate minted here from its header, under EMI_RES:
+    every ``enpkg:`` IRI in the output must be declared in docs/vocab/enpkg.ttl
+    (enforced by the vocabulary drift test), and a header is not.
+
+    Both segments are percent-encoded: nothing constrains a sample id or a column
+    header, and a ``/`` or a space would otherwise reshape the IRI path.
     """
-    pass
+
+    @staticmethod
+    def extract_sample_uri(metadata: SampleMetadata) -> URIRef:
+        """Mint the URI for the extract that was analysed (``emi:ExtractSample``)."""
+        return EMI_RES[f"extractsample/{_segment(metadata.sample_id)}"]
+
+    @staticmethod
+    def sample_metadata_uri(metadata: SampleMetadata) -> URIRef:
+        """Mint the URI for the sample's ``enpkg:SampleMetadata`` node."""
+        return EMI_RES[f"samplemetadata/{_segment(metadata.sample_id)}"]
+
+    @staticmethod
+    def extra_metadata_uri(metadata: SampleMetadata) -> URIRef:
+        """Mint the URI for the node holding the sample's user-defined columns."""
+        return EMI_RES[f"samplemetadata/{_segment(metadata.sample_id)}/extra"]
+
+    @staticmethod
+    def metadata_field_uri(column: str) -> URIRef:
+        """Mint the predicate for one user-defined metadata column.
+
+        Keyed on the column header alone, so every sample in a graph uses the
+        same predicate for the same column. Two projects with the same header
+        also mint the same IRI, whether or not the column means the same thing
+        in both.
+        """
+        return METADATA_FIELD[_segment(column)]
+
+
+def _segment(text: str) -> str:
+    """Percent-encode ``text`` for use as one IRI path segment."""
+    return quote(str(text), safe="")
 

@@ -178,11 +178,15 @@ ExtractSample --enpkg:hasLabProcess--> LCMSAnalysis
 
 Still open:
 
-- **`SampleMetadata` still needs its own URI minter.** [uris.py](../enpkg/monolith/rdf/uris.py) has
+- ~~**`SampleMetadata` still needs its own URI minter.** [uris.py](../enpkg/monolith/rdf/uris.py) has
   `analysis_metadata_uri`, but that mints a per-run URI that `_add_sample` types `EMI.ExtractSample`
   — there's still no code-side node distinct from `ExtractSample` for the new `enpkg:SampleMetadata`
-  class to attach to.
-- **Only `sampleId` and `sampleType` are backed by the data model.** Checked directly against
+  class to attach to.~~
+  **Resolved 2026-10-01:** `MetadataURIs` in uris.py mints `extractsample/{sample_id}` and
+  `samplemetadata/{sample_id}` as two distinct nodes, linked by `enpkg:hasSampleMetadata`;
+  `analysis_metadata_uri` is gone. Both are keyed on `sample_id`, so the pos and neg runs of a
+  sample share them.
+- ~~**Only `sampleId` and `sampleType` are backed by the data model.** Checked directly against
   [sample_metadata.py](../enpkg/monolith/data/sample_metadata.py): it has `sample_id` and
   `sample_type`, but **no** `sample_name`, `collection_date`, or `collection_location` field at
   all — so `sampleName`, `collectionDate`, `collectionLocation` aren't just unmapped, they don't
@@ -190,7 +194,11 @@ Still open:
   `ionization_mode`, not `polarity`, and no operator/instrument) and
   `ExtractSample.extractionMethod`/`extractionSolvent` (no equivalent anywhere in
   [enpkg/monolith/data/](../enpkg/monolith/data/)). Tracked as a concrete to-do in Part 5, Group C
-  — this is upstream of any vocabulary decision.
+  — this is upstream of any vocabulary decision.~~
+  **Resolved:** Group C (2026-08-07) added the fields, and on 2026-10-01 every one of them was
+  wired into the serializer (`operator`/`instrument` now live on `SampleMetadata`, read from the
+  metadata file). Columns with no `enpkg:` term go on an `enpkg:ExtraMetadata` node — see the
+  CHANGELOG entry of that date.
 
 ### 1b. Chemistry: MS1's structure link — removed, then restored with its own predicate
 
