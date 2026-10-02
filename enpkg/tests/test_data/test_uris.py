@@ -3,6 +3,7 @@
 from rdflib import URIRef
 
 from enpkg.monolith.data.chemical_annotation import AnnotationOrganism
+from enpkg.monolith.data.molecular_formula import parse_molecular_formula
 from enpkg.monolith.data.ms1_data_classes.adduct_class import AdductRecipe
 from enpkg.monolith.rdf.namespaces import EMI_RES, INCHIKEY
 from enpkg.monolith.rdf.uris import (
@@ -180,3 +181,19 @@ def test_organism_uri_cascade():
     assert OrganismURIs.organism_uri(_organism()) is None
     # direct helper agrees with the class method
     assert _organism_uri(None, 5) == EMI_RES["taxon/ott/5"]
+
+
+def test_molecular_formula_uri_is_keyed_on_the_hill_form():
+    written_differently = (parse_molecular_formula("C2H6O"), parse_molecular_formula("OC2H6"))
+
+    assert {CompoundURIs.molecular_formula_uri(f) for f in written_differently} == {
+        EMI_RES["formula/C2H6O"]
+    }
+
+
+def test_molecular_formula_uri_separates_charge_states():
+    neutral = CompoundURIs.molecular_formula_uri(parse_molecular_formula("C11H12NO"))
+    cation = CompoundURIs.molecular_formula_uri(parse_molecular_formula("C11H12NO+"))
+
+    assert neutral != cation
+    assert cation == EMI_RES["formula/C11H12NO+"]

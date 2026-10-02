@@ -830,11 +830,17 @@ Execute Part 4's Phase 0 → 1 → 2 → 4 → 3 → 5.
 
 **Part 5 is complete.** What remains is not part of this plan:
 
-- **Filing the `perma-id/w3id.org` PR** — needs `docs/vocab/enpkg.ttl` committed and pushed to
-  `main` first (it is still uncommitted), then it is a distinct external action.
-- **`ionizationMode`'s literal-vs-subclass-only question** — still genuinely open; declared
-  `[target]` in the TTL either way.
-- **Wiring the 24 `[target]` terms** into the serializer, as and when each is wanted. Two of them
-  (`algorithm`, `siriusVersion`) need Python data-model fields before they can be emitted at all.
+- **Filing the `perma-id/w3id.org` PR.** `w3id.org/enpkg` is unregistered (404, checked
+  2026-10-01). The redirect target decided under D1 points at `main`, which still holds the
+  pre-monolith pipeline and no `docs/vocab/` at all, so it would 404 too: the target (a branch, a
+  tag, or `main` after a merge) has to be settled first, and so does where the vocabulary files
+  live, since a wheel built from this repository does not contain them. Separately, the vendored
+  `EMI-vocab.owl` states that EMI replaces the earlier ENPKG vocabulary published under
+  `https://enpkg.commons-lab.org/kg/`, so the same `enpkg` name now denotes two namespaces;
+  worth raising with EMI's maintainers before filing.
+- **The `[target]` terms are wired**, except the sample-metadata layer (in progress separately) and
+  `enpkg:isotope`, reserved for isotope-labelled formulas. Statuses moved from `[live]`/`[target]`
+  comment tags to `vs:term_status` (see [VOCABULARY.md](VOCABULARY.md) §6); the 2026-10-02
+  CHANGELOG entry has the details.
 - **`docs/RDF_KG_DATA_MODEL.html`** — untracked, stale, a hand-copied third copy of the diagram.
   Regenerate or delete; left untouched pending a decision.

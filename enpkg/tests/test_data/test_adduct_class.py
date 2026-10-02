@@ -110,7 +110,7 @@ def test_chemical_adduct_convenience_properties(make_adduct, make_lotus):
 
 def test_validate_lotus_rejects_empty(make_recipe):
     with pytest.raises(ValueError, match="must not be empty"):
-        ChemicalAdduct(lotus=[], recipe=make_recipe())
+        ChemicalAdduct(lotus=[], recipe=make_recipe(), annotation_method="precursor-mass-search")
 
 
 def test_validate_lotus_rejects_mixed_formulas(make_lotus, make_recipe):
@@ -121,6 +121,7 @@ def test_validate_lotus_rejects_mixed_formulas(make_lotus, make_recipe):
                 make_lotus(structure_molecular_formula="C6H12O6"),
             ],
             recipe=make_recipe(),
+            annotation_method="precursor-mass-search",
         )
 
 

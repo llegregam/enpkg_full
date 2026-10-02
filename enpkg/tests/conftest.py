@@ -102,10 +102,11 @@ def make_recipe():
 def make_adduct(make_lotus, make_recipe):
     """Return a factory building a ChemicalAdduct over one Lotus group."""
 
-    def _make(lotus=None, recipe=None) -> ChemicalAdduct:
+    def _make(lotus=None, recipe=None, annotation_method="precursor-mass-search") -> ChemicalAdduct:
         return ChemicalAdduct(
             lotus=lotus if lotus is not None else [make_lotus()],
             recipe=recipe if recipe is not None else make_recipe(),
+            annotation_method=annotation_method,
         )
 
     return _make
@@ -160,12 +161,14 @@ def make_sirius_annotation():
         molecular_formula: str = "C6H9N3O3S",
         adduct: str = "[M+K]+",
         inchikey_2d: str = "BBTZETLXNQDZKF",
+        sirius_version=None,
     ) -> SiriusChemicalAnnotation:
         return SiriusChemicalAnnotation(
             rank=rank,
             molecular_formula=molecular_formula,
             adduct=adduct,
             inchikey_2d=inchikey_2d,
+            sirius_version=sirius_version,
         )
 
     return _make

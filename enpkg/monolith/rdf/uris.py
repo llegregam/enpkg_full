@@ -12,6 +12,7 @@ from ..data.chemical_annotation import (
     MS2ChemicalAnnotation,
 )
 from ..data.lotus_class import Lotus
+from ..data.molecular_formula import MolecularFormula
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.otl_class import Match
 from ..data.sirius_annotation import SiriusChemicalAnnotation
@@ -336,6 +337,18 @@ class CompoundURIs:
         :meth:`lotus_uri`, so a structure named by both sources is one node.
         """
         return INCHIKEY[structure.inchikey]
+
+    @staticmethod
+    def molecular_formula_uri(formula: MolecularFormula) -> URIRef:
+        """Mint the URI for a molecular formula (globally shared).
+
+        Keyed on the Hill form with its charge suffix (``formula/C11H12NO+``), so every
+        structure and MS1 hypothesis with one composition and charge reaches one node,
+        however its source wrote the formula, while a molecule and its cation stay two.
+        A Hill form holds only letters, digits and a sign; ``+`` is legal in an IRI path
+        and is kept unencoded.
+        """
+        return EMI_RES[f"formula/{quote(formula.hill, safe='+')}"]
 
 
 class OrganismURIs:

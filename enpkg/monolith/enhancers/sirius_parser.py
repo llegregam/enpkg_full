@@ -141,8 +141,29 @@ def _as_int(value: object) -> Optional[int]:
         return None
 
 
+_SIRIUS_VERSION = re.compile(r"^SIRIUS (\S+)$", re.MULTILINE)
+
+
+def parse_sirius_version(stdout: str) -> Optional[str]:
+    """Read the application version from ``sirius --version`` output.
+
+    SIRIUS prints its own version on a line of its own (``SIRIUS 6.3.4``), followed by
+    the versions of the libraries it bundles (``SIRIUS lib: 5.7.0``, ...), which the
+    pattern does not match.
+
+    Returns:
+        The version string (``"6.3.4"``), or ``None`` when no such line is present.
+    """
+    match = _SIRIUS_VERSION.search(stdout)
+    return match.group(1) if match else None
+
+
 def attach_sirius_annotations(
-    analysis: Analysis, results: SiriusResults, *, top_k: Optional[int] = None
+    analysis: Analysis,
+    results: SiriusResults,
+    *,
+    top_k: Optional[int] = None,
+    sirius_version: Optional[str] = None,
 ) -> Analysis:
     """Attach SIRIUS structure identifications onto the analysis's spectra.
 
@@ -160,6 +181,9 @@ def attach_sirius_annotations(
         results: Parsed SIRIUS summaries (from :meth:`SiriusOutputParser.digest_paths`).
         top_k: Optional cap on candidates per feature; rows with
             ``structurePerIdRank > top_k`` are dropped. ``None`` keeps every row.
+        sirius_version: Version of the SIRIUS run that wrote ``results``, stamped on
+            every annotation. The summaries do not record it, so it comes from the
+            caller; ``None`` when unknown.
 
     Returns:
         The same ``analysis`` instance, with ``spectrum.sirius_annotations`` populated.
@@ -190,6 +214,7 @@ def attach_sirius_annotations(
                 molecular_formula=_clean_str(row.molecularFormula),
                 adduct=_normalize_adduct(row.adduct),
                 inchikey_2d=inchikey_2d,
+                sirius_version=sirius_version,
             )
         )
 

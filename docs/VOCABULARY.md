@@ -94,7 +94,7 @@ The opposite call is `enpkg:hasCandidateStructure` (§5) — a distinction that 
 ## 4. Domains and ranges, and the traps they prevent
 
 Most of the value in the vocabulary file is not the term names. It is the `rdfs:domain` and
-`rdfs:range` on each one — 68 of the 69 properties carry a domain, all 69 a range.
+`rdfs:range` on each one — 69 of the 70 properties carry a domain, all 70 a range.
 
 The reason is that RDF is not a schema language that *validates*; it is a logic that *entails*. A
 wrong domain does not raise an error. It silently makes a reasoner deduce something false. Three
@@ -122,9 +122,11 @@ something wrong.
 > `skos:exactMatch` / `skos:closeMatch` rather than bending the original. The graph stays
 > interoperable — a consumer follows the mapping — without asserting anything false.
 
-Seven terms carry a `skos:exactMatch` (all to PSI-MS) and three a `skos:closeMatch` — to ChEBI's
-atom, ChemROF's monoisotopic mass, and `emi:FBMNComponent` (from `enpkg:AdductCluster`: the same
-modelling pattern, a different notion of relatedness).
+Six terms carry a `skos:exactMatch` (all to PSI-MS) and four a `skos:closeMatch` — to ChEBI's
+atom, ChemROF's monoisotopic mass, PSI-MS's adduct ion mass, and `emi:FBMNComponent` (from
+`enpkg:AdductCluster`: the same modelling pattern, a different notion of relatedness). The PSI-MS
+one is a close match, not an exact one, because `enpkg:adductMass` is the ion's m/z while
+`MS:1003243` is the ion's mass; the two agree only for a singly charged ion.
 
 ---
 
@@ -155,35 +157,47 @@ Making it a subproperty would entail that every MS1 candidate *is* a chemical-st
 and "confirmed" remain separately queryable.
 
 The same care shows up in the two masses an `AdductAnnotation` carries: `enpkg:adductMass` is the
-observed *ion*, `enpkg:adductNeutralMass` the candidate's own *neutral* mass. They are mutually
-derivable through the recipe, and keeping both means a consumer never has to guess which one a
-bare "mass" meant.
+*ion's* theoretical m/z, `enpkg:adductNeutralMass` the candidate's own *neutral* mass. They are
+mutually derivable through the recipe, and keeping both means a consumer never has to guess which
+one a bare "mass" meant.
 
 ---
 
-## 6. Two speeds: `[live]` and `[target]`
+## 6. Term status: `vs:term_status`
 
-The vocabulary deliberately runs ahead of the code. Every one of its 78 terms carries exactly one
-status tag in its `rdfs:comment`:
+A reader of a published vocabulary needs to know, per term, whether the definition is settled.
+RDF has no built-in way to say so. The W3C-hosted
+[SemWeb Vocab Status vocabulary](http://www.w3.org/2003/06/sw-vocab-status/ns#), created in the
+FOAF project, provides one property for it, `vs:term_status`, whose value is a short string. Every
+one of the 79 terms carries exactly one:
 
-| Tag | Count | Meaning |
+| Status | Count | Meaning here |
 |---|---|---|
-| `[live]` | 54 | The serializer emits this today |
-| `[target]` | 24 | Declared and agreed, not yet wired in |
+| `unstable` | 12 | Declared, not emitted by the serializer; the definition may still change |
+| `testing` | 67 | Emitted; the definition may still change before the first published release |
+| `stable` | 0 | Emitted, and the definition will not change; a change needs a new term |
+| `archaic` | 0 | Retired, kept so older graphs stay interpretable; not emitted |
 
-A `[target]` term is not a TODO comment — it is a *decision already made*, recorded so it does not
-have to be re-litigated. `enpkg:Atom` and `enpkg:MolecularFormula` have their domains and ranges
-settled; when the code is ready to emit them, there is nothing left to argue about.
+The status is a triple of its own, separate from `rdfs:comment`, so the comment holds only the
+term's definition and a program reads the status without parsing text. `vs:term_status` declares
+no domain or range, so attaching it to a term entails nothing about the term; `enpkg.ttl` declares
+it an `owl:AnnotationProperty`, which is how OWL tools such as Protégé treat it as information
+about the term rather than a statement about data.
 
-This split is why the project keeps **two** diagrams, neither superseding the other:
+An `unstable` term is not a TODO comment — it is a *decision already made*, recorded so it does not
+have to be re-litigated. `enpkg:isotope` has its domain and range settled; when a source provides
+isotope-labelled formulas, there is nothing left to argue about but the form of its value.
+
+The split between emitted and not-emitted terms is why the project keeps **two** diagrams, neither
+superseding the other:
 
 - [`_static/MAIN_SCHEMA.mmd`](_static/MAIN_SCHEMA.mmd) — the **target** model. Where the schema is
   going.
 - [RDF_KG_DATA_MODEL.md](RDF_KG_DATA_MODEL.md) — the **as-built** model. What is in your export
   today.
 
-The tags are not maintained by hand and trusted: a test asserts `[live]` marks exactly the terms
-the serializer emits, and `[target]` exactly those it does not (§7).
+The statuses are not maintained by hand and trusted: a test asserts that `testing` and `stable`
+mark exactly the terms the serializer emits (§7).
 
 ---
 
@@ -202,29 +216,37 @@ Python string literals — a second copy that could (and did) drift from the fil
 
 Declarations are **inlined** into every export rather than referenced by `owl:imports`. Every
 `.ttl` the pipeline writes is therefore self-describing: openable offline in Protégé, safe to
-archive next to a paper, interpretable without fetching anything. The cost is ~341 extra triples
-per file, including the `[target]` terms that export did not use. That is the deliberate trade —
+archive next to a paper, interpretable without fetching anything. The cost is ~560 extra triples
+per file, including the `unstable` terms that export did not use. That is the deliberate trade —
 the graphs are research output that must still make sense in ten years.
 
-**Staying honest.** Two tests in
+**Staying honest.** The tests in
 [test_vocabulary_drift.py](../enpkg/tests/test_data/test_vocabulary_drift.py) serialize a fixture
 built to exercise every `enpkg:`-emitting code path at once, then check:
 
 1. **Nothing is emitted that isn't declared.** The direction that matters — an undeclared term in a
    published graph is a term nobody else can interpret.
-2. **The `[live]`/`[target]` tags are accurate**, in both directions. Stronger than (1), and the
-   reason the two diagrams above can be trusted.
+2. **The statuses are accurate**, in both directions. Stronger than (1), and the reason the two
+   diagrams above can be trusted.
+3. **Every emitted literal has its property's declared datatype.** OWL 2 treats `xsd:integer` and
+   `xsd:double` as disjoint, so an integer literal under a property with range `xsd:double` makes a
+   reasoner report the whole export inconsistent. rdflib takes the datatype from the Python type of
+   the value, so this can change without any change to the serializer.
+4. **Every `emi:` term the serializer emits exists in the vendored EMI ontology**, and `enpkg.ttl`
+   imports EMI by the ontology IRI EMI declares for itself.
+5. **`enpkg.ttl` itself** uses only terms RDF, RDFS, OWL and SKOS define, and gives every term a
+   label and a definition.
 
 Note what is deliberately *not* enforced: a declared term that is never emitted is fine. That is
-what `[target]` means.
+what `unstable` means.
 
 ```mermaid
 %%{init: {'theme':'dark'}}%%
 flowchart LR
-    T["<b>docs/vocab/enpkg.ttl</b><br/>78 terms, source of truth"]:::vocab
+    T["<b>docs/vocab/enpkg.ttl</b><br/>79 terms, source of truth"]:::vocab
     S["AnalysisSerializer<br/>_declare_vocabulary()"]
     O["exported .ttl<br/><i>vocabulary + data</i>"]
-    D["drift tests<br/>emitted ⊆ declared<br/>[live] == emitted"]:::test
+    D["drift tests<br/>emitted ⊆ declared<br/>status == emitted<br/>literal datatype == range"]:::test
     T --> S --> O
     O -.->|"checked against"| D
     T -.-> D
@@ -245,7 +267,7 @@ flowchart LR
   because `rdf:type` already said it; `hasCandidateStructure` was kept because nothing else says
   it.
 - **The vocabulary may run ahead of the code.** Deciding a term's meaning and implementing it are
-  different jobs; `[target]` lets the first finish without waiting on the second.
+  different jobs; `unstable` lets the first finish without waiting on the second.
 - **Exports are self-contained.** Research output outlives the infrastructure that produced it.
 - **Nothing here is maintained by discipline alone.** Every claim this document makes about what is
   live, what is declared, and what matches — is asserted by a test.

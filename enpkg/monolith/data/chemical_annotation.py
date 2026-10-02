@@ -111,6 +111,11 @@ class MS2ChemicalAnnotation(ChemicalAnnotation):
     queried_against: Optional[str] = Field(
         default=None, description="The spectral library queried against (e.g. ISDB)."
     )
+    algorithm: str = Field(
+        description="Spectral similarity that produced ``score``, as named in the MS2 "
+        "configuration: ``cosine_greedy`` (matchms CosineGreedy) or ``cosine_hungarian`` "
+        "(matchms CosineHungarian)."
+    )
     pathway_scores: np.ndarray = Field(
         description="NPC pathway classification scores of the matched structure."
     )

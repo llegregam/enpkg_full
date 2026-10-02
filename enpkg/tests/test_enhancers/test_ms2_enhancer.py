@@ -339,7 +339,7 @@ def _annotation(score: float, n_matched_peaks: int, library: str = "LIB:1.0"):
     zeros = np.zeros(2, dtype=np.float32)
     return MS2ChemicalAnnotation(
         source=library, queried_against=library, short_inchikey=_SHORT_IK,
-        score=score, n_matched_peaks=n_matched_peaks,
+        score=score, n_matched_peaks=n_matched_peaks, algorithm="cosine_greedy",
         pathway_scores=zeros, superclass_scores=zeros, class_scores=zeros, organisms=[],
     )
 

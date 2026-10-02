@@ -3,6 +3,7 @@
 import os
 import subprocess
 from datetime import datetime
+from functools import lru_cache
 from logging import Logger
 from pathlib import Path
 from typing import Optional
@@ -17,7 +18,29 @@ from enpkg.monolith.enhancers.sirius_parser import (
     SiriusResults,
     attach_canopus_classifications,
     attach_sirius_annotations,
+    parse_sirius_version,
 )
+
+
+@lru_cache(maxsize=None)
+def _sirius_version(sirius_path: str) -> Optional[str]:
+    """The version of the SIRIUS executable at ``sirius_path``, or ``None`` if unreadable.
+
+    ``sirius --version`` starts a JVM (about 7 s), so the result is cached per executable
+    for the life of the process: a batch pays it once, not once per sample.
+    """
+    try:
+        completed = subprocess.run(
+            [sirius_path, "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return parse_sirius_version(completed.stdout)
 
 
 class SiriusLoginInfo:
@@ -238,10 +261,20 @@ class SiriusEnhancer(Enhancer):
         if results is None:
             self._logger.warning("No SIRIUS summaries parsed; analysis left unchanged.")
             return analysis
+        sirius_version = _sirius_version(self.config.sirius_params.path_to_sirius)
+        if sirius_version is None:
+            self._logger.warning(
+                "Could not read the SIRIUS version from `%s --version`; the SIRIUS "
+                "annotations will carry no version.",
+                self.config.sirius_params.path_to_sirius,
+            )
         # Attach the top-k structure identifications onto the spectra (joined by
         # mappingFeatureId -> feature_id) so they can be serialized into the KG.
         analysis = attach_sirius_annotations(
-            analysis, results, top_k=self.config.sirius_params.top_k_sirius
+            analysis,
+            results,
+            top_k=self.config.sirius_params.top_k_sirius,
+            sirius_version=sirius_version,
         )
         n_annotated = sum(1 for spectrum in analysis.spectra if spectrum.has_sirius_annotations())
         total = sum(len(spectrum.sirius_annotations) for spectrum in analysis.spectra)

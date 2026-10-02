@@ -1,7 +1,7 @@
 """Submodule providing the data class for representing chemical adducts."""
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -93,11 +93,19 @@ class ChemicalAdduct(BaseModel):
         The recipe used to create the adduct.
     adduct_mass: float
         The mass of the adduct determined using the recipe and the exact mass of the Lotus entries.
+    annotation_method: str
+        How this hypothesis was produced. ``"precursor-mass-search"``: the feature's
+        precursor m/z fell within the ppm tolerance of this (formula group, recipe)
+        mass. ``"cluster-anchor-inheritance"``: the feature is a satellite of an MS1
+        adduct cluster, and the hypothesis is its anchor's candidate molecule re-cast
+        under the satellite's own recipe, without a mass search of the satellite's
+        precursor.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True) # For handling np.ndarrays. Will be removed once Lotus class is refactored
     lotus: list[Lotus]
     recipe: AdductRecipe
+    annotation_method: Literal["precursor-mass-search", "cluster-anchor-inheritance"]
 
     @field_validator("lotus", mode="after")
     @classmethod

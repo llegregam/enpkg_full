@@ -7,9 +7,9 @@
 > questions ("what will I find in my export?" vs. "what is this heading toward?").
 >
 > For what any `enpkg:` term *means* — its domain, range, and the reasoning behind minting it —
-> the authority is [`vocab/enpkg.ttl`](vocab/enpkg.ttl), not this diagram. Its `[live]` / `[target]`
-> tags encode exactly the split between these two documents. See
-> [VOCABULARY.md](VOCABULARY.md) for the walkthrough.
+> the authority is [`vocab/enpkg.ttl`](vocab/enpkg.ttl), not this diagram. Its `vs:term_status`
+> values encode exactly the split between these two documents: `testing` / `stable` terms are
+> emitted, `unstable` ones are not. See [VOCABULARY.md](VOCABULARY.md) for the walkthrough.
 
 The node types and relationships emitted by the `AnalysisSerializer`
 ([enpkg/monolith/rdf/serializer.py](../enpkg/monolith/rdf/serializer.py)). Boxes are
@@ -26,17 +26,21 @@ flowchart TD
     FS["LCMSFeatureSet"]
     F["LCMSFeature  (a spectrum)<br/>hasRowId · hasParentMass · hasRetentionTime · hasFeatureArea<br/>enpkg:clusterRole · enpkg:resolvedAdduct '[M+Na]+' (if clustered)"]
 
-    MS1["AdductAnnotation — MS1<br/>enpkg:adductMass (ion) · enpkg:adductNeutralMass · emi:hasAdduct '[M+H]+'<br/>annotationRank / annotationScore · +PSI-MS adduct-ion class"]:::ms1
-    MS2["SpectralAnnotation — MS2<br/>emi:hasSpectralScore (cosine) · enpkg:nMatchedPeaks<br/>dcterms:source · annotationRank / annotationScore"]:::ms2
-    SIR["SiriusAnnotation — SIRIUS<br/>chemrof:generalized_empirical_formula · emi:hasAdduct<br/>enpkg:annotationRank (structurePerIdRank, 1=best)"]:::sirius
+    MS1["AdductAnnotation — MS1<br/>enpkg:adductMass (ion m/z) · enpkg:adductNeutralMass · emi:hasAdduct '[M+H]+'<br/>annotationRank / annotationScore · enpkg:annotationMethod · +PSI-MS adduct-ion class"]:::ms1
+    MS2["SpectralAnnotation — MS2<br/>emi:hasSpectralScore · enpkg:algorithm · enpkg:nMatchedPeaks<br/>dcterms:source · annotationRank / annotationScore"]:::ms2
+    SIR["SiriusAnnotation — SIRIUS<br/>chemrof:generalized_empirical_formula · emi:hasAdduct<br/>enpkg:annotationRank (structurePerIdRank, 1=best) · enpkg:siriusVersion"]:::sirius
+    CAN["ChemicalTaxonAnnotation — CANOPUS<br/>chemrof:generalized_empirical_formula · emi:hasAdduct<br/>emi:hasPathwayProbability / hasSuperClassProbability / hasClassProbability"]:::sirius
+    NPC["npc:Pathway / Superclass / Class<br/>rdfs:label · skos:broader"]
 
-    RC["AdductRecipe<br/>enpkg:charge · isPositive · multimerFactor"]
+    RC["AdductRecipe<br/>enpkg:charge · isPositive · multimerFactor · adductFormula '[M+H]+'"]
     IG["Ingredient<br/>ingredientName · ingredientCount"]
     CLU["AdductCluster — MS1 graph resolution<br/>enpkg:clusterConnectivity · clusterIntensityCoverage · clusterCountCoverage"]:::cluster
 
     CMP["ChemicalStructure  (compound)<br/>chemrof:inchi_key_string (full) · SMILES · formula<br/>monoisotopic_mass · xlogp · classyfire* · prefLabel/altLabel"]
+    MF["MolecularFormula<br/>enpkg:formula (Hill order) · enpkg:netCharge"]
+    AT["Atom<br/>enpkg:element · enpkg:atomCount"]
     IK2D["InChIKey2D<br/>emi:inChIKey2D — 14-char skeleton"]
-    REF["BibliographicResource<br/>dcterms:identifier — DOI"]
+    REF["dcterms:BibliographicResource<br/>dcterms:identifier — DOI"]
 
     TX["Taxon  (organism)<br/>emi:scientificName · identifier=OTT id · has_rank"]
     OTT["OTT Match  (Taxon)<br/>enpkg:matchScore · isApproximateMatch · isSynonym · searchString"]
@@ -58,12 +62,19 @@ flowchart TD
     F -->|"emi:hasAnnotation"| MS1
     F -->|"emi:hasAnnotation"| MS2
     F -->|"emi:hasAnnotation"| SIR
+    F -->|"emi:hasAnnotation"| CAN
+    CAN -->|"emi:hasPathway / hasSuperClass / hasClass"| NPC
     F -->|"enpkg:hasIon (gated)"| ION
 
     %% ---- MS1 adduct internals ----
     MS1 -->|"enpkg:hasRecipe"| RC
     RC -->|"enpkg:hasIngredient"| IG
     MS1 -->|"enpkg:hasCandidateStructure (one per isobaric isomer)"| CMP
+
+    %% ---- molecular formula (shared by structures and MS1 hypotheses) ----
+    MS1 -->|"enpkg:hasMolecularFormula"| MF
+    CMP -->|"enpkg:hasMolecularFormula"| MF
+    MF -->|"enpkg:hasAtom"| AT
 
     %% ---- MS1 adduct clusters (graph resolution) ----
     FS -->|"enpkg:hasAdductCluster"| CLU
@@ -138,16 +149,36 @@ flowchart TD
     SIRIUS use. Deliberately a sibling and not a subproperty — an MS1 hit is a mass coincidence,
     not a confirmed identification, and keeping the two unlinked is what lets a consumer query
     "candidate" and "confirmed" apart. It carries both masses of the hypothesis:
-    `enpkg:adductMass` (the observed ion) and `enpkg:adductNeutralMass` (the candidate's own
-    neutral mass, from which the first is derived via the recipe).
+    `enpkg:adductMass` (the ion's theoretical m/z) and `enpkg:adductNeutralMass` (the candidate's
+    own neutral mass, from which the first is derived via the recipe). `enpkg:annotationMethod`
+    says how the hypothesis was produced: `precursor-mass-search` (the feature's precursor m/z
+    matched within the ppm tolerance) or `cluster-anchor-inheritance` (a cluster satellite
+    re-casting its anchor's candidate molecule under its own adduct form, with no mass search of
+    its own).
   - **MS2 — `SpectralAnnotation`** (green): fragmentation matches. Attaches **directly** to the
     `InChIKey2D` node, because MS2 only resolves the 2D skeleton (short InChIKey).
+    `enpkg:algorithm` names the matchms similarity behind `emi:hasSpectralScore`.
   - **SIRIUS — `SiriusAnnotation`** (cyan): in-silico structure identifications. Carries the
     predicted `generalized_empirical_formula` and `emi:hasAdduct`, and attaches **directly** to the
     `InChIKey2D` node (2D skeleton). Candidates arrive pre-ranked by SIRIUS's `structurePerIdRank`
     (1=best), stamped as `enpkg:annotationRank` — no NPC reweighting (unlike MS1/MS2).
+    `enpkg:siriusVersion` records the SIRIUS release that proposed them, when it could be read.
   - All three subclass `emi:StructuralAnnotation`, so a consumer can query them uniformly or split
     them by the `enpkg:AdductAnnotation` / `SpectralAnnotation` / `SiriusAnnotation` subclass.
+- **CANOPUS — `emi:ChemicalTaxonAnnotation`** (cyan): the feature's NPClassifier class prediction,
+  a separate node from its SIRIUS structure candidates, attached with the same
+  `emi:hasAnnotation`. EMI declares `ChemicalTaxonAnnotation` disjoint from
+  `StructuralAnnotation`, so the class prediction cannot share a node with a structure candidate.
+  The predicted `npc:` terms are inlined with their `rdfs:label` and `skos:broader` ancestry, so
+  roll-up queries work without fetching EMI.
+- **Molecular formula:** every `ChemicalStructure` and every MS1 `AdductAnnotation` links with
+  `enpkg:hasMolecularFormula` to one shared `MolecularFormula` node per composition and charge,
+  keyed `emi-res:formula/<Hill form>` (`formula/C15H20O6`, `formula/C11H12NO+`). The node carries
+  the Hill-order string and `enpkg:netCharge` (0 for a neutral molecule), and one `Atom` per element
+  with `enpkg:element` and `enpkg:atomCount`, so "candidates containing chlorine" is an exact
+  join rather than a pattern match on a string. A formula the parser does not support
+  (bracketed groups, hydrates) gets no node; the structure keeps its
+  `chemrof:generalized_empirical_formula` literal either way.
 - **MS2 ↔ MS1 coupling (`enpkg:hasCorrespondingAdduct`):** on a feature with an MS2 match whose
   score reaches `ms2_coupling_min_score` (a serializer setting, default 0.7), the two channels are
   joined — only the MS1 adducts that explain how the MS2-identified molecule ionised are emitted, and

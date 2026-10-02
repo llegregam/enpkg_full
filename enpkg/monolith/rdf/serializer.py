@@ -34,6 +34,7 @@ from ..data.analysis import Analysis
 from ..data.annotated_spectra_class import AnnotatedSpectrum
 from ..data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
 from ..data.lotus_class import Lotus
+from ..data.molecular_formula import MolecularFormula, parse_molecular_formula
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.sirius_annotation import SiriusChemicalAnnotation
 from .namespaces import (
@@ -57,6 +58,7 @@ from .namespaces import (
     RDFS,
     SKOS,
     SOSA,
+    VS,
     WD,
     XSD,
 )
@@ -69,7 +71,7 @@ _PREFIXES = {
     "taxon": NCBITAXON, "ncbitaxon": NCBITAXON_PROP,
     "prov": PROV, "dcterms": DCTERMS, "skos": SKOS, "emi-res": EMI_RES,
     "wd": WD, "inchikey": INCHIKEY, "pubchem": PUBCHEM, "gbif": GBIF, "doi": DOI,
-    "massive": MASSIVE,
+    "massive": MASSIVE, "vs": VS,
 }
 
 # The single source of truth for every enpkg: term's rdf:type / rdfs:domain /
@@ -516,10 +518,12 @@ class AnalysisSerializer:
         # Polarity-specific PSI-MS adduct-ion class only; its parent MS:1000353
         # ("adduct ion") is entailed, so we don't emit it redundantly.
         g.add((uri, RDF.type, MS["1002807" if adduct.recipe.positive else "1002808"]))  # polarity
-        self._set(uri, ENPKG.adductMass, adduct.adduct_mass)        # skos:exactMatch MS:1003243
+        self._set(uri, ENPKG.adductMass, adduct.adduct_mass)        # skos:closeMatch MS:1003243 (m/z, not mass)
         self._set(uri, ENPKG.adductNeutralMass, adduct.neutral_mass)  # skos:closeMatch chemrof:monoisotopic_mass
         self._set(uri, EMI.hasAdduct, self._format_adduct(adduct.recipe))  # "[M+H]+" form (EMI property)
+        self._set(uri, ENPKG.annotationMethod, adduct.annotation_method)
         g.add((uri, ENPKG.hasRecipe, self._add_recipe(adduct.recipe)))
+        self._link_molecular_formula(uri, adduct.molecular_formula)
         for lotus in adduct.lotus:
             # Sibling of emi:hasChemicalStructure (used by MS2/SIRIUS), deliberately not a
             # subproperty: MS1 candidates are mass-coincidence hits, not confirmed
@@ -536,7 +540,8 @@ class AnalysisSerializer:
         g.add((uri, RDF.type, ENPKG.AdductRecipe))
         self._set(uri, ENPKG.charge, recipe.charge)                 # skos:exactMatch MS:1000041
         self._set(uri, ENPKG.isPositive, recipe.positive)
-        self._set(uri, ENPKG.multimerFactor, recipe.multimer_factor)
+        self._set(uri, ENPKG.multimerFactor, self._as_int(recipe.multimer_factor))
+        self._set(uri, ENPKG.adductFormula, self._format_adduct(recipe))  # skos:exactMatch MS:1002813
         for name, count in recipe.ingredients.items():
             # Deterministic IRI (not a blank node): the recipe is a globally
             # shared node, so blank-node ingredients would duplicate on every
@@ -544,8 +549,9 @@ class AnalysisSerializer:
             # merges across files. Ingredient names are unique within a recipe.
             ingredient = URIRef(f"{uri}/ingredient/{quote(str(name), safe='')}")
             g.add((uri, ENPKG.hasIngredient, ingredient))
+            g.add((ingredient, RDF.type, ENPKG.Ingredient))
             self._set(ingredient, ENPKG.ingredientName, name)
-            self._set(ingredient, ENPKG.ingredientCount, count)
+            self._set(ingredient, ENPKG.ingredientCount, self._as_int(count))
         return uri
 
     def _add_adduct_clusters(self, analysis: Analysis, featureset_uri: URIRef) -> None:
@@ -609,6 +615,7 @@ class AnalysisSerializer:
         self._set(uri, EMI.hasSMILES, lotus.structure_smiles)
         self._set(uri, CHEMROF.inchi_string, lotus.structure_inchi)
         self._set(uri, CHEMROF.generalized_empirical_formula, lotus.structure_molecular_formula)
+        self._link_molecular_formula(uri, lotus.structure_molecular_formula)
         self._set(uri, CHEMROF.monoisotopic_mass, lotus.structure_exact_mass)
         self._set(uri, ENPKG.xlogp, lotus.structure_xlogp)
         self._set(uri, ENPKG.stereocentersTotal, lotus.structure_stereocenters_total)
@@ -663,10 +670,45 @@ class AnalysisSerializer:
         self._set(uri, CHEMROF.inchi_string, structure.inchi)
         self._set(uri, EMI.hasSMILES, structure.smiles)
         self._set(uri, CHEMROF.generalized_empirical_formula, structure.molecular_formula)
+        self._link_molecular_formula(uri, structure.molecular_formula)
         self._set(uri, SKOS.prefLabel, structure.compound_name)
         self._set(uri, ENPKG.classyfireSuperclass, structure.classyfire_superclass)
         self._set(uri, ENPKG.classyfireClass, structure.classyfire_class)
         g.add((uri, EMI.hasInChIKey2D, self._inchikey2d_node(structure.inchikey[:14])))
+        return uri
+
+    def _link_molecular_formula(self, subject: URIRef, text) -> None:
+        """Link ``subject`` to the shared node of the formula ``text`` names, if any.
+
+        ``text`` comes from a scraped table and may be None, NaN or a form the parser
+        does not support (bracketed groups, hydrates); those get no formula node, and
+        the subject keeps only its formula literal.
+        """
+        formula = parse_molecular_formula(text) if isinstance(text, str) else None
+        if formula is not None:
+            self.graph.add((subject, ENPKG.hasMolecularFormula, self._add_molecular_formula(formula)))
+
+    def _add_molecular_formula(self, formula: MolecularFormula) -> URIRef:
+        """Emit (once) a formula node, its net charge, and one atom node per element.
+
+        Atom IRIs extend the formula's IRI by element symbol, the same deterministic
+        scheme the recipe ingredients use, so re-serializing merges rather than
+        duplicates them.
+        """
+        uri = CompoundURIs.molecular_formula_uri(formula)
+        if uri in self._emitted:
+            return uri
+        self._emitted.add(uri)
+        g = self.graph
+        g.add((uri, RDF.type, ENPKG.MolecularFormula))
+        self._set(uri, ENPKG.formula, formula.hill)
+        self._set(uri, ENPKG.netCharge, formula.charge)
+        for symbol, count in formula.elements:
+            atom = URIRef(f"{uri}/atom/{symbol}")
+            g.add((uri, ENPKG.hasAtom, atom))
+            g.add((atom, RDF.type, ENPKG.Atom))
+            self._set(atom, ENPKG.element, symbol)
+            self._set(atom, ENPKG.atomCount, count, datatype=XSD.positiveInteger)
         return uri
 
     def _inchikey2d_node(self, short_inchikey: str) -> URIRef:
@@ -691,7 +733,7 @@ class AnalysisSerializer:
             return uri
         self._emitted.add(uri)
         g = self.graph
-        g.add((uri, RDF.type, EMI.BibliographicResource))
+        g.add((uri, RDF.type, DCTERMS.BibliographicResource))
         self._set(uri, DCTERMS.identifier, doi)  # the raw (unencoded) DOI
         if lotus.reference_wikidata:
             self._same_as(uri, URIRef(lotus.reference_wikidata))
@@ -708,6 +750,7 @@ class AnalysisSerializer:
         g.add((uri, RDF.type, EMI.StructuralAnnotation))
         g.add((uri, RDF.type, ENPKG.SpectralAnnotation))            # MS2-specific subclass
         self._set(uri, EMI.hasSpectralScore, annotation.score)
+        self._set(uri, ENPKG.algorithm, annotation.algorithm)
         self._set(uri, ENPKG.nMatchedPeaks, annotation.n_matched_peaks)
         self._set(uri, DCTERMS.source, annotation.queried_against)
         if annotation.source:
@@ -771,6 +814,7 @@ class AnalysisSerializer:
         self._set(uri, CHEMROF.generalized_empirical_formula, annotation.molecular_formula)
         self._set(uri, EMI.hasAdduct, annotation.adduct)           # "[M+K]+" form (EMI property)
         self._set(uri, ENPKG.annotationRank, annotation.rank)      # SIRIUS structurePerIdRank (1=best)
+        self._set(uri, ENPKG.siriusVersion, annotation.sirius_version)
         # Candidate structure attaches at the 2D (short InChIKey) level — the same node
         # MS1 compounds (hasInChIKey2D) and MS2 matches (hasChemicalStructure) reuse.
         g.add((uri, EMI.hasChemicalStructure, self._inchikey2d_node(annotation.inchikey_2d)))

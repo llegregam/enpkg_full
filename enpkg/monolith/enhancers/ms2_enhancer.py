@@ -166,6 +166,7 @@ class Ms2Enhancer(Enhancer):
                     queried_against=library_label,
                     short_inchikey=representative.short_inchikey,
                     score=float(score),
+                    algorithm=self.configuration.spectral_match_params.method,
                     n_matched_peaks=int(n_matches),
                     pathway_scores=representative.structure_taxonomy_hammer_pathways,
                     superclass_scores=representative.structure_taxonomy_hammer_superclasses,
@@ -191,6 +192,7 @@ class Ms2Enhancer(Enhancer):
                 queried_against=library_label,
                 short_inchikey=candidate.short_inchikey,
                 score=float(score),
+                algorithm=self.configuration.spectral_match_params.method,
                 n_matched_peaks=int(n_matches),
                 pathway_scores=np.zeros(self.lotus_store.number_of_pathways, dtype=np.float32),
                 superclass_scores=np.zeros(
