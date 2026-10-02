@@ -20,6 +20,65 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-02 — Vocabulary made publishable: fixes, statuses, and every non-metadata term emitted
+
+- **Datatype ranges.** Measured on the 2026-09-17 export: `enpkg:clusterConnectivity` (653
+  literals) and `enpkg:ingredientCount` (69) were emitted as `xsd:integer` under a declared
+  `xsd:double`, and `enpkg:multimerFactor` as both. OWL 2 treats the two datatypes as disjoint, so
+  a reasoner reads each such literal as a contradiction. All three are counts, so their ranges are
+  now `xsd:integer`; CGC is mzAdan's "number of ions contained in the cluster", which is what
+  `len(members)` computes. The recipe fields stay `float` in Python and are cast on emission, so
+  recipe hashes, and therefore recipe and adduct IRIs, do not change.
+- **Other defects in emitted terms.** DOI nodes were typed `emi:BibliographicResource`, which EMI
+  does not declare (it uses `dcterms:BibliographicResource`); now `dcterms:`. `enpkg.ttl` used
+  `rdfs:definedBy`, which RDFS does not define (the term is `rdfs:isDefinedBy`), and imported
+  `<https://w3id.org/emi#>` while EMI's ontology IRI is `<https://w3id.org/emi>`; the ontology's own
+  IRI dropped its `#` to match. `enpkg:adductMass` was `skos:exactMatch MS:1003243`, but PSI-MS
+  defines that as the ion's *mass* while ours is its *m/z*, so it is now a `skos:closeMatch`.
+- **Statuses moved to `vs:term_status`.** The `[live]`/`[target]` tags lived inside
+  `rdfs:comment`, mixing development state into the published definition and forcing the drift
+  test to parse prose. Each term now carries `vs:term_status` (W3C SemWeb Vocab Status): `testing`
+  for emitted terms until the first published release, `unstable` for declared-but-not-emitted.
+  Every term also gained an `rdfs:label` (53 had none) and a definition (26 had only the tag), and
+  comments narrating history or naming serializer functions were rewritten as definitions.
+- **New drift tests**, each motivated by a defect above that no test caught: emitted `enpkg:`
+  literals must carry their declared range; emitted `emi:` terms must exist in `EMI-vocab.owl`;
+  `enpkg.ttl` must import EMI by EMI's ontology IRI and use only RDF/RDFS/OWL/SKOS terms those
+  vocabularies define; every term needs a label and a definition. Each was checked to fail on the
+  defect it targets.
+- **Five declared terms wired in.** `enpkg:Ingredient` is stamped on ingredient nodes;
+  `enpkg:adductFormula` puts the bracket form on recipe nodes; `enpkg:algorithm` records the matchms
+  similarity (`spectral_match_params.method`) on each MS2 match; `enpkg:siriusVersion` comes from
+  `sirius --version`, since the summary TSVs carry no version (13 checked). That call takes about
+  7 s (JVM start-up), so it is cached per executable for the process; an unreadable version emits
+  nothing, which is also what precomputed SIRIUS output will get. `enpkg:annotationMethod`, declared
+  without a definition, now distinguishes the two ways the MS1 path produces a hypothesis —
+  `precursor-mass-search` (anchors and singletons) and `cluster-anchor-inheritance` (satellites,
+  which get their anchor's molecule re-cast under their own recipe without a mass search). The
+  value is stamped where each path builds the `ChemicalAdduct` rather than inferred from the
+  cluster role at serialization time, so it records what happened.
+- **Molecular-formula subgraph.** `ChemicalStructure` and `AdductAnnotation` nodes link to one
+  shared `enpkg:MolecularFormula` node per composition and charge (keyed on the Hill form), with
+  one `enpkg:Atom` per element. Measured on one stored analysis: 3,126 formula nodes, 11,957 atoms,
+  39,943 links, about 97k triples on 1.17M. All 4,139 formula strings of the 2026-09-17 export
+  parse; 151 carry a charge suffix (permanently charged molecules such as quaternary ammoniums), so
+  a new `enpkg:netCharge` (requested during review) holds the molecule's net charge, and a charged
+  formula is a separate node from the neutral one. `atomCount` is `xsd:positiveInteger`.
+  `enpkg:isotope` stays declared but `unstable` until a source provides isotope-labelled formulas.
+  The `chemrof:generalized_empirical_formula` literals stay as they are; whether to keep both forms
+  is deferred.
+- **`.gitignore`'s `data` rule anchored to the root.** The bare `data` pattern was meant for the
+  repository-root `data/` folder but matched every directory named `data`, including the source
+  package `enpkg/monolith/data/`: each file there had to be force-added, and a new one
+  (`molecular_formula.py`) was silently skipped by `git add`. It is now `/data/`, plus an explicit
+  `enpkg/tests/data/`, which `enpkg/tests/test_enhancers/conftest.py` relies on being ignored (the
+  locally built integration fixtures).
+- **Stored artifacts need regenerating.** `ChemicalAdduct.annotation_method`,
+  `MS2ChemicalAnnotation.algorithm` and `SiriusChemicalAnnotation.sirius_version` are new fields,
+  so `analysis.pkl` files written before this change cannot be serialized with `enpkg serialize`.
+  The August 2026 pickles in `gui_workspace/logs/` already could not: their recipes use the
+  `ammonium` ingredient renamed to `ammonia` in `20aa585`.
+
 ### 2026-10-02 — The two RDF mapping worksheets are deleted
 
 - **Removed `docs/RDF_DATA_MODEL.md` and `docs/RDF_DATA_MODEL_mapped.md`.** The first was the

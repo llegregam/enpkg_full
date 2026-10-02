@@ -75,6 +75,23 @@ def test_coincidental_anchor_hypothesis_is_not_inherited(
     assert "BBBBBBBBBBBBBB" not in inherited_keys  # coincidental [M+Na]+ group excluded
 
 
+def test_inherited_annotations_record_how_they_were_made(
+    make_spectrum, make_adduct, make_recipe, make_lotus
+):
+    """A satellite's annotations come from its anchor, not from a mass search of its
+    own precursor, and say so; the anchor's own annotations keep the search method."""
+    anchor, sat_na, sat_k, singleton, _ = _cluster(
+        make_spectrum, make_adduct, make_recipe, make_lotus
+    )
+    inherit_satellite_annotations([anchor, sat_na, sat_k, singleton])
+
+    for satellite in (sat_na, sat_k):
+        assert {a.annotation_method for a in satellite.ms1_annotations} == {
+            "cluster-anchor-inheritance"
+        }
+    assert {a.annotation_method for a in anchor.ms1_annotations} == {"precursor-mass-search"}
+
+
 def test_anchor_and_singleton_untouched(
     make_spectrum, make_adduct, make_recipe, make_lotus
 ):

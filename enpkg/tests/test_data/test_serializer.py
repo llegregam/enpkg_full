@@ -329,6 +329,7 @@ def _ms2(short_inchikey, score=0.9):
         source="ISDB",
         short_inchikey=short_inchikey,
         score=score,
+        algorithm="cosine_greedy",
         pathway_scores=np.array([]),
         superclass_scores=np.array([]),
         class_scores=np.array([]),
@@ -553,6 +554,7 @@ def _ms2_from_library(short_inchikey="LIBRARYONLYIKX", score=0.9, formula="C2H6"
         queried_against="LIB:1.0",
         short_inchikey=short_inchikey,
         score=score,
+        algorithm="cosine_greedy",
         pathway_scores=np.zeros(2),
         superclass_scores=np.zeros(2),
         class_scores=np.zeros(2),
@@ -701,6 +703,7 @@ def test_lotus_backed_ms2_match_emits_its_compound_without_ms1(make_analysis, ma
         queried_against="LIB:1.0",
         short_inchikey=lotus.short_inchikey,
         score=0.9,
+        algorithm="cosine_greedy",
         pathway_scores=lotus.structure_taxonomy_hammer_pathways,
         superclass_scores=lotus.structure_taxonomy_hammer_superclasses,
         class_scores=lotus.structure_taxonomy_hammer_classes,
@@ -1255,4 +1258,136 @@ def test_canopus_serialization_is_idempotent(make_analysis, make_canopus_classif
     before = len(serializer.graph)
     serializer.add_analysis(analysis)
     assert len(serializer.graph) == before
+
+
+def _serialize(analysis) -> Graph:
+    serializer = AnalysisSerializer()
+    serializer.add_analysis(analysis)
+    return serializer.graph
+
+
+def test_recipe_types_its_ingredients_and_carries_its_rendered_form(
+    make_analysis, make_adduct, make_recipe
+):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    recipe = make_recipe(ingredients={"proton": 1, "ammonia": 1})
+    analysis.spectra[0].ms1_annotations = [make_adduct(recipe=recipe)]
+    g = _serialize(analysis)
+
+    recipe_uri = AnalysisURIs.recipe_uri(recipe)
+    assert g.value(recipe_uri, ENPKG.adductFormula) == Literal("[M+NH4]+")
+    # Literal(1) is xsd:integer and does not compare equal to Literal(1.0): the recipe's
+    # float fields are emitted as the integers the vocabulary declares.
+    assert g.value(recipe_uri, ENPKG.multimerFactor) == Literal(1)
+    ingredients = set(g.objects(recipe_uri, ENPKG.hasIngredient))
+    assert len(ingredients) == 2
+    for ingredient in ingredients:
+        assert (ingredient, RDF.type, ENPKG.Ingredient) in g
+        assert g.value(ingredient, ENPKG.ingredientCount) == Literal(1)
+
+
+@pytest.mark.parametrize("method", ["precursor-mass-search", "cluster-anchor-inheritance"])
+def test_adduct_annotation_carries_the_method_that_made_it(make_analysis, make_adduct, method):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    adduct = make_adduct(annotation_method=method)
+    spectrum.ms1_annotations = [adduct]
+    g = _serialize(analysis)
+
+    uri = AnalysisURIs.chemical_adduct_uri(analysis, spectrum, adduct)
+    assert g.value(uri, ENPKG.annotationMethod) == Literal(method)
+
+
+def test_ms2_annotation_carries_its_similarity_algorithm(make_analysis):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    annotation = _ms2(_short_ik("ALGO"))
+    spectrum.ms2_annotations = [annotation]
+    g = _serialize(analysis)
+
+    uri = AnalysisURIs.ms2_annotation_uri(analysis, spectrum, annotation)
+    assert g.value(uri, ENPKG.algorithm) == Literal("cosine_greedy")
+
+
+@pytest.mark.parametrize("version", ["6.3.4", None])
+def test_sirius_annotation_carries_the_sirius_version_when_known(
+    make_analysis, make_sirius_annotation, version
+):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    annotation = make_sirius_annotation(sirius_version=version)
+    spectrum.sirius_annotations = [annotation]
+    g = _serialize(analysis)
+
+    uri = AnalysisURIs.sirius_annotation_uri(analysis, spectrum, annotation)
+    expected = None if version is None else Literal(version)
+    assert g.value(uri, ENPKG.siriusVersion) == expected
+
+
+def test_adduct_and_its_candidate_share_one_molecular_formula_node(
+    make_analysis, make_adduct, make_lotus
+):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    lotus = make_lotus(structure_molecular_formula="C15H20O6")
+    adduct = make_adduct(lotus=[lotus])
+    spectrum.ms1_annotations = [adduct]
+    g = _serialize(analysis)
+
+    adduct_uri = AnalysisURIs.chemical_adduct_uri(analysis, spectrum, adduct)
+    formula_uri = g.value(adduct_uri, ENPKG.hasMolecularFormula)
+    assert formula_uri == EMI_RES["formula/C15H20O6"]
+    assert g.value(CompoundURIs.lotus_uri(lotus), ENPKG.hasMolecularFormula) == formula_uri
+    assert (formula_uri, RDF.type, ENPKG.MolecularFormula) in g
+    assert g.value(formula_uri, ENPKG.formula) == Literal("C15H20O6")
+    assert g.value(formula_uri, ENPKG.netCharge) == Literal(0)
+
+    atoms = {
+        str(g.value(atom, ENPKG.element)): g.value(atom, ENPKG.atomCount)
+        for atom in g.objects(formula_uri, ENPKG.hasAtom)
+    }
+    assert atoms == {
+        "C": Literal(15, datatype=XSD.positiveInteger),
+        "H": Literal(20, datatype=XSD.positiveInteger),
+        "O": Literal(6, datatype=XSD.positiveInteger),
+    }
+    assert all((atom, RDF.type, ENPKG.Atom) in g for atom in g.objects(formula_uri, ENPKG.hasAtom))
+
+
+def test_a_charged_formula_carries_its_net_charge(make_analysis, make_adduct, make_lotus):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    adduct = make_adduct(lotus=[make_lotus(structure_molecular_formula="C11H12NO+")])
+    spectrum.ms1_annotations = [adduct]
+    g = _serialize(analysis)
+
+    formula_uri = g.value(
+        AnalysisURIs.chemical_adduct_uri(analysis, spectrum, adduct), ENPKG.hasMolecularFormula
+    )
+    assert g.value(formula_uri, ENPKG.netCharge) == Literal(1)
+    # The charge is not an element: the atoms are the element counts only.
+    assert {str(g.value(a, ENPKG.element)) for a in g.objects(formula_uri, ENPKG.hasAtom)} == {
+        "C", "H", "N", "O"
+    }
+
+
+def test_library_only_structure_links_its_molecular_formula(make_analysis):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    annotation = _ms2_from_library(formula="C2H6")
+    analysis.spectra[0].ms2_annotations = [annotation]
+    g = _serialize(analysis)
+
+    structure_uri = CompoundURIs.library_structure_uri(annotation.library_structure)
+    assert g.value(structure_uri, ENPKG.hasMolecularFormula) == EMI_RES["formula/C2H6"]
+
+
+def test_an_unparseable_formula_gets_no_formula_node(make_analysis, make_adduct, make_lotus):
+    analysis = make_analysis(run_name="RUNX", n_spectra=1)
+    spectrum = analysis.spectra[0]
+    adduct = make_adduct(lotus=[make_lotus(structure_molecular_formula="C10H12(NO2)2")])
+    spectrum.ms1_annotations = [adduct]
+    g = _serialize(analysis)
+
+    assert (None, ENPKG.hasMolecularFormula, None) not in g
+    assert (None, RDF.type, ENPKG.MolecularFormula) not in g
 

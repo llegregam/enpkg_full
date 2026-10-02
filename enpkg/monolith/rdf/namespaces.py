@@ -26,6 +26,7 @@ NCBITAXON_PROP = Namespace("http://purl.obolibrary.org/obo/ncbitaxon#")  # has_r
 PROV      = Namespace("http://www.w3.org/ns/prov#")           # provenance / derivation
 DCTERMS   = Namespace("http://purl.org/dc/terms/")            # identifier, source, bibliographicCitation
 SKOS      = Namespace("http://www.w3.org/2004/02/skos/core#")  # prefLabel / altLabel
+VS        = Namespace("http://www.w3.org/2003/06/sw-vocab-status/ns#")  # vs:term_status on enpkg: terms
 # CHEMONT = Namespace(...)  # TODO: ClassyFire ChemOnt IRI for `chemontid` owl:sameAs — verify exact form
 
 # --- Resources: instance IRIs we mint ---------------------------------------
@@ -44,7 +45,7 @@ MASSIVE   = Namespace("https://massive.ucsd.edu/ProteoSAFe/dataset.jsp?accession
 __all__ = [
     "RDF", "RDFS", "OWL", "XSD",
     "EMI", "ENPKG", "NPC", "SOSA", "MS", "CHEMROF", "NCBITAXON", "NCBITAXON_PROP",
-    "PROV", "DCTERMS", "SKOS",
+    "PROV", "DCTERMS", "SKOS", "VS",
     "EMI_RES", "METADATA_FIELD",
     "WD", "INCHIKEY", "PUBCHEM", "GBIF", "DOI", "MASSIVE",
 ]

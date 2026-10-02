@@ -63,7 +63,11 @@ def inherit_satellite_annotations(
             if adduct.recipe == base_recipe
         ]
         spectrum.ms1_annotations = [
-            ChemicalAdduct(lotus=group, recipe=spectrum.ms1_assigned_recipe)
+            ChemicalAdduct(
+                lotus=group,
+                recipe=spectrum.ms1_assigned_recipe,
+                annotation_method="cluster-anchor-inheritance",
+            )
             for group in molecule_groups
         ]
         n_inherited += 1

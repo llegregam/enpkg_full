@@ -8,7 +8,11 @@ so it runs in the fast default suite.
 
 import pandas as pd
 
-from enpkg.monolith.enhancers.sirius_parser import SiriusResults, attach_sirius_annotations
+from enpkg.monolith.enhancers.sirius_parser import (
+    SiriusResults,
+    attach_sirius_annotations,
+    parse_sirius_version,
+)
 
 
 def _results(rows):
@@ -88,3 +92,39 @@ def test_attach_with_no_summary_frame_is_a_noop(make_analysis):
     attach_sirius_annotations(analysis, SiriusResults())
 
     assert analysis.spectra[0].sirius_annotations == []
+
+
+def test_attach_stamps_the_sirius_version_on_every_annotation(make_analysis):
+    analysis = make_analysis(n_spectra=1)  # feature_id 1
+    results = _results([
+        {"mappingFeatureId": 1, "structurePerIdRank": rank, "molecularFormula": "C6H9N3O3S",
+         "adduct": "[M + K]+", "InChIkey2D": key}
+        for rank, key in ((1, "BBTZETLXNQDZKF"), (2, "QLUPQWGVSUSFPS"))
+    ])
+
+    attach_sirius_annotations(analysis, results, sirius_version="6.3.4")
+
+    assert [a.sirius_version for a in analysis.spectra[0].sirius_annotations] == ["6.3.4", "6.3.4"]
+
+
+def test_attach_without_a_version_leaves_it_unset(make_analysis):
+    analysis = make_analysis(n_spectra=1)
+    results = _results([
+        {"mappingFeatureId": 1, "structurePerIdRank": 1, "molecularFormula": "C6H9N3O3S",
+         "adduct": "[M + K]+", "InChIkey2D": "BBTZETLXNQDZKF"},
+    ])
+
+    attach_sirius_annotations(analysis, results)
+
+    assert analysis.spectra[0].sirius_annotations[0].sirius_version is None
+
+
+def test_parse_sirius_version_reads_the_application_version():
+    # `sirius --version` stdout, as SIRIUS 6.3.4 prints it.
+    stdout = "SIRIUS 6.3.4\nSIRIUS lib: 5.7.0\nCSI:FingerID lib: 3.0.13\n"
+
+    assert parse_sirius_version(stdout) == "6.3.4"
+
+
+def test_parse_sirius_version_without_a_version_line_is_none():
+    assert parse_sirius_version("Error: unknown option --version\n") is None

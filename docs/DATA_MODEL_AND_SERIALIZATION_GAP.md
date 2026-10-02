@@ -214,7 +214,7 @@ flowchart TD
     MS2 -->|hasChemicalStructure| IK
     SIR -->|hasChemicalStructure| IK
     C -->|inTaxon| TX["emi:Taxon (organism)"]
-    C -->|wasDerivedFrom| REF["emi:BibliographicResource"]
+    C -->|wasDerivedFrom| REF["dcterms:BibliographicResource"]
     S -->|isSampleOf| TX
     MS2 -->|inTaxon| TX
     classDef ms1 fill:#78350f,stroke:#fcd34d,color:#fff;

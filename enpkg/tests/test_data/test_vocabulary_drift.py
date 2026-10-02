@@ -14,17 +14,22 @@ from pathlib import Path
 
 import networkx as nx
 import numpy as np
-from rdflib import Graph
-from rdflib.namespace import OWL, RDF, RDFS
+import pytest
+from rdflib import Graph, Literal, URIRef
+from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
 from enpkg.monolith.data.otl_class import Match, Taxon
 from enpkg.monolith.data.sample_metadata import SampleMetadata
 from enpkg.monolith.rdf import AnalysisSerializer
-from enpkg.monolith.rdf.namespaces import ENPKG
+from enpkg.monolith.rdf.namespaces import EMI, ENPKG, VS
 
-_TTL_PATH = Path(__file__).resolve().parents[3] / "docs" / "vocab" / "enpkg.ttl"
+_VOCAB_DIR = Path(__file__).resolve().parents[3] / "docs" / "vocab"
+_TTL_PATH = _VOCAB_DIR / "enpkg.ttl"
+_EMI_PATH = _VOCAB_DIR / "EMI-vocab.owl"
+# The values the SemWeb Vocab Status vocabulary documents for vs:term_status.
+_TERM_STATUSES = frozenset({"unstable", "testing", "stable", "archaic"})
 
 
 def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation):
@@ -61,6 +66,7 @@ def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct,
             source="ISDB",
             short_inchikey=matched_ik,
             score=0.9,
+            algorithm="cosine_greedy",
             n_matched_peaks=5,
             pathway_scores=np.array([]),
             superclass_scores=np.array([]),
@@ -69,8 +75,8 @@ def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct,
     ]
 
     sirius_spectrum.sirius_annotations = [
-        make_sirius_annotation(rank=1),
-        make_sirius_annotation(rank=2, inchikey_2d="SKELETON00002X"),
+        make_sirius_annotation(rank=1, sirius_version="6.3.4"),
+        make_sirius_annotation(rank=2, inchikey_2d="SKELETON00002X", sirius_version="6.3.4"),
     ]
     sirius_spectrum.ms2_annotations = [
         MS2ChemicalAnnotation(
@@ -78,6 +84,7 @@ def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct,
             queried_against="LIB:1.0",
             short_inchikey="LIBRARYONLYIKX",
             score=0.8,
+            algorithm="cosine_hungarian",
             n_matched_peaks=6,
             pathway_scores=np.array([]),
             superclass_scores=np.array([]),
@@ -159,6 +166,24 @@ def _serialize_maximal(make_spectrum, make_lotus, make_recipe, make_adduct, make
     return serializer
 
 
+def _data_only(serializer: AnalysisSerializer) -> Graph:
+    """The triples an analysis contributed, without the inlined vocabulary.
+
+    Every graph carries the whole of enpkg.ttl, so subtracting a data-free
+    serializer's graph leaves only what the serializer emitted for the data.
+    """
+    data_only = Graph()
+    for triple in set(serializer.graph) - set(AnalysisSerializer().graph):
+        data_only.add(triple)
+    return data_only
+
+
+@pytest.fixture(scope="module")
+def emi_vocabulary() -> Graph:
+    """The vendored EMI ontology (~1.5 s to parse, so once per module)."""
+    return Graph().parse(_EMI_PATH)
+
+
 def test_serializer_enpkg_terms_are_all_declared_in_the_vocabulary(
     make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation
 ):
@@ -179,59 +204,163 @@ def test_serializer_enpkg_terms_are_all_declared_in_the_vocabulary(
     )
 
 
-def test_live_and_target_tags_match_what_is_actually_emitted(
+def _declared_terms(vocabulary: Graph) -> set[URIRef]:
+    """Every class and property enpkg.ttl declares in the enpkg: namespace."""
+    ns = str(ENPKG)
+    return {
+        term
+        for kind in (OWL.Class, OWL.ObjectProperty, OWL.DatatypeProperty)
+        for term in vocabulary.subjects(RDF.type, kind)
+        if str(term).startswith(ns)
+    }
+
+
+def test_term_status_matches_what_is_actually_emitted(
     make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation
 ):
-    """Every enpkg.ttl term is tagged ``[live]`` or ``[target]`` in its rdfs:comment,
-    and those tags must mean what they say: ``[live]`` exactly when the serializer
-    emits the term, ``[target]`` exactly when it does not (yet).
+    """Every enpkg.ttl term carries exactly one ``vs:term_status``, and it agrees with
+    the serializer: a term is emitted exactly when its status is ``testing`` or
+    ``stable``, and not emitted when it is ``unstable`` (declared, not yet in use) or
+    ``archaic`` (retired).
 
-    The tags are load-bearing, not decoration — docs/RDF_KG_DATA_MODEL.md (as-built)
-    and docs/_static/MAIN_SCHEMA.mmd (target) are split along precisely this line, so
-    a stale tag silently makes one of those two documents wrong. Stronger than the
-    drift test above, which only checks emitted ⊆ declared and so cannot notice a
-    term that was wired into the serializer while its comment still says [target].
+    docs/RDF_KG_DATA_MODEL.md (what an export contains) and docs/_static/MAIN_SCHEMA.mmd
+    (where the schema is going) are split along this line, so a stale status makes one
+    of them wrong. Stronger than the drift test above, which only checks emitted ⊆
+    declared and so cannot notice a term that was wired into the serializer while its
+    status still says ``unstable``.
     """
     serializer = _serialize_maximal(
         make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation
     )
-    # Phase 3 inlines the whole vocabulary into every graph, so the declarations are
-    # present regardless of what the data used. Subtracting a data-free serializer's
-    # graph leaves only the triples this analysis actually contributed.
-    baseline = AnalysisSerializer()
-    data_only = Graph()
-    for triple in set(serializer.graph) - set(baseline.graph):
-        data_only.add(triple)
-    emitted = _enpkg_local_names(data_only)
+    emitted = _enpkg_local_names(_data_only(serializer))
 
-    vocabulary = Graph()
-    vocabulary.parse(_TTL_PATH, format="turtle")
-    declared = (
-        set(vocabulary.subjects(RDF.type, OWL.Class))
-        | set(vocabulary.subjects(RDF.type, OWL.ObjectProperty))
-        | set(vocabulary.subjects(RDF.type, OWL.DatatypeProperty))
-    )
-
+    vocabulary = Graph().parse(_TTL_PATH, format="turtle")
     ns = str(ENPKG)
-    tagged_live, untagged = set(), []
-    for term in declared:
-        comment = " ".join(str(c) for c in vocabulary.objects(term, RDFS.comment))
-        name = str(term)[len(ns):]
-        if "[live]" in comment:
-            tagged_live.add(name)
-        elif "[target]" not in comment:
-            untagged.append(name)
+    statuses = {
+        str(term)[len(ns):]: [str(s) for s in vocabulary.objects(term, VS.term_status)]
+        for term in _declared_terms(vocabulary)
+    }
 
-    assert not sorted(untagged), (
-        f"{len(untagged)} term(s) in enpkg.ttl carry neither a [live] nor a [target] "
-        f"tag in their rdfs:comment: {sorted(untagged)}"
+    malformed = sorted(
+        name for name, values in statuses.items()
+        if len(values) != 1 or values[0] not in _TERM_STATUSES
     )
-    assert not sorted(tagged_live - emitted), (
-        "term(s) tagged [live] in enpkg.ttl that the serializer never emitted: "
-        f"{sorted(tagged_live - emitted)}. Either the tag should be [target], or the "
-        "fixture above stopped covering that code path."
+    assert not malformed, (
+        f"term(s) without exactly one vs:term_status from {sorted(_TERM_STATUSES)}: {malformed}"
     )
-    assert not sorted(emitted - tagged_live), (
-        "term(s) the serializer emits that enpkg.ttl still tags [target]: "
-        f"{sorted(emitted - tagged_live)}. Retag them [live]."
+    in_use = {name for name, (status,) in statuses.items() if status in ("testing", "stable")}
+    assert not sorted(in_use - emitted), (
+        "term(s) whose vs:term_status says they are in use that the serializer never "
+        f"emitted: {sorted(in_use - emitted)}. Either the status should be unstable, or "
+        "the fixture above stopped covering that code path."
     )
+    assert not sorted(emitted - in_use), (
+        "term(s) the serializer emits whose vs:term_status is still unstable or archaic: "
+        f"{sorted(emitted - in_use)}."
+    )
+
+
+def test_every_term_has_a_label_and_a_definition():
+    """A term's rdfs:label names it and its rdfs:comment defines it, for readers of the
+    published vocabulary who never see this codebase."""
+    vocabulary = Graph().parse(_TTL_PATH, format="turtle")
+    ns = str(ENPKG)
+    unlabelled, undefined = [], []
+    for term in _declared_terms(vocabulary):
+        name = str(term)[len(ns):]
+        if not any(str(label).strip() for label in vocabulary.objects(term, RDFS.label)):
+            unlabelled.append(name)
+        if not any(str(comment).strip() for comment in vocabulary.objects(term, RDFS.comment)):
+            undefined.append(name)
+    assert not unlabelled, f"term(s) without an rdfs:label: {sorted(unlabelled)}"
+    assert not undefined, f"term(s) without an rdfs:comment: {sorted(undefined)}"
+
+
+def test_emitted_enpkg_literals_carry_their_declared_range(
+    make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation
+):
+    """Every enpkg: literal is typed exactly as its property's rdfs:range says.
+
+    A literal whose datatype differs from the range is not a formatting nuance: OWL 2
+    treats xsd:integer and xsd:double as disjoint value spaces, so a reasoner reads
+    ``"3"^^xsd:integer`` under a property with range xsd:double as a contradiction and
+    reports the whole export inconsistent. rdflib picks the datatype from the Python
+    type of the value, so a field that arrives as an int in one run and a float in the
+    next changes the emitted datatype without any code change.
+    """
+    serializer = _serialize_maximal(
+        make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation
+    )
+    vocabulary = Graph().parse(_TTL_PATH, format="turtle")
+    ranges = {
+        prop: rng
+        for prop in vocabulary.subjects(RDF.type, OWL.DatatypeProperty)
+        for rng in vocabulary.objects(prop, RDFS.range)
+    }
+
+    wrong = set()
+    for _, predicate, obj in _data_only(serializer):
+        if predicate in ranges and isinstance(obj, Literal):
+            datatype = obj.datatype or (XSD.string if obj.language is None else RDF.langString)
+            if datatype != ranges[predicate]:
+                wrong.add((predicate.n3(vocabulary.namespace_manager),
+                           datatype.n3(vocabulary.namespace_manager),
+                           ranges[predicate].n3(vocabulary.namespace_manager)))
+    assert not wrong, (
+        "enpkg: literal(s) emitted with a datatype other than the declared rdfs:range "
+        f"(property, emitted, declared): {sorted(wrong)}"
+    )
+
+
+def test_emitted_emi_terms_exist_in_the_vendored_emi_ontology(
+    make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation,
+    emi_vocabulary,
+):
+    """Every emi: predicate and rdf:type the serializer emits is declared by EMI.
+
+    The enpkg: drift test cannot see these: emi: terms are not ours to declare, so a
+    misspelt or invented one (an emi: IRI EMI never defined) reaches the export as a
+    bare IRI nobody can look up.
+    """
+    serializer = _serialize_maximal(
+        make_spectrum, make_lotus, make_recipe, make_adduct, make_sirius_annotation
+    )
+    ns = str(EMI)
+    used = set()
+    for _, predicate, obj in _data_only(serializer):
+        if str(predicate).startswith(ns):
+            used.add(predicate)
+        if predicate == RDF.type and isinstance(obj, URIRef) and str(obj).startswith(ns):
+            used.add(obj)
+    assert used, "fixture emitted no emi: terms — it stopped exercising the serializer"
+
+    declared = set(emi_vocabulary.subjects(RDF.type, None))
+    missing = sorted(str(term)[len(ns):] for term in used - declared)
+    assert not missing, f"emi: term(s) emitted that EMI-vocab.owl does not declare: {missing}"
+
+
+def test_vocabulary_imports_emi_by_its_ontology_iri(emi_vocabulary):
+    """``owl:imports`` names an ontology by its ontology IRI, so the import must match
+    the IRI EMI declares for itself, which is not the ``emi:`` term namespace."""
+    vocabulary = Graph().parse(_TTL_PATH, format="turtle")
+    emi_ontology = next(emi_vocabulary.subjects(RDF.type, OWL.Ontology))
+    imports = set(vocabulary.objects(None, OWL.imports))
+    assert imports == {emi_ontology}, (
+        f"enpkg.ttl imports {sorted(map(str, imports))}; EMI's ontology IRI is {emi_ontology}"
+    )
+
+
+@pytest.mark.parametrize("namespace", [RDF, RDFS, OWL, SKOS], ids=["rdf", "rdfs", "owl", "skos"])
+def test_vocabulary_uses_only_terms_its_meta_vocabularies_define(namespace):
+    """Every rdf:/rdfs:/owl:/skos: IRI in enpkg.ttl is a term that vocabulary defines.
+
+    A Turtle parser accepts any local name under a known prefix, so an invented
+    predicate such as ``rdfs:definedBy`` (the RDFS term is ``rdfs:isDefinedBy``)
+    parses cleanly and is simply ignored by every tool that reads the file.
+    """
+    vocabulary = Graph().parse(_TTL_PATH, format="turtle")
+    ns = str(namespace)
+    used = {term for triple in vocabulary for term in triple
+            if isinstance(term, URIRef) and str(term).startswith(ns)}
+    undefined = sorted(str(term)[len(ns):] for term in used if term not in namespace)
+    assert not undefined, f"enpkg.ttl uses undefined {ns} term(s): {undefined}"

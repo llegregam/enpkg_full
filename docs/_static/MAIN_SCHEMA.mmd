@@ -2,8 +2,9 @@ classDiagram
     %% ========================================================================
     %% ROLE: the TARGET model — where the ENPKG schema is going.
     %%
-    %% Not everything drawn here is emitted yet: RawMaterial, MolecularFormula,
-    %% Atom and several annotation attributes are still targets. Terms carry a [live] / [target] tag in docs/vocab/enpkg.ttl —
+    %% Not everything drawn here is emitted yet: RawMaterial and Atom.isotope
+    %% are still targets. Every enpkg: term carries a vs:term_status in
+    %% docs/vocab/enpkg.ttl (unstable = not emitted) —
     %% that file, not this diagram, is the authority on what any enpkg: term
     %% means (domain, range, and why it was minted rather than reused).
     %%
@@ -36,7 +37,7 @@ classDiagram
     }
     class LCMSFeatureSet["emi:LCMSFeatureSet"]
     class AdductCluster["enpkg:AdductCluster"]{
-        +clusterConnectivity: float
+        +clusterConnectivity: int
         +clusterIntensityCoverage: float
         +clusterCountCoverage: float
     }
@@ -77,6 +78,16 @@ classDiagram
         +adductForm: string
         +annotationRank: int
     }
+    class ChemicalTaxonAnnotation["emi:ChemicalTaxonAnnotation"]{
+        +molecularFormula: string
+        +adductForm: string
+        +pathwayProbability: float
+        +superClassProbability: float
+        +classProbability: float
+    }
+    class NPCTerm["npc:Pathway / Superclass / Class"]{
+        +label: string
+    }
 
     %% Chemical Structures
     class ChemicalStructure["emi:ChemicalStructure"]{
@@ -95,12 +106,13 @@ classDiagram
     }
     class Ingredient["enpkg:Ingredient"]{
         +ingredientName: string
-        +ingredientCount: float
+        +ingredientCount: int
     }
     class MolecularFormula["enpkg:MolecularFormula"]{
         +formula: string
+        +netCharge: int
     }
-    class Atom["CHEBI:33250(Atom)"]{
+    class Atom["enpkg:Atom"]{
         +element: string
         +atomCount: int
         +isotope: string
@@ -123,7 +135,7 @@ classDiagram
         +nomenclatureCode: string
         +searchString: string
     }
-    class BibliographicResource["emi:BibliographicResource"]{
+    class BibliographicResource["dcterms:BibliographicResource"]{
         +identifier: string
     }
     class ExternalChemicalRef["owl:sameAs target: Wikidata / PubChem"]
@@ -162,14 +174,16 @@ classDiagram
     LCMSFeature --> AdductAnnotation : emi_hasAnnotation
     LCMSFeature --> SpectralAnnotation : emi_hasAnnotation
     LCMSFeature --> SiriusAnnotation : emi_hasAnnotation
+    LCMSFeature --> ChemicalTaxonAnnotation : emi_hasAnnotation
+    ChemicalTaxonAnnotation --> NPCTerm : emi_hasPathway / hasSuperClass / hasClass
     SpectralAnnotation --> ChemicalStructure : emi_hasChemicalStructure
     SiriusAnnotation --> ChemicalStructure : emi_hasChemicalStructure
     AdductAnnotation --> ChemicalStructure : enpkg_hasCandidateStructure
-    AdductAnnotation --> MolecularFormula : emi_hasMolecularFormula
+    AdductAnnotation --> MolecularFormula : enpkg_hasMolecularFormula
     SpectralAnnotation --> InchiKey2D : emi_hasInchiKey2D
     SiriusAnnotation --> InchiKey2D : emi_hasInchiKey2D
     ChemicalStructure --> InchiKey2D : emi_hasInchiKey2D
-    ChemicalStructure --> MolecularFormula : emi_hasMolecularFormula
+    ChemicalStructure --> MolecularFormula : enpkg_hasMolecularFormula
     MolecularFormula --> Atom : enpkg_hasAtom
 
 

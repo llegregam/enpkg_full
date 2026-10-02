@@ -259,7 +259,7 @@ That shared `emi:InChIKey2D` node is the payoff: a SIRIUS candidate, an MS1 comp
 MS2 match that all point to the same 2D skeleton become **one connected structure in the
 graph**, queryable across the three independent lines of evidence.
 
-Real toy-data output (feature 5, rank-1 candidate):
+Toy-data output (feature 5, rank-1 candidate):
 
 ```turtle
 emi-res:sirius/actea_EtOAc-1_pos/5/BBTZETLXNQDZKF
@@ -267,6 +267,7 @@ emi-res:sirius/actea_EtOAc-1_pos/5/BBTZETLXNQDZKF
     chemrof:generalized_empirical_formula "C6H9N3O3S" ;
     emi:hasAdduct "[M+K]+" ;
     enpkg:annotationRank 1 ;
+    enpkg:siriusVersion "6.3.4" ;
     emi:hasChemicalStructure emi-res:inchikey2d/BBTZETLXNQDZKF .
 ```
 
@@ -276,7 +277,13 @@ emi-res:sirius/actea_EtOAc-1_pos/5/BBTZETLXNQDZKF
 | molecular formula | `chemrof:generalized_empirical_formula` | `"C6H9N3O3S"` |
 | adduct | `emi:hasAdduct` | `"[M+K]+"` |
 | rank | `enpkg:annotationRank` | `1` (SIRIUS `structurePerIdRank`) |
+| SIRIUS version | `enpkg:siriusVersion` | `"6.3.4"` |
 | structure | `emi:hasChemicalStructure` | → `emi:InChIKey2D` node |
+
+The summary TSVs do not record which SIRIUS produced them, so the enhancer asks the executable:
+`sirius --version` prints `SIRIUS 6.3.4` on its first line. That call starts a JVM (about 7 s),
+so its answer is cached per executable for the life of the process — a batch pays it once. When
+the version cannot be read, the annotations carry none and a warning is logged.
 
 The URI is keyed on `sirius/{run}/{feature}/{InChIkey2D}`, so re-serializing is idempotent
 and per-run candidates never collide across features. A `top_k_sirius` serializer option can

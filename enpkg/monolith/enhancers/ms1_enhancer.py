@@ -78,7 +78,9 @@ class MS1Enhancer(Enhancer):
                 )
 
         adducts: list[ChemicalAdduct] = [
-            ChemicalAdduct(lotus=lotus_group, recipe=recipe)
+            ChemicalAdduct(
+                lotus=lotus_group, recipe=recipe, annotation_method="precursor-mass-search"
+            )
             for lotus_group in lotus_grouped_by_structure_molecular_formula
             for recipe in recipes
         ]
