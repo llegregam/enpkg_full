@@ -297,7 +297,7 @@ enpkg:sampleName a owl:DatatypeProperty ;
 
 enpkg:sampleType a owl:DatatypeProperty ;
     rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:string ;
-    rdfs:comment "[live] Pragmatic plain literal, from the metadata file's sample_type column. RDF_DATA_MODEL_mapped.md §2 originally proposed EMI sample subclassing by value (emi:QCSample/Blank/ExtractSample) instead — not implemented (the serializer always types the node emi:ExtractSample) — worth reconsidering later." .
+    rdfs:comment "[live] Pragmatic plain literal, from the metadata file's sample_type column. Typing the sample by this value instead (emi:QCSample / emi:Blank / emi:ExtractSample) is not implemented: the serializer always types the node emi:ExtractSample. Tracked in docs/DATA_MODEL_AND_SERIALIZATION_GAP.md §D4." .
 
 enpkg:collectionDate a owl:DatatypeProperty ;
     rdfs:domain enpkg:SampleMetadata ; rdfs:range xsd:date ;

@@ -102,7 +102,7 @@ at L289-293 stay as-is; only the two `_add_ranked_annotations` calls at L296-308
    at MS2 nodes that exist.
 
 **4. Docs:** add `enpkg:hasCorrespondingAdduct` and the MS2-gated MS1-pruning rule to
-[RDF_DATA_MODEL_mapped.md](RDF_DATA_MODEL_mapped.md) and the diagram/legend in
+`RDF_DATA_MODEL_mapped.md` and the diagram/legend in
 [RDF_KG_DATA_MODEL.md](RDF_KG_DATA_MODEL.md) (the `SpectralAnnotation -.-> AdductAnnotation` edge is
 already sketched as "NEW" in the gap doc's diagram). Update
 [DATA_MODEL_AND_SERIALIZATION_GAP.md](DATA_MODEL_AND_SERIALIZATION_GAP.md) D2 → IMPLEMENTED.

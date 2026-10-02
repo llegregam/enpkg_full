@@ -3,10 +3,10 @@
 > **Status: historical planning document (largely implemented).** The serializer
 > described here now lives in [enpkg/monolith/rdf/](../enpkg/monolith/rdf/)
 > (`AnalysisSerializer`, `serialize_to_turtle`) and is covered by
-> `enpkg/tests/test_data/test_serializer.py`. The concrete vocabulary mapping is
-> maintained in [RDF_DATA_MODEL_mapped.md](RDF_DATA_MODEL_mapped.md); this file
-> is kept for the original design rationale. Where the two disagree, the code and
-> `RDF_DATA_MODEL_mapped.md` win.
+> `enpkg/tests/test_data/test_serializer.py`. The emitted graph is drawn in
+> [RDF_KG_DATA_MODEL.md](RDF_KG_DATA_MODEL.md) and the `enpkg:` terms are defined in
+> [vocab/enpkg.ttl](vocab/enpkg.ttl); this file is kept for the original design
+> rationale. Where it disagrees with them, the code and those two documents win.
 
 ## Context
 

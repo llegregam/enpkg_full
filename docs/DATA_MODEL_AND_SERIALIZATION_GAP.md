@@ -5,9 +5,9 @@
 2. **[Part B](#part-b--ontologies--vocabulary)** — the ontologies and vocabulary the serializer maps onto.
 3. **[Part C](#part-c--whats-already-mapped)** — what the serializer already emits, and **[Part D](#part-d--what-needs-to-be-mapped-now-the-gap)** — **what still needs mapping now**.
 
-> **Companion docs.** The detailed term-by-term worksheet is
-> [RDF_DATA_MODEL_mapped.md](RDF_DATA_MODEL_mapped.md); the current emitted graph is drawn in
-> [RDF_KG_DATA_MODEL.md](RDF_KG_DATA_MODEL.md); the original design rationale is
+> **Companion docs.** The current emitted graph is drawn in
+> [RDF_KG_DATA_MODEL.md](RDF_KG_DATA_MODEL.md); the `enpkg:` terms are defined in
+> [vocab/enpkg.ttl](vocab/enpkg.ttl); the original design rationale is
 > [RDF_SERIALIZATION_PLAN.md](RDF_SERIALIZATION_PLAN.md). This document is the **current-state +
 > gap** view — it is the only one that accounts for the newest additions (the MS1 adduct graph,
 > the MS2 adduct gate). Where they disagree, the code wins.
@@ -246,8 +246,9 @@ round-trip / URI-hygiene / count checks.
 
 Four things were produced in memory but not in the RDF. **D1** (Option A — the `enpkg:AdductCluster`
 node) **and D2** (MS2↔MS1 `enpkg:hasCorrespondingAdduct` coupling) **are now implemented**, as is
-the `FBMNComponent` row of D4. **D3** and the rest of D4 (`charge`, `sample_type` subclassing, the
-organism-lineage rows, consensus spectra) remain, listed by priority.
+the `FBMNComponent` and sample-lineage rows of D4. **D3** and the rest of D4 (`charge`,
+`sample_type` subclassing, the compound-organism lineage, consensus spectra) remain, listed by
+priority.
 
 ```mermaid
 %%{init: {'theme':'dark'}}%%
@@ -350,8 +351,8 @@ would put two `ChemicalTaxonAnnotation`s on one feature, so it needs a way to te
 |---|---|---|
 | Feature `charge` | `AnnotatedSpectrum.charge` | `enpkg:charge` (→ PSI-MS `MS:1000041`), already declared |
 | `sample_type` as subclass | `SampleMetadata.sample_type` | branch `ExtractSample`/`QCSample`/`Blank` instead of always `ExtractSample` |
-| Sample organism lineage | `SampleMetadata.organism_kingdom..genus` | currently unused (source organism comes from the OTT match); decide if the *declared* lineage is worth emitting |
-| `AnnotationOrganism` lineage ranks | `MS2ChemicalAnnotation.organisms[].domain..species` | organism node currently gets name + ids only; lineage literals/hierarchy optional |
+| ~~Sample organism lineage~~ | metadata-file `organism_kingdom..genus` columns | ✅ **implemented** — emitted as user-defined columns on the sample's `enpkg:ExtraMetadata` node; the OTT-resolved `Taxon` stays the canonical source organism |
+| `AnnotationOrganism` lineage ranks | `MS2ChemicalAnnotation.organisms[].domain..species` | organism node currently gets name + ids only; lineage literals/hierarchy optional. Hierarchy route: add an `ncbi_id` field to `AnnotationOrganism` and link `obo:NCBITaxon_{id}`, whose `rdfs:subClassOf` chain and `ncbitaxon:has_rank` carry lineage and rank (as the LOTUS organism's NCBI id could) |
 | ~~`FBMNComponent` cluster nodes~~ | `molecular_network` connected components | ✅ **implemented** — one node per component with ≥2 members, keyed on the minimum member feature id; `enpkg:hasNetworkComponent` off the feature set, `enpkg:hasComponentMember` down, EMI's `emi:hasFBMNComponent` off each feature, `enpkg:componentSize` literal. See `_add_fbmn_components` and [NETWORK_ENHANCER.md](NETWORK_ENHANCER.md) §6.2 |
 | Consensus spectrum | (GNPS, if present) | `emi:hasConsensusSpectrum` — only if GNPS consensus is available |
 

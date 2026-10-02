@@ -1,8 +1,8 @@
 """Serialize an `Analysis` object hierarchy into an RDF graph.
 
 Walks an :class:`Analysis`, mints node URIs via :mod:`enpkg.monolith.rdf.uris`,
-and emits triples using the vocabulary mapping recorded in
-``docs/RDF_DATA_MODEL_mapped.md``.
+and emits triples against the terms declared in ``docs/vocab/enpkg.ttl`` and the
+vocabularies it reuses. The emitted graph is drawn in ``docs/RDF_KG_DATA_MODEL.md``.
 
 Public API::
 

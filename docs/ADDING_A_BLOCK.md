@@ -357,9 +357,11 @@ the registry cannot do for you, and it is the step with lasting consequences:
 > term's label, domain and range before you emit it; reuse an existing term wherever one
 > fits.
 
-Practically: add URI minting to [`rdf/uris.py`](../enpkg/monolith/rdf/uris.py), the terms to
-[`rdf/namespaces.py`](../enpkg/monolith/rdf/namespaces.py), an `_add_*` method to the
-serializer, and document the shape in [RDF_DATA_MODEL.md](RDF_DATA_MODEL.md). A layer whose
+Practically: add URI minting to [`rdf/uris.py`](../enpkg/monolith/rdf/uris.py), any new
+namespace to [`rdf/namespaces.py`](../enpkg/monolith/rdf/namespaces.py), an `_add_*` method to
+the serializer, declare every new `enpkg:` term in [vocab/enpkg.ttl](vocab/enpkg.ttl) (the
+vocabulary drift test fails on an undeclared one), and draw the shape in
+[RDF_KG_DATA_MODEL.md](RDF_KG_DATA_MODEL.md). A layer whose
 input is absent should be a no-op rather than an error — the network layers return early
 when `analysis.molecular_network` is None, which is what makes them safe to leave on. If a
 layer is expensive enough that a user needs to switch it off, add a field to

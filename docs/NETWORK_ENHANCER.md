@@ -319,8 +319,8 @@ features; their modified-cosine similarity is 0.83 and their precursor masses di
 
 ### `hasCosine` on an `LFpair` is valid
 
-[RDF_DATA_MODEL_mapped.md](RDF_DATA_MODEL_mapped.md) flags this as an open question
-(*"declared on SpectralPair — verify it's valid on LFpair"*). It is valid: `LFpair` is a
+EMI declares `emi:hasCosine` and `emi:hasMassDifference` with `rdfs:domain emi:SpectralPair`,
+not `emi:LFpair`. Using them on an `LFpair` is still valid: `LFpair` is a
 declared `rdfs:subClassOf SpectralPair`, so every `LFpair` **is** a `SpectralPair`, the domain
 is satisfied, and domain inference entails nothing that wasn't already true. No workaround is
 needed.

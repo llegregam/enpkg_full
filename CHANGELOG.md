@@ -20,6 +20,25 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-02 — The two RDF mapping worksheets are deleted
+
+- **Removed `docs/RDF_DATA_MODEL.md` and `docs/RDF_DATA_MODEL_mapped.md`.** The first was the
+  blank worksheet (every vocabulary cell `TODO`) and already marked superseded. The second, the
+  filled-in field-to-term mapping, was still named as *the* mapping by the docstrings of
+  `rdf/__init__.py`, `serializer.py` and `namespaces.py`, and `RDF_SERIALIZATION_PLAN.md` said it
+  won any disagreement. Yet several of its rows named terms the serializer does not emit:
+  `emi:hasSample`, `emi:hasFinalScore`/`hasTaxoScore`/`hasConsistencyScore`, an `emi:InChIKey`
+  node, blank-node ingredients, `MS:1000009`, `emi:rank`, and the pre-2026-10-01 sample section.
+  Nothing tested it against the code, unlike `enpkg.ttl`.
+- **Where its content lives now:** term meaning in `docs/vocab/enpkg.ttl`; the emitted nodes,
+  edges and predicates in `docs/RDF_KG_DATA_MODEL.md`; reuse rationale in `docs/VOCABULARY.md`;
+  the `hasCosine`-on-`LFpair` check in `docs/NETWORK_ENHANCER.md`; options not yet built in
+  `docs/DATA_MODEL_AND_SERIALIZATION_GAP.md` §D4, which gained the one idea recorded nowhere
+  else (lineage for compound organisms through an `ncbi_id` and `obo:NCBITaxon_{id}`).
+- References were repointed in code docstrings, `ADDING_A_BLOCK.md`, `RDF_SERIALIZATION_PLAN.md`,
+  the `enpkg:sampleType` comment and the gap doc. Dated plans and reviews keep the file names as
+  plain text, unlinked. The gap doc's §D4 sample-lineage row is marked done (2026-10-01 change).
+
 ### 2026-10-01 — The sample metadata is emitted
 
 - **The problem.** The vocabulary declared a sample-metadata layer (`enpkg:SampleMetadata`,

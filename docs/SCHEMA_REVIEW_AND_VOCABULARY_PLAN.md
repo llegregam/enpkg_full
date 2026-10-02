@@ -2,7 +2,7 @@
 
 > **Status:** review of [`_static/MAIN_SCHEMA.mmd`](_static/MAIN_SCHEMA.mmd) against the previous
 > diagram ([RDF_KG_DATA_MODEL.md](RDF_KG_DATA_MODEL.md)), the mapping worksheet
-> ([RDF_DATA_MODEL_mapped.md](RDF_DATA_MODEL_mapped.md)) and the live
+> (`RDF_DATA_MODEL_mapped.md`) and the live
 > [`AnalysisSerializer`](../enpkg/monolith/rdf/serializer.py). Every external accession and EMI term
 > quoted below was checked against the vendored ontologies in [vocab/](vocab/).
 >
@@ -237,7 +237,7 @@ This restores the three consequences flagged in the first pass:
 **Also resolved:** `AdductRecipe` has its `Ingredient` nodes back
 (`AdductRecipe --enpkg:hasIngredient--> Ingredient`, with `ingredientName` / `ingredientCount`),
 matching `_add_recipe`'s per-ingredient IRIs in the live code. "Decision C" in
-[RDF_DATA_MODEL.md](RDF_DATA_MODEL.md) no longer has a live divergence to resolve. `adductFormula`
+`RDF_DATA_MODEL.md` no longer has a live divergence to resolve. `adductFormula`
 stays alongside it as the flat rendered form (`"[M+H]+"`) — a reasonable *addition* mirroring
 `_format_adduct`'s output, not a replacement for the structured recipe.
 
@@ -328,7 +328,7 @@ record of what was wrong and what replaced it.**
 | ~~`chebi:ChemicalStructure`~~ | ✅ **Resolved** — ChEBI has no such class; replaced with `emi:ChemicalStructure` (what the code uses). |
 | ~~`NCIT:C14250(Organism)`~~ | ✅ **Resolved** — replaced with `emi:Taxon`, matching what the live code already types these nodes as. No more competing "organism" terms. |
 | ~~`sio:Metadata`~~ (on `SampleMetadata`) | ✅ **Resolved** — `sio:` was never vendored/verified; replaced with a minted `enpkg:SampleMetadata`. |
-| `MS:1000866(MolecularFormula)` | ⚠️ **Still open.** Exists ("molecular formula") but is a cvParam **value** class. The cvParam note in [RDF_DATA_MODEL_mapped.md](RDF_DATA_MODEL_mapped.md) §4 says to reify or `skos:exactMatch` these, not use them as node types — not addressed this round. |
+| `MS:1000866(MolecularFormula)` | ⚠️ **Still open.** Exists ("molecular formula") but is a cvParam **value** class. The cvParam note in `RDF_DATA_MODEL_mapped.md` §4 says to reify or `skos:exactMatch` these, not use them as node types — not addressed this round. |
 | `CHEBI:33250(Atom)` | ✅ correct, unchanged. |
 | `emi:RawMaterial` | ✅ exists, unchanged. |
 | `emi:hasMolecularFormula`, `hasSampleMetadata` (the predicates) | ❌ **Still open.** Neither exists in EMI (or anywhere) as declared — need minting as `enpkg:hasMolecularFormula` / `enpkg:hasSampleMetadata`, or a real source. (`hasAtom`, `hasRawMaterial`, `hasExtractSample` from the original list are resolved — see §1a/§1b; `extractionMethod`/`extractionSolvent` are literal attributes gated on Part 5 Group C's data-model work, not predicates needing a mint.) |
@@ -445,7 +445,7 @@ reference it (`owl:imports`) rather than inline it. Worth deciding now because i
 
 **Phase 0 — freeze the inventory.** Extract the 52 terms mechanically from the serializer,
 cross-check against the "Custom `enpkg:` vocabulary to define" section of
-[RDF_DATA_MODEL_mapped.md](RDF_DATA_MODEL_mapped.md) (which is stale — it predates the cluster,
+`RDF_DATA_MODEL_mapped.md` (which is stale — it predates the cluster,
 network, and SIRIUS work). Output: a table of term · kind · domain · range · definition · external
 mapping. This doubles as the review checklist.
 
@@ -511,7 +511,7 @@ against the vendored OWL — worth doing, it is the same walk.
 **Phase 5 — reconcile the diagrams.** [RDF_KG_DATA_MODEL.md](RDF_KG_DATA_MODEL.md) is currently the
 accurate one (modulo the network layer, which is newer than it). Once `MAIN_SCHEMA.mmd` is
 corrected, decide which is canonical and mark the other superseded — the pattern already exists in
-[RDF_DATA_MODEL.md](RDF_DATA_MODEL.md)'s header. Then a `VOCABULARY.md` walkthrough in the
+`RDF_DATA_MODEL.md`'s header. Then a `VOCABULARY.md` walkthrough in the
 `*_ENHANCER.md` style, explaining the mint-vs-reuse policy and the entailment reasoning.
 
 ### Suggested order

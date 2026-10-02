@@ -8,7 +8,7 @@ Two kinds of namespaces:
     minted by us (EMI_RES) or external identifier authorities used as objects /
     ``owl:sameAs`` targets (WD, INCHIKEY, PUBCHEM, GBIF, NCBITAXON, DOI).
 
-The full entity -> term mapping lives in ``docs/RDF_DATA_MODEL_mapped.md``.
+Which term each emitted node and edge uses is drawn in ``docs/RDF_KG_DATA_MODEL.md``.
 """
 
 from rdflib import Namespace
