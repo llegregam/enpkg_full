@@ -19,6 +19,7 @@ from enpkg.monolith.pipeline.batch_runner import (
     SPECTRA_SUFFIXES,
     discover_experiments,
     find_shared_metadata,
+    read_experiment_list,
     run_batch,
 )
 from enpkg.monolith.pipeline.run_artifact import (
@@ -199,15 +200,32 @@ def batch(
     ionization_mode: Optional[str] = typer.Option(
         None, help="Override the config's ionization mode. Must not contradict it."
     ),
+    experiments_file: Optional[Path] = typer.Option(
+        None,
+        "--experiments-file",
+        exists=True,
+        dir_okay=False,
+        help="Text file naming the experiments to run, one run name per line. "
+        "Default: every experiment found.",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Debug logging."),
 ) -> None:
-    """Run the pipeline against every experiment under a parent folder."""
+    """Run the pipeline against the experiments under a parent folder.
+
+    Every experiment found is run unless ``--experiments-file`` names a subset.
+    """
     if ctx.invoked_subcommand is not None:
         return
     if config is None or parent_dir is None:
         fail("Both --config and --parent-dir are required.")
     if not parent_dir.is_dir():
         fail(f"Not a directory: {parent_dir}")
+
+    run_names: Optional[list[str]] = None
+    if experiments_file is not None:
+        run_names = read_experiment_list(experiments_file)
+        if not run_names:
+            fail(f"{experiments_file} names no experiments.")
 
     selected, configs, serializer_config = load_run_config(config)
     mode = resolve_ionization_mode(configs, ionization_mode)
@@ -221,6 +239,7 @@ def batch(
         verbose=verbose,
         output_dir=output_dir,
         serializer_config=serializer_config,
+        run_names=run_names,
     )
 
     if result.error:

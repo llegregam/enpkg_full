@@ -62,6 +62,9 @@ def _defaults() -> dict[str, Any]:
         "mode": "single",
         "input_dir": str(paths.DEFAULT_INPUT_DIR),
         "batch_dir": str(paths.DEFAULT_BATCH_DIR),
+        # Run names ticked on the Imports page. None means every experiment found under
+        # batch_dir, including subfolders added later; an empty list means none.
+        "selected_experiments": None,
         "spectra": None,
         "metadata": None,
         "quant": None,

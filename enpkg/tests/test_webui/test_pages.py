@@ -105,6 +105,78 @@ async def test_imports_survives_a_revisit_after_files_are_chosen(
     await user.should_see("arnica_pos.mgf")
 
 
+def _batch_parent(tmp_path, *names: str):
+    """Create a batch parent folder with shared metadata and one subfolder per name."""
+    parent = tmp_path / "batch"
+    parent.mkdir()
+    (parent / "metadata.tsv").write_text("", encoding="utf-8")
+    for name in names:
+        sub = parent / name
+        sub.mkdir()
+        (sub / f"{name}.mgf").write_text("", encoding="utf-8")
+        (sub / f"{name}_quant.csv").write_text("", encoding="utf-8")
+    return parent
+
+
+async def _open_batch_imports(user: User) -> None:
+    """Open Imports in batch mode.
+
+    The harness only sees visible elements, and the batch section is hidden in single
+    mode. A toggle is not among the elements its `click` knows how to change, so the
+    value is set directly, which runs the same change handler a click would.
+    """
+    await user.open("/imports")
+    toggle = next(iter(user.find(marker="mode-toggle").elements))
+    with user.client:
+        toggle.value = "batch"
+
+
+def _untick(user: User, *run_names: str) -> None:
+    """Untick table rows by firing the event the browser sends for it."""
+    user.find(marker="batch-table").trigger(
+        "selection", {"added": False, "rows": [], "keys": list(run_names)}
+    )
+
+
+async def test_batch_experiments_start_ticked_and_unticking_survives_a_revisit(
+    user: User, tmp_path, monkeypatch
+) -> None:
+    from enpkg.monolith.webui import paths
+
+    monkeypatch.setattr(paths, "DEFAULT_BATCH_DIR", _batch_parent(tmp_path, "exp_a", "exp_b"))
+
+    await _open_batch_imports(user)
+    await user.should_see("2 of 2 experiments selected")
+
+    _untick(user, "exp_b")
+    await user.should_see("1 of 2 experiments selected")
+
+    # The tick lives in the visitor's store, so a rebuilt table restores it.
+    await user.open("/pipeline")
+    await user.should_see("Pipeline")
+    await user.open("/imports")
+    await user.should_see("1 of 2 experiments selected")
+
+
+async def test_run_refuses_a_batch_with_nothing_ticked(
+    user: User, tmp_path, monkeypatch
+) -> None:
+    from enpkg.monolith.webui import paths
+
+    monkeypatch.setattr(paths, "DEFAULT_BATCH_DIR", _batch_parent(tmp_path, "exp_a", "exp_b"))
+
+    await _open_batch_imports(user)
+    await user.should_see("2 of 2 experiments selected")
+    _untick(user, "exp_a", "exp_b")
+    await user.should_see("0 of 2 experiments selected")
+
+    await user.open("/pipeline")
+    user.find("Molecular networking").click()
+    await user.should_see("Configuration is valid")
+    user.find(marker="run-button").click()
+    await user.should_see("Tick at least one experiment")
+
+
 async def test_pipeline_reports_an_empty_selection(user: User) -> None:
     await user.open("/pipeline")
     await user.should_see("Select at least one block")

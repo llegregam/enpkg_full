@@ -12,7 +12,8 @@ directory structured as::
     │   └── ...
     └── ...
 
-and runs the selected pipeline blocks against every experiment. Expensive
+and runs the selected pipeline blocks against every experiment, or against the ones
+named in a run-name list (see :func:`read_experiment_list`). Expensive
 shared resources — the database stores and every non-Sirius pipeline step — are built
 **once** and reused across all experiments. Sirius is rebuilt per experiment
 with a deep-copied config whose input/output paths are rewritten to point at
@@ -27,7 +28,7 @@ import pickle
 import queue
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from enpkg.monolith.configuration.serializer_config import SerializerConfig
 from enpkg.monolith.dev_utils import log_memory_snapshot
@@ -203,6 +204,37 @@ def _first_with_suffix(folder: Path, suffixes: tuple[str, ...]) -> Optional[Path
     return None
 
 
+def read_experiment_list(path: Path) -> list[str]:
+    """Return the run names listed in ``path``, one per line.
+
+    Surrounding whitespace is stripped and blank lines are skipped, so a list written by
+    hand, including one with Windows line endings, reads the same as one written by
+    :func:`write_experiment_list`.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [name for name in (line.strip() for line in lines) if name]
+
+
+def write_experiment_list(path: Path, run_names: Sequence[str]) -> None:
+    """Write ``run_names`` to ``path`` in the format :func:`read_experiment_list` reads."""
+    path.write_text("".join(f"{name}\n" for name in run_names), encoding="utf-8")
+
+
+def _select_experiments(
+    experiments: list[ExperimentInputs], run_names: Sequence[str]
+) -> tuple[list[ExperimentInputs], list[str]]:
+    """Return the experiments named in ``run_names`` and the names that matched none.
+
+    The chosen experiments keep their discovery order, whatever order the names were
+    given in.
+    """
+    wanted = set(run_names)
+    chosen = [exp for exp in experiments if exp.run_name in wanted]
+    found = {exp.run_name for exp in experiments}
+    unknown = [name for name in dict.fromkeys(run_names) if name not in found]
+    return chosen, unknown
+
+
 def _make_batch_paths(output_dir: Path | None = None) -> tuple[Path, Path]:
     """Create the batch folder and return ``(batch_dir, summary_log)``.
 
@@ -243,18 +275,23 @@ def run_batch(
     verbose: bool = False,
     output_dir: Path | None = None,
     serializer_config: SerializerConfig | None = None,
+    run_names: Optional[Sequence[str]] = None,
 ) -> BatchResult:
-    """Run the selected pipeline blocks against every experiment in ``parent_dir``.
+    """Run the selected pipeline blocks against the experiments in ``parent_dir``.
+
+    ``run_names`` restricts the batch to the experiments with those run names; ``None``
+    runs every experiment discovered. A name that matches no discovered experiment fails
+    the whole batch before any shared step is built.
 
     Shared steps and their database stores are built once up front. For each
     experiment a dedicated runtime + summary log pair is written under the
     batch folder, and — if Sirius is selected — a per-experiment Sirius step
     with rewritten input/output paths is built just before execution.
 
-    Batch-level failures (no metadata file, no experiments discovered, shared
-    step construction failure) set ``BatchResult.error`` and return early.
-    Per-experiment failures set the corresponding ``RunResult.error`` and
-    the batch continues with the next experiment.
+    Batch-level failures (no metadata file, no experiments discovered, an unknown or
+    empty ``run_names``, shared step construction failure) set ``BatchResult.error``
+    and return early. Per-experiment failures set the corresponding
+    ``RunResult.error`` and the batch continues with the next experiment.
     """
     serializer_config = serializer_config or SerializerConfig()
     batch_dir, summary_log_path = _make_batch_paths(output_dir)
@@ -275,6 +312,18 @@ def run_batch(
     if not experiments:
         batch.error = f"No experiment subfolders with spectra + quant found under {parent_dir}"
         return batch
+
+    if run_names is not None:
+        experiments, unknown = _select_experiments(experiments, run_names)
+        if unknown:
+            batch.error = (
+                f"Unknown experiment(s) under {parent_dir}: {', '.join(unknown)}. "
+                "Run `enpkg batch discover` to list them."
+            )
+            return batch
+        if not experiments:
+            batch.error = "No experiments selected."
+            return batch
 
     # --- Build shared resources once --------------------------------------
     # Use a minimal logger just for the shared-step build; per-experiment

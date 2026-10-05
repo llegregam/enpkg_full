@@ -91,6 +91,7 @@ NiceGUI's own use of that store:
 | `sid` | this visitor's id — the key into `SESSIONS` below |
 | `mode` | `single` or `batch` |
 | `input_dir`, `batch_dir`, `config_path` | folder and file paths, **as strings** |
+| `selected_experiments` | run names ticked in the batch table; `None` means every experiment found |
 | `spectra`, `metadata`, `quant`, `sirius_spectra` | chosen **filenames**, resolved against `input_dir` when used |
 | `selected_blocks` | list of block ids |
 | `form_state` | `{block_id: raw values}` |
@@ -320,6 +321,31 @@ two overlap. The suffix tuples are **preference orders**, not sets: the first su
 match wins. Treating them as a set means a normal folder resolves its metadata to the quant
 table, and the run then fails deep inside the loader looking for a metadata column among
 quant columns. That is a defect this project has already had, in the command line.
+
+**Batch experiments are ticked in the table, and only ticked ones run.** The selection is
+stored as run names, the spectra file stems, which are what the shared metadata is keyed
+by and what the batch output folders are named after. Three rules govern it:
+
+- **`None` means every experiment found.** Ticking every row stores `None`, not the full
+  list, so a subfolder added later is picked up without being ticked by hand. An empty
+  list means nothing is ticked, and Run refuses it.
+- **A different parent folder resets the selection to `None`.** The picker reports a path
+  on every keystroke and twice after Browse, so the reset compares against the stored
+  folder and fires only when it changes.
+- **A scan of a folder that is no longer the chosen one is discarded.** Typing a path
+  starts one scan per keystroke, and the scans finish in any order. Without the check, a
+  slow scan of an earlier path would overwrite the table, and the selection written back
+  from it, after the scan of the final path.
+
+Each scan writes the intersection of the stored names and the discovered ones back to the
+store, so a name whose subfolder has gone is dropped. A scan that finds nothing writes
+nothing, because an unreadable network share also yields no experiments.
+
+The run receives the selection as a file. When it is a list, the Pipeline page writes it
+to `experiments.txt` in the run's own folder, beside `config.yaml`, and passes
+`--experiments-file`. A long list of repeated flags could exceed the Windows limit of
+32,767 characters on a command line. `batch_runner.read_experiment_list` and
+`write_experiment_list` define the file format in one place for both sides.
 
 ### 7.2 `/pipeline`
 

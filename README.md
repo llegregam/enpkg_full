@@ -46,6 +46,8 @@ enpkg config validate config.yaml       # check it before a long run
 enpkg run   --config config.yaml --input-dir data/    # one experiment
 enpkg batch --config config.yaml --parent-dir data/   # many experiments
 enpkg batch discover --parent-dir data/ # preview what a batch would pick up
+enpkg batch --config config.yaml --parent-dir data/ --experiments-file chosen.txt
+                                        # only the run names listed, one per line
 enpkg serialize run/analysis.pkl -o rdf_out/          # re-export without re-running
 ```
 

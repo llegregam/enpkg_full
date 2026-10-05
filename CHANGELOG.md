@@ -20,6 +20,35 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-05 — Choosing which experiments a batch runs
+
+- **What.** The Imports page's batch table has a tick box per experiment, and only ticked
+  experiments run. Everything is ticked when a folder is loaded. `enpkg batch` gained
+  `--experiments-file`, a text file with one run name per line, and `run_batch` gained
+  `run_names`. Without the option, a batch still runs every experiment found.
+- **Why the command line changed too.** The GUI launches `enpkg batch` as a separate
+  process and does not call `run_batch` itself, so the selection has to reach the command
+  line. The option is equally usable headlessly.
+- **Why a file and not a repeated `--experiment` flag.** Windows caps a command line at
+  32,767 characters. A subset of several hundred experiments named as flags could exceed
+  it. That ceiling is an estimate from typical run-name lengths, not a measurement. The GUI
+  writes the file to `experiments.txt` in the run folder, next to `config.yaml`, so the
+  record of what was run stays with the output.
+- **Why the run name identifies an experiment.** The run name is the spectra file stem. It
+  is what the shared metadata is keyed by and what the batch output folders are named
+  after. Subfolder names were the alternative.
+- **Unknown names fail the batch before any work.** The check sits between discovery and
+  `build_shared_steps`, which builds the database stores. A misspelt name therefore costs
+  seconds, not a partial multi-hour run that silently omits an experiment.
+- **`None` stores "every experiment".** When every row is ticked, the GUI stores `None`,
+  not the list. A subfolder added later is then included, and no file is written in the
+  common case. Choosing a different parent folder resets the selection to `None`.
+- **Fixed a scan race on the Imports page.** Typing a batch path starts one folder scan per
+  keystroke, and the scans finish in any order. A slow scan of an earlier path could
+  overwrite the table after the scan of the final path. That was cosmetic while the table
+  only previewed the folder. Now the selection is written back from the table, so a stale
+  scan is discarded when its folder is no longer the stored one.
+
 ### 2026-10-02 — Vocabulary made publishable: fixes, statuses, and every non-metadata term emitted
 
 - **Datatype ranges.** Measured on the 2026-09-17 export: `enpkg:clusterConnectivity` (653

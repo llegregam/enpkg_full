@@ -156,6 +156,59 @@ def test_batch_discover_fails_on_an_empty_parent(tmp_path):
     assert "No experiment subfolders" in result.output
 
 
+def _batch_parent(tmp_path, *names: str):
+    """Create a batch parent folder with shared metadata and one subfolder per name."""
+    parent = tmp_path / "batch"
+    parent.mkdir()
+    (parent / "metadata.tsv").write_text("sample\n")
+    for name in names:
+        sub = parent / name
+        sub.mkdir()
+        (sub / f"{name}.mgf").write_text("")
+        (sub / f"{name}_quant.csv").write_text("")
+    return parent
+
+
+def _batch_args(tmp_path, parent, experiments_file):
+    return [
+        "batch",
+        "--config", str(_init(tmp_path, blocks="network")),
+        "--parent-dir", str(parent),
+        "--output-dir", str(tmp_path / "out"),
+        "--experiments-file", str(experiments_file),
+    ]
+
+
+def test_batch_fails_on_an_unknown_experiment_before_doing_any_work(tmp_path):
+    """A misspelt name stops the batch before the shared steps and their stores are built."""
+    parent = _batch_parent(tmp_path, "exp_a", "exp_b")
+    chosen = tmp_path / "experiments.txt"
+    chosen.write_text("exp_a\nexp_typo\n")
+
+    result = runner.invoke(app, _batch_args(tmp_path, parent, chosen))
+    assert result.exit_code == 1
+    # Only the misspelt name is reported; the valid one is not.
+    assert "Unknown experiment(s)" in result.output
+    assert ": exp_typo." in result.output
+
+
+def test_batch_refuses_an_empty_experiments_file(tmp_path):
+    parent = _batch_parent(tmp_path, "exp_a")
+    chosen = tmp_path / "experiments.txt"
+    chosen.write_text("\n\n")
+
+    result = runner.invoke(app, _batch_args(tmp_path, parent, chosen))
+    assert result.exit_code == 1
+    assert "names no experiments" in result.output
+
+
+def test_batch_rejects_a_missing_experiments_file(tmp_path):
+    parent = _batch_parent(tmp_path, "exp_a")
+    result = runner.invoke(app, _batch_args(tmp_path, parent, tmp_path / "absent.txt"))
+    # Typer's own validation of the option, which is a usage error.
+    assert result.exit_code == 2
+
+
 def test_run_requires_input_files(tmp_path):
     out = _init(tmp_path, blocks="network")
     result = runner.invoke(app, ["run", "--config", str(out)])

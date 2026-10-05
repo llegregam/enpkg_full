@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from enpkg.monolith.configuration.config import GeneralParams
 from enpkg.monolith.configuration.serializer_config import SerializerConfig
 from enpkg.monolith.pipeline import config_io
+from enpkg.monolith.pipeline.batch_runner import write_experiment_list
 from enpkg.monolith.pipeline.blocks import BLOCKS, BLOCKS_BY_ID, MS_SHARED_BLOCKS
 from enpkg.monolith.pipeline.runner import STAGE_LABELS
 from enpkg.monolith.webui import paths, runs, state
@@ -408,8 +409,18 @@ def _prepare_run(checkboxes, forms, general_form, verbose, log, cursor):
             verbose=verbose,
         )
     else:
+        # None runs every experiment found, which the command line does when given no
+        # list, so a file is written only for a subset.
+        chosen = state.get("selected_experiments")
+        experiments_file = None
+        if chosen is not None:
+            experiments_file = handle.run_dir / "experiments.txt"
+            write_experiment_list(experiments_file, chosen)
         handle.argv = runs.build_argv(
-            handle, parent_dir=state.batch_path().resolve(), verbose=verbose
+            handle,
+            parent_dir=state.batch_path().resolve(),
+            experiments_file=experiments_file,
+            verbose=verbose,
         )
 
     log.clear()
@@ -425,6 +436,8 @@ def _missing_inputs(kind: str, selected: list[str]) -> Optional[str]:
     if kind == "batch":
         if not state.batch_path().is_dir():
             return "Choose a batch parent folder on the Imports page."
+        if state.get("selected_experiments") == []:
+            return "Tick at least one experiment on the Imports page."
         return None
 
     missing = [

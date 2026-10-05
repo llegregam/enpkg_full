@@ -85,6 +85,7 @@ def build_argv(
     quant: Optional[Path] = None,
     sirius_spectra: Optional[Path] = None,
     parent_dir: Optional[Path] = None,
+    experiments_file: Optional[Path] = None,
     verbose: bool = False,
 ) -> list[str]:
     """Build the command line for a run.
@@ -92,6 +93,9 @@ def build_argv(
     Uses ``sys.executable -m enpkg.cli`` rather than the ``enpkg`` console script, so the
     subprocess runs under the same interpreter and virtual environment as the server with
     no dependency on what is on PATH.
+
+    For a batch, ``experiments_file`` names the file listing the run names to process;
+    ``None`` processes every experiment under ``parent_dir``.
     """
     kind = handle.kind
     argv = [
@@ -119,6 +123,8 @@ def build_argv(
                 argv += [flag, str(value)]
     else:
         argv += ["--parent-dir", str(parent_dir)]
+        if experiments_file is not None:
+            argv += ["--experiments-file", str(experiments_file)]
     if verbose:
         argv.append("--verbose")
     return argv

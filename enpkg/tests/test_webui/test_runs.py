@@ -226,6 +226,17 @@ def test_build_argv_for_a_batch_passes_the_parent_folder(tmp_path):
     assert argv[3] == "batch"
     assert "--parent-dir" in argv
     assert "--input-dir" not in argv
+    assert "--experiments-file" not in argv
+
+
+def test_build_argv_for_a_batch_passes_the_experiment_list(tmp_path):
+    handle = runs.new_handle("batch", tmp_path / "runs")
+    chosen = handle.run_dir / "experiments.txt"
+    argv = runs.build_argv(
+        handle, parent_dir=tmp_path / "experiments", experiments_file=chosen
+    )
+    flag = argv.index("--experiments-file")
+    assert argv[flag + 1] == str(chosen)
 
 
 def test_each_run_gets_its_own_directory(tmp_path):
