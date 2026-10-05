@@ -20,6 +20,24 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-05 — Batch status line, and UTF-8 output from GUI runs
+
+- **A finished batch reported "executed nothing".** The GUI's status line read a top-level
+  list of executed blocks, which only single-run result files have; a batch records them
+  per experiment. A finished batch now reports "N of M experiments succeeded". A batch in
+  which experiments failed individually has no batch-level error and exits with code 1, so
+  it showed "Run exited with code 1" and the log tail. It now reports "N of M experiments
+  failed".
+- **Non-ASCII characters in the GUI log panel arrived as `�`.** Measured on Windows: a
+  Python process writing to a pipe encodes in cp1252, and the GUI decodes the run's output
+  as UTF-8. Runs are now started with `PYTHONIOENCODING=utf-8`. This sets only the console
+  encoding; how the pipeline reads and writes files is unchanged, which is why
+  `PYTHONUTF8` was not used.
+- **Not changed: a result file lost when a run outlives its server.** Measured by closing
+  a run's output pipe: the run completes its work, then the first console write raises
+  `OSError: [Errno 22]`. In `enpkg batch` that write precedes writing the result file. It
+  only happens when the server is killed hard; left as is for now.
+
 ### 2026-10-05 — Choosing which experiments a batch runs
 
 - **What.** The Imports page's batch table has a tick box per experiment, and only ticked

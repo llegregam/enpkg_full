@@ -173,6 +173,11 @@ for line in pending:
 
 using a timer the page owns, which NiceGUI cancels when that page is left.
 
+`_pump` decodes each line as UTF-8, so the child is started with `PYTHONIOENCODING=utf-8`.
+On Windows a Python process writing to a pipe otherwise encodes in the locale's code page
+(cp1252), and every character outside ASCII arrives as `�`: the `…` the runner logs, and
+any non-ASCII sample name or path.
+
 `seq` counts lines *ever* appended, not lines currently buffered. `handle.lines` is a
 bounded deque, so once it starts discarding old lines a cursor counted against the buffer
 would be wrong; counted against `seq` it cannot be. `ui.log` only appends — it has no
