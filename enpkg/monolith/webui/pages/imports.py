@@ -2,7 +2,8 @@
 
 Two shapes of input. A single experiment is three files in one folder: spectra, sample
 metadata and a quantification table (dataset centric approach). A batch is a parent folder holding one shared
-metadata file and a subfolder per experiment, which the pipeline discovers for itself.
+metadata file and a subfolder per experiment. The page lists the experiments found there,
+and only the ticked ones are run.
 
 Scanning a folder is blocking file access and can be slow on a network share, while a
 page builder has a few seconds before the client gives up on it. So the page renders its
@@ -85,7 +86,7 @@ def imports_page() -> None:
             {"single": "Single experiment", "batch": "Batch"},
             value=state.get("mode", "single"),
             on_change=lambda e: _set_mode(e.value),
-        ).props("no-caps")
+        ).props("no-caps").mark("mode-toggle")
 
         single = ui.column().classes("w-full gap-3")
         batch = ui.column().classes("w-full gap-3")
@@ -199,47 +200,89 @@ def _config_section() -> None:
 
 
 def _batch_section() -> None:
-    """Folder picker plus a preview of the experiments a run would pick up."""
+    """Folder picker plus the experiments a run would pick up, each with a tick box."""
     with ui.card().classes("w-full"):
         ui.label("Batch parent folder").classes("font-bold")
         ui.label(
-            "One shared metadata file at the top, one subfolder per experiment."
+            "One shared metadata file at the top, one subfolder per experiment. "
+            "Only the ticked experiments are run."
         ).classes("text-sm text-grey-7")
 
         metadata_label = ui.label("").classes("text-sm")
-        table = ui.table(
-            columns=[
-                {"name": "run_name", "label": "Run", "field": "run_name", "align": "left"},
-                {"name": "folder", "label": "Subfolder", "field": "folder", "align": "left"},
-                {"name": "sirius", "label": "SIRIUS input", "field": "sirius", "align": "left"},
-            ],
-            rows=[],
-            row_key="run_name",
-        ).classes("w-full")
+        table = (
+            ui.table(
+                columns=[
+                    {"name": "run_name", "label": "Run", "field": "run_name", "align": "left"},
+                    {"name": "folder", "label": "Subfolder", "field": "folder", "align": "left"},
+                    {"name": "sirius", "label": "SIRIUS input", "field": "sirius", "align": "left"},
+                ],
+                rows=[],
+                row_key="run_name",
+                selection="multiple",
+            )
+            .classes("w-full")
+            .mark("batch-table")
+        )
+        count_label = ui.label("").classes("text-sm text-grey-7")
+
+        def on_select() -> None:
+            _record_selection(table)
+            _show_count(count_label, table)
+
+        table.on_select(on_select)
 
         def refresh(folder: Path) -> None:
             background_tasks.create(
-                _preview(folder, metadata_label, table), name="enpkg-scan-batch"
+                _preview(folder, metadata_label, table, count_label),
+                name="enpkg-scan-batch",
             )
 
-        FolderPicker(
-            "Parent folder",
-            state.get("batch_dir", ""),
-            on_pick=lambda path: (
-                state.set_value("batch_dir", str(path)),
-                refresh(path),
-            ),
-        )
+        def pick(folder: Path) -> None:
+            # Ticks name experiments of one folder, so a different folder starts with
+            # everything ticked. The picker reports the same folder more than once (every
+            # keystroke, and twice after Browse), which must not clear the ticks.
+            if str(folder) != state.get("batch_dir"):
+                state.set_value("selected_experiments", None)
+            state.set_value("batch_dir", str(folder))
+            refresh(folder)
+
+        FolderPicker("Parent folder", state.get("batch_dir", ""), on_pick=pick)
         ui.button("Rescan", icon="refresh", on_click=lambda: refresh(state.batch_path())).props(
             "flat dense no-caps"
         )
         refresh(state.batch_path())
 
 
-async def _preview(folder: Path, metadata_label: ui.label, table: ui.table) -> None:
-    """Show the shared metadata file and the discovered experiments."""
+def _record_selection(table: ui.table) -> None:
+    """Store the ticked run names in table order, or None when every row is ticked."""
+    available = [row["run_name"] for row in table.rows]
+    ticked = {row["run_name"] for row in table.selected}
+    chosen = [name for name in available if name in ticked]
+    state.set_value(
+        "selected_experiments", None if len(chosen) == len(available) else chosen
+    )
+
+
+def _show_count(label: ui.label, table: ui.table) -> None:
+    label.text = (
+        f"{len(table.selected)} of {len(table.rows)} experiments selected"
+        if table.rows
+        else ""
+    )
+
+
+async def _preview(
+    folder: Path, metadata_label: ui.label, table: ui.table, count_label: ui.label
+) -> None:
+    """Show the shared metadata file and the discovered experiments, ticking the stored ones."""
     metadata: Optional[Path] = await run.io_bound(_safe_metadata, folder)
     experiments = await run.io_bound(_safe_discover, folder)
+
+    # Typing a path starts one scan per keystroke, and the scans finish in any order. A
+    # scan of a folder that is no longer the chosen one is dropped, so neither its rows nor
+    # a selection computed from them reach the page or the store.
+    if folder != state.batch_path():
+        return
 
     if metadata is None:
         metadata_label.text = (
@@ -250,7 +293,7 @@ async def _preview(folder: Path, metadata_label: ui.label, table: ui.table) -> N
         metadata_label.text = f"Shared metadata: {metadata.name}"
         metadata_label.classes(replace="text-sm text-grey-7")
 
-    table.rows = [
+    rows = [
         {
             "run_name": exp.run_name,
             "folder": exp.subfolder.name,
@@ -258,7 +301,18 @@ async def _preview(folder: Path, metadata_label: ui.label, table: ui.table) -> N
         }
         for exp in experiments
     ]
+    stored = state.get("selected_experiments")
+    ticked = None if stored is None else set(stored)
+    table.rows = rows
+    table.selected = [row for row in rows if ticked is None or row["run_name"] in ticked]
     table.update()
+
+    # Writing back drops names whose subfolder has gone, so the store holds what the table
+    # shows. A scan that found nothing leaves the store as it is: an unreadable folder also
+    # yields no experiments, and recording that would discard every tick.
+    if rows:
+        _record_selection(table)
+    _show_count(count_label, table)
 
 
 def _safe_metadata(folder: Path) -> Optional[Path]:

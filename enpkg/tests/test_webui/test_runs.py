@@ -183,6 +183,65 @@ async def test_a_run_with_no_artifact_still_settles(tmp_path):
     assert handle.status == "failed"
 
 
+_WRITES_ARTIFACT_AND_FAILS = """
+import json, sys
+json.dump(json.loads(sys.argv[2]), open(sys.argv[1], "w"))
+sys.exit(1)
+"""
+
+_PRINTS_AN_ELLIPSIS = """
+print("Running Molecular networking \\u2026", flush=True)
+"""
+
+
+def _batch_artifact(n_succeeded: int, n_failed: int) -> dict:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "batch",
+        "status": "error" if n_failed else "ok",
+        "error": None,
+        "n_total": n_succeeded + n_failed,
+        "n_succeeded": n_succeeded,
+        "n_failed": n_failed,
+        "experiments": [],
+    }
+
+
+def test_a_finished_batch_reports_its_experiment_counts():
+    """A batch result has no top-level block list, so it cannot say what it executed."""
+    handle = RunHandle(
+        id="x", kind="batch", argv=[], run_dir=Path("."),
+        config_path=Path("c"), result_path=Path("r"),
+        status="done", result=_batch_artifact(n_succeeded=2, n_failed=0),
+    )
+    assert runs.summary_line(handle) == "Finished — 2 of 2 experiments succeeded"
+
+
+async def test_a_batch_with_a_failed_experiment_reports_the_count(tmp_path):
+    """Per-experiment failures leave the batch-level error empty and exit with code 1."""
+    script = _fake_script(tmp_path, _WRITES_ARTIFACT_AND_FAILS)
+    handle = _handle(
+        tmp_path, script, json.dumps(_batch_artifact(n_succeeded=1, n_failed=1))
+    )
+
+    await runs.start(handle)
+    await _wait_until_settled(handle)
+
+    assert handle.status == "failed"
+    assert runs.summary_line(handle) == "Failed — 1 of 2 experiments failed"
+
+
+async def test_non_ascii_output_arrives_intact(tmp_path):
+    """On Windows a piped child encodes its output in cp1252 unless told otherwise."""
+    script = _fake_script(tmp_path, _PRINTS_AN_ELLIPSIS)
+    handle = _handle(tmp_path, script)
+
+    await runs.start(handle)
+    await _wait_until_settled(handle)
+
+    assert list(handle.lines) == ["Running Molecular networking …"]
+
+
 async def test_cancel_stops_the_process(tmp_path):
     script = _fake_script(tmp_path, _RUNS_FOREVER)
     handle = _handle(tmp_path, script)
@@ -226,6 +285,17 @@ def test_build_argv_for_a_batch_passes_the_parent_folder(tmp_path):
     assert argv[3] == "batch"
     assert "--parent-dir" in argv
     assert "--input-dir" not in argv
+    assert "--experiments-file" not in argv
+
+
+def test_build_argv_for_a_batch_passes_the_experiment_list(tmp_path):
+    handle = runs.new_handle("batch", tmp_path / "runs")
+    chosen = handle.run_dir / "experiments.txt"
+    argv = runs.build_argv(
+        handle, parent_dir=tmp_path / "experiments", experiments_file=chosen
+    )
+    flag = argv.index("--experiments-file")
+    assert argv[flag + 1] == str(chosen)
 
 
 def test_each_run_gets_its_own_directory(tmp_path):

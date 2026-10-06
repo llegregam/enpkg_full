@@ -20,6 +20,53 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-05 — Batch status line, and UTF-8 output from GUI runs
+
+- **A finished batch reported "executed nothing".** The GUI's status line read a top-level
+  list of executed blocks, which only single-run result files have; a batch records them
+  per experiment. A finished batch now reports "N of M experiments succeeded". A batch in
+  which experiments failed individually has no batch-level error and exits with code 1, so
+  it showed "Run exited with code 1" and the log tail. It now reports "N of M experiments
+  failed".
+- **Non-ASCII characters in the GUI log panel arrived as `�`.** Measured on Windows: a
+  Python process writing to a pipe encodes in cp1252, and the GUI decodes the run's output
+  as UTF-8. Runs are now started with `PYTHONIOENCODING=utf-8`. This sets only the console
+  encoding; how the pipeline reads and writes files is unchanged, which is why
+  `PYTHONUTF8` was not used.
+- **Not changed: a result file lost when a run outlives its server.** Measured by closing
+  a run's output pipe: the run completes its work, then the first console write raises
+  `OSError: [Errno 22]`. In `enpkg batch` that write precedes writing the result file. It
+  only happens when the server is killed hard; left as is for now.
+
+### 2026-10-05 — Choosing which experiments a batch runs
+
+- **What.** The Imports page's batch table has a tick box per experiment, and only ticked
+  experiments run. Everything is ticked when a folder is loaded. `enpkg batch` gained
+  `--experiments-file`, a text file with one run name per line, and `run_batch` gained
+  `run_names`. Without the option, a batch still runs every experiment found.
+- **Why the command line changed too.** The GUI launches `enpkg batch` as a separate
+  process and does not call `run_batch` itself, so the selection has to reach the command
+  line. The option is equally usable headlessly.
+- **Why a file and not a repeated `--experiment` flag.** Windows caps a command line at
+  32,767 characters. A subset of several hundred experiments named as flags could exceed
+  it. That ceiling is an estimate from typical run-name lengths, not a measurement. The GUI
+  writes the file to `experiments.txt` in the run folder, next to `config.yaml`, so the
+  record of what was run stays with the output.
+- **Why the run name identifies an experiment.** The run name is the spectra file stem. It
+  is what the shared metadata is keyed by and what the batch output folders are named
+  after. Subfolder names were the alternative.
+- **Unknown names fail the batch before any work.** The check sits between discovery and
+  `build_shared_steps`, which builds the database stores. A misspelt name therefore costs
+  seconds, not a partial multi-hour run that silently omits an experiment.
+- **`None` stores "every experiment".** When every row is ticked, the GUI stores `None`,
+  not the list. A subfolder added later is then included, and no file is written in the
+  common case. Choosing a different parent folder resets the selection to `None`.
+- **Fixed a scan race on the Imports page.** Typing a batch path starts one folder scan per
+  keystroke, and the scans finish in any order. A slow scan of an earlier path could
+  overwrite the table after the scan of the final path. That was cosmetic while the table
+  only previewed the folder. Now the selection is written back from the table, so a stale
+  scan is discarded when its folder is no longer the stored one.
+
 ### 2026-10-02 — Vocabulary made publishable: fixes, statuses, and every non-metadata term emitted
 
 - **Datatype ranges.** Measured on the 2026-09-17 export: `enpkg:clusterConnectivity` (653

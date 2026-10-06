@@ -5,12 +5,12 @@ from typing import Dict, Optional
 import numpy as np
 from matchms import Spectrum
 
+from enpkg.monolith.data.canopus_classification import CanopusClassification
 from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import (
     Lotus,
 )
 from enpkg.monolith.data.ms1_data_classes import AdductRecipe, ChemicalAdduct
-from enpkg.monolith.data.canopus_classification import CanopusClassification
 from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 
 

@@ -85,6 +85,7 @@ def build_argv(
     quant: Optional[Path] = None,
     sirius_spectra: Optional[Path] = None,
     parent_dir: Optional[Path] = None,
+    experiments_file: Optional[Path] = None,
     verbose: bool = False,
 ) -> list[str]:
     """Build the command line for a run.
@@ -92,6 +93,9 @@ def build_argv(
     Uses ``sys.executable -m enpkg.cli`` rather than the ``enpkg`` console script, so the
     subprocess runs under the same interpreter and virtual environment as the server with
     no dependency on what is on PATH.
+
+    For a batch, ``experiments_file`` names the file listing the run names to process;
+    ``None`` processes every experiment under ``parent_dir``.
     """
     kind = handle.kind
     argv = [
@@ -119,6 +123,8 @@ def build_argv(
                 argv += [flag, str(value)]
     else:
         argv += ["--parent-dir", str(parent_dir)]
+        if experiments_file is not None:
+            argv += ["--experiments-file", str(experiments_file)]
     if verbose:
         argv.append("--verbose")
     return argv
@@ -150,8 +156,11 @@ async def start(handle: RunHandle) -> None:
         # the order they were written.
         stderr=asyncio.subprocess.STDOUT,
         # Python block-buffers its output when it is a pipe rather than a terminal, so
-        # without this nothing appears until the run finishes.
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        # without PYTHONUNBUFFERED nothing appears until the run finishes. On Windows it
+        # also encodes piped output in the locale's code page (cp1252), while _pump
+        # decodes UTF-8, so PYTHONIOENCODING keeps characters outside ASCII intact — the
+        # "…" the runner logs, and non-ASCII sample names and paths.
+        env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
         cwd=str(Path.cwd()),
     )
     handle.status = "running"
@@ -198,9 +207,16 @@ def _finish(handle: RunHandle) -> None:
 
 
 def _error_from(handle: RunHandle) -> str:
-    """Describe a failure, preferring what the run itself reported."""
-    if handle.result and handle.result.get("error"):
-        return str(handle.result["error"])
+    """Describe a failure, preferring what the run itself reported.
+
+    A batch whose experiments failed individually has no batch-level error, and is
+    described by its counts instead.
+    """
+    result = handle.result or {}
+    if result.get("error"):
+        return str(result["error"])
+    if result.get("kind") == "batch" and result.get("n_failed"):
+        return f"{result['n_failed']} of {result.get('n_total', 0)} experiments failed"
     tail = "\n".join(list(handle.lines)[-5:])
     return f"Run exited with code {handle.returncode}." + (f"\n{tail}" if tail else "")
 
@@ -255,9 +271,19 @@ def write_config(handle: RunHandle, document: dict[str, Any]) -> None:
 
 
 def summary_line(handle: RunHandle) -> str:
-    """Return a one-line description of where a run has got to."""
+    """Return a one-line description of where a run has got to.
+
+    A single run names the blocks it executed. A batch result records executed blocks per
+    experiment only, so a finished batch is described by its experiment counts.
+    """
+    result = handle.result or {}
     if handle.status == "done":
-        executed = (handle.result or {}).get("executed") or []
+        if result.get("kind") == "batch":
+            return (
+                f"Finished — {result.get('n_succeeded', 0)} of "
+                f"{result.get('n_total', 0)} experiments succeeded"
+            )
+        executed = result.get("executed") or []
         return f"Finished — executed {', '.join(executed) or 'nothing'}"
     if handle.status == "failed":
         return f"Failed — {handle.error or 'see the log'}"
