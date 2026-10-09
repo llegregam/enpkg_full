@@ -20,6 +20,14 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-06 — Empty database and model paths fail validation
+
+- **What.** `ms_enhancer.duckdb_path` and `mass2motif.model_dir` must be non-empty strings.
+- **Why.** Both fields were unconstrained strings, so an empty value passed validation: the
+  Pipeline page reported "Configuration is valid", and the run failed only when the block
+  opened the path. Now `enpkg config validate` exits 1 naming the field (checked for each),
+  and the Pipeline page, which validates with the same Pydantic models, reports it too.
+
 ### 2026-10-06 — Mass2Motifs from MS2LDA 2.0
 
 - **What.** A `mass2motif` block and an `enpkg motifs fit` command bring in MS2LDA 2.0

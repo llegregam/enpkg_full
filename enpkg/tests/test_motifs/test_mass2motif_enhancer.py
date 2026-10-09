@@ -101,3 +101,8 @@ def test_a_probability_threshold_below_the_stored_floor_is_rejected(model_folder
 def test_the_model_folder_is_required():
     with pytest.raises(ValidationError):
         Mass2MotifConfig()
+
+
+def test_an_empty_model_folder_is_rejected():
+    with pytest.raises(ValidationError, match="model_dir"):
+        Mass2MotifConfig(model_dir="")

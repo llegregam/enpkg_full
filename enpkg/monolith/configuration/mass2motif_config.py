@@ -8,6 +8,7 @@ class Mass2MotifConfig(EnhancerConfig):
 
     model_dir: str = Field(
         ...,
+        min_length=1,
         description="Model folder written by `enpkg motifs fit`. Its motif memberships "
         "are attached to the features of every experiment the model was fitted on.",
     )

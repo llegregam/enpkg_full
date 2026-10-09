@@ -67,6 +67,11 @@ def test_enhancer_config_forbids_unknown_keys():
         MSEnhancerConfig.from_dict({"nonexistent_key": 1})
 
 
+def test_an_empty_duckdb_path_is_rejected():
+    with pytest.raises(ValidationError, match="duckdb_path"):
+        MSEnhancerConfig(duckdb_path="")
+
+
 def test_from_dict_roundtrip():
     cfg = MSEnhancerConfig.from_dict(
         {
