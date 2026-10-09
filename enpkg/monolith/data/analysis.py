@@ -6,6 +6,7 @@ import networkx as nx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from enpkg.monolith.data.annotated_spectra_class import AnnotatedSpectrum
+from enpkg.monolith.data.mass2motif import Mass2MotifSet
 from enpkg.monolith.data.otl_class import Match
 from enpkg.monolith.data.sample_metadata import SampleMetadata
 from enpkg.monolith.exceptions import EnrichmentError
@@ -31,6 +32,9 @@ class Analysis(BaseModel):
     # (nodes = feature ids). Attached by the MS1 graph enhancer; see
     # enpkg/monolith/utils/ms1_adduct_graph.py.
     ms1_adduct_graph: Optional[nx.DiGraph] = None
+    # Every motif of the MS2LDA model whose memberships the mass2motif enhancer
+    # attached to the spectra (AnnotatedSpectrum.motif_memberships).
+    motif_set: Optional[Mass2MotifSet] = None
 
     # --- Convenience properties ---
 

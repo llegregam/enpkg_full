@@ -20,6 +20,12 @@ from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
+from enpkg.monolith.data.mass2motif import (
+    Mass2Motif,
+    Mass2MotifSet,
+    MotifCandidate,
+    MotifMembership,
+)
 from enpkg.monolith.data.otl_class import Match, Taxon
 from enpkg.monolith.data.sample_metadata import SampleMetadata
 from enpkg.monolith.rdf import AnalysisSerializer
@@ -36,8 +42,9 @@ def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct,
     """An Analysis exercising every enpkg:-emitting branch of the serializer at
     once: an MS1 adduct cluster (anchor + 2 satellites), an MS1 candidate
     coupled to an MS2 match, an MS2 match only the spectral library knows,
-    SIRIUS candidates, an OTT match, and a molecular network with both an edge
-    and a >=2-member component — plus every sample-metadata field with an
+    SIRIUS candidates, an OTT match, a molecular network with both an edge
+    and a >=2-member component, and a Mass2Motif membership whose motif has a
+    fragment, a loss and a MAG candidate — plus every sample-metadata field with an
     enpkg: term and one user-defined column, all of which only ever come from
     user metadata."""
     anchor = make_spectrum(feature_id=1, precursor_mz=201.0)
@@ -115,6 +122,23 @@ def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct,
         nomenclature_code="ICN", score=0.99, search_string="Artemisia annua", taxon=ott_taxon,
     )
 
+    motif_set = Mass2MotifSet(
+        model_id="0123456789abcdef",
+        ionization_mode="pos",
+        software_version="2.0.1",
+        motifs=(
+            Mass2Motif(
+                index=0,
+                fragments=((70.04, 0.2),),
+                losses=((162.05, 0.1),),
+                candidates=(
+                    MotifCandidate(smiles="CC", inchikey="OTMSDBZUPAUEDD-UHFFFAOYSA-N", score=0.8),
+                ),
+            ),
+        ),
+    )
+    sirius_spectrum.motif_memberships = [MotifMembership(motif_index=0, probability=0.4, overlap=0.6)]
+
     network = nx.Graph()
     network.add_nodes_from([1, 2, 3, 4])
     network.add_edge(1, 2, weight=0.9)
@@ -137,6 +161,7 @@ def _build_maximal_analysis(make_spectrum, make_lotus, make_recipe, make_adduct,
         ionization_mode="pos",
         ott_matches=[ott_match],
         molecular_network=network,
+        motif_set=motif_set,
     )
 
 

@@ -12,6 +12,7 @@ from ..data.chemical_annotation import (
     MS2ChemicalAnnotation,
 )
 from ..data.lotus_class import Lotus
+from ..data.mass2motif import Mass2MotifSet
 from ..data.molecular_formula import MolecularFormula
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.otl_class import Match
@@ -199,6 +200,25 @@ class AnalysisURIs:
         """
         return EMI_RES[f"canopus/{analysis.run_name}/{spectrum.feature_id}"]
 
+    # MASS2MOTIF ANNOTATION URIs
+    @staticmethod
+    def motif_annotation_uri(
+        analysis: Analysis,
+        spectrum: AnnotatedSpectrum,
+        motif_set: Mass2MotifSet,
+        motif_index: int,
+    ) -> URIRef:
+        """Mint the URI for one feature's membership in one Mass2Motif.
+
+        Run-scoped and per-spectrum, keyed on the model and the motif: the same feature
+        in two models gets two nodes. The values it carries come from the model folder,
+        so one model and one feature always give the same node and the same values.
+        """
+        return EMI_RES[
+            f"mass2motifannotation/{analysis.run_name}/{spectrum.feature_id}/"
+            f"{motif_set.model_id}/{motif_index}"
+        ]
+
     @staticmethod
     def source_organism_uri(analysis: Analysis) -> Optional[URIRef]:
         """Mint the URI for the sample's source organism.
@@ -227,6 +247,34 @@ class AnalysisURIs:
         resolved taxon, so re-resolving the same taxon within a run is one node.
         """
         return EMI_RES[f"ottmatch/{analysis.run_name}/{match.open_tree_taxon_id}"]
+
+
+class MotifURIs:
+    """Stable URIs for Mass2Motif models and their motifs (globally shared).
+
+    Keyed on ``Mass2MotifSet.model_id``, a hash of the model's motifs, so every graph
+    built from the same model folder reaches the same motif nodes, and motifs of two
+    different models never share a node.
+    """
+
+    @staticmethod
+    def model_uri(motif_set: Mass2MotifSet) -> URIRef:
+        """Mint the URI for the model fit that generated a motif set."""
+        return EMI_RES[f"mass2motifmodel/{motif_set.model_id}"]
+
+    @staticmethod
+    def motif_uri(motif_set: Mass2MotifSet, motif_index: int) -> URIRef:
+        """Mint the URI for one motif of a model."""
+        return EMI_RES[f"mass2motif/{motif_set.model_id}/{motif_index}"]
+
+    @staticmethod
+    def motif_bin_uri(motif_uri: URIRef, kind: str, mz: float) -> URIRef:
+        """Mint the URI for one fragment or loss bin of a motif.
+
+        ``kind`` is ``"fragment"`` or ``"loss"``; the bin is named by the shortest
+        repr of its rounded m/z (``70.04``), so the same bin always gives one node.
+        """
+        return URIRef(f"{motif_uri}/{kind}/{_segment(repr(float(mz)))}")
 
 
 def _short_hash(text: str) -> str:

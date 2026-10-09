@@ -15,10 +15,11 @@ from enpkg.monolith.pipeline import config_io
 from enpkg.monolith.pipeline.blocks import BLOCKS_BY_ID
 from enpkg.monolith.pipeline.config_io import SELECTION_KEY
 
-# MSEnhancerConfig requires a database path, so the MS blocks cannot be built
-# from an empty form. Every other block's section stays empty.
+# MSEnhancerConfig requires a database path and Mass2MotifConfig a model folder, so
+# those blocks cannot be built from an empty form. Every other block's section stays empty.
 _MINIMAL_FORM_STATE = {"ms1": {"duckdb_path": "enpkg.duckdb"},
-                       "ms2": {"duckdb_path": "enpkg.duckdb"}}
+                       "ms2": {"duckdb_path": "enpkg.duckdb"},
+                       "mass2motif": {"model_dir": "motifs/model"}}
 
 
 def _configs(selected_ids):

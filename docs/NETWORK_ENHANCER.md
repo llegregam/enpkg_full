@@ -8,6 +8,8 @@
 > **map of which features resemble which**, so that later stages can reason about a feature
 > in the company of its structural relatives. It is the substrate the
 > [Weights enhancer](WEIGHTS_ENHANCER.md) propagates over.
+> [MASS2MOTIF_ENHANCER.md](MASS2MOTIF_ENHANCER.md) relates features through their MS2
+> spectra too, by the fragment and loss motifs they share rather than by pairwise similarity.
 
 ---
 

@@ -23,7 +23,8 @@ scripts. The current design:
 - **Enhancers** ([`enhancers/`](enpkg/monolith/enhancers/)) — composable steps
   that each implement one uniform contract, `enhance(analysis) -> Analysis`:
   MS1 adducting, MS2 (ISDB) cosine matching, molecular networking, taxonomy
-  resolution, SIRIUS, and taxonomy/network-aware reweighting (label propagation).
+  resolution, SIRIUS, taxonomy/network-aware reweighting (label propagation), and
+  MS2LDA 2.0 Mass2Motifs.
 - **Registry + runner** ([`pipeline/blocks.py`](enpkg/monolith/pipeline/blocks.py),
   [`pipeline/runner.py`](enpkg/monolith/pipeline/runner.py)) — a single `BLOCKS` registry
   is the source of truth for which blocks exist, how to build each enhancer, and
@@ -49,6 +50,8 @@ enpkg batch discover --parent-dir data/ # preview what a batch would pick up
 enpkg batch --config config.yaml --parent-dir data/ --experiments-file chosen.txt
                                         # only the run names listed, one per line
 enpkg serialize run/analysis.pkl -o rdf_out/          # re-export without re-running
+enpkg motifs fit data/ --out motifs/model --n-motifs 200 --n-iterations 1000 --ionization-mode pos
+                                        # fit the MS2LDA model the mass2motif block reads
 ```
 
 `--output-dir` puts every log, Turtle export and pickle from a run under one directory;
@@ -172,6 +175,44 @@ bash src/install_sirius.sh /home/username/sirius
 
 Once Sirius is installed, you will need to precise the path to the executable see section [Editing config files](#-editing-config-files).
 
+
+## 🧩 Set up MS2LDA for Mass2Motifs
+
+The `mass2motif` block attaches MS2LDA 2.0 Mass2Motifs to features. MS2LDA needs Python
+< 3.13 and older pandas and matchms than this project, so it runs in its own environment,
+which `enpkg motifs fit` starts as a separate process. See
+[docs/MASS2MOTIF_ENHANCER.md](docs/MASS2MOTIF_ENHANCER.md) for what it computes.
+
+```bash
+conda create -n ms2lda python=3.12
+conda activate ms2lda
+pip install ms2lda==2.0.1 "matchms>=0.27,<0.30" "numpy==1.26.4"
+ms2lda --only-download     # Spec2Vec model and library for MAG: 2 GB download, 6.1 GB on disk
+```
+
+The matchms and numpy pins are those of MS2LDA's own repository; without them pip installs
+a matchms whose removal of `matchms.Spikes` makes `import MS2LDA` fail. Skip
+`--only-download` if you fit with `--no-mag`.
+
+Then point `enpkg` at that environment's interpreter, fit a model on a batch folder, and
+give the block the model folder:
+
+```bash
+export MS2LDA_PYTHON=/path/to/envs/ms2lda/bin/python   # Windows: ...\envs\ms2lda\python.exe
+enpkg motifs fit data/ --out motifs/model --n-motifs 200 --n-iterations 1000 --ionization-mode pos
+```
+
+```yaml
+mass2motif:
+  model_dir: motifs/model
+  min_probability: 0.1     # minimum share of a feature's spectrum the motif explains
+```
+
+Memberships exist for the experiments the model was fitted on; refit to include new ones.
+`--viz` also writes MS2LDA's figures, motif network and the file MS2LDAViz opens. For scale:
+43 experiments (about 100,000 spectra) at 200 motifs took 94 min and 16 GB of memory on a
+workstation with those files, 62 min of it writing them.
+`--ms2lda-config` takes MS2LDA's own parameter JSON (the format of its `example_config.json`).
 
 ## 🔐 Setting Up Environment Variables
 

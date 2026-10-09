@@ -8,6 +8,8 @@
 > a structure *from first principles* — it computes the molecular formula and searches
 > structure databases using a fragmentation model, rather than looking the spectrum up
 > in a library of pre-measured (or pre-predicted) spectra.
+> [MASS2MOTIF_ENHANCER.md](MASS2MOTIF_ENHANCER.md) is the other stage that runs an external
+> program (MS2LDA 2.0, in its own Python environment).
 
 ---
 
