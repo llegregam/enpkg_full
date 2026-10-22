@@ -13,6 +13,7 @@ from enpkg.cli.blocks_cmd import blocks_app
 from enpkg.cli.config_cmd import config_app
 from enpkg.cli.db_cmd import db_app
 from enpkg.cli.gui_cmd import gui
+from enpkg.cli.motifs_cmd import motifs_app
 from enpkg.cli.run import batch_app, run
 from enpkg.cli.serialize_cmd import serialize
 
@@ -32,6 +33,7 @@ app.add_typer(batch_app, name="batch")
 app.add_typer(config_app, name="config")
 app.add_typer(db_app, name="db")
 app.add_typer(blocks_app, name="blocks")
+app.add_typer(motifs_app, name="motifs")
 
 
 def _version_callback(value: bool) -> None:

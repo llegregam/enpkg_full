@@ -69,6 +69,7 @@ class MSEnhancerConfig(EnhancerConfig, BaseModel):
     )
 
     duckdb_path: str = Field(
+        min_length=1,
         description="Path to the pre-built DuckDB database holding the LOTUS tables "
         "and the registered spectral libraries. Build it with the `import_lotus` and "
         "`import_spectral_library` scripts; the pipeline only ever reads it."

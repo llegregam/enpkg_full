@@ -54,6 +54,11 @@ flowchart TD
     LF["LFpair<br/>emi:hasCosine · emi:hasMassDifference"]
     FBMN["FBMNComponent  — gated: include_fbmn_components (on)<br/>enpkg:componentSize"]:::cluster
 
+    M2A["Mass2MotifAnnotation<br/>enpkg:motifMembershipProbability (θ) · enpkg:motifOverlapScore"]:::motif
+    M2M["Mass2Motif<br/>dcterms:identifier 'motif_k'"]:::motif
+    M2B["Mass2MotifBin<br/>enpkg:motifFragmentMz or motifLossMass · enpkg:motifBinProbability (β)"]:::motif
+    M2G["ComputationalAnalysis  (the MS2LDA model fit)<br/>dcterms:identifier = model id"]:::motif
+
     %% ---- spine ----
     SA -->|"enpkg:hasLabProcess"| A
     SA -->|"enpkg:hasSampleMetadata"| SM
@@ -69,6 +74,13 @@ flowchart TD
     F -->|"emi:hasAnnotation"| CAN
     CAN -->|"emi:hasPathway / hasSuperClass / hasClass"| NPC
     F -->|"enpkg:hasIon (gated)"| ION
+    F -->|"emi:hasAnnotation"| M2A
+
+    %% ---- Mass2Motifs (MS2LDA) ----
+    M2A -->|"enpkg:hasMass2Motif"| M2M
+    M2M -->|"prov:wasGeneratedBy"| M2G
+    M2M -->|"enpkg:hasMotifFragment / hasMotifLoss"| M2B
+    M2M -->|"enpkg:hasMotifCandidate (MAG)"| CMP
 
     %% ---- MS1 adduct internals ----
     MS1 -->|"enpkg:hasRecipe"| RC
@@ -119,6 +131,7 @@ flowchart TD
     classDef gated  fill:#1f2937,stroke:#9ca3af,color:#e5e7eb,stroke-width:1px;
     classDef ext    fill:#3730a3,stroke:#a5b4fc,color:#ffffff,stroke-width:1px;
     classDef cluster fill:#4c1d95,stroke:#c4b5fd,color:#ffffff,stroke-width:2px;
+    classDef motif  fill:#7f1d1d,stroke:#fca5a5,color:#ffffff,stroke-width:2px;
 ```
 
 ## Legend & key points
@@ -189,6 +202,20 @@ flowchart TD
   `StructuralAnnotation`, so the class prediction cannot share a node with a structure candidate.
   The predicted `npc:` terms are inlined with their `rdfs:label` and `skos:broader` ancestry, so
   roll-up queries work without fetching EMI.
+- **Mass2Motifs — `enpkg:Mass2MotifAnnotation`** (red): one node per motif a feature's spectrum
+  contains, read from a model folder written by `enpkg motifs fit` (MS2LDA 2.0; see
+  [MASS2MOTIF_ENHANCER.md](MASS2MOTIF_ENHANCER.md)). Attached with `emi:hasAnnotation`; it is an
+  `emi:SpectrumAnnotation` but not a `StructuralAnnotation`, since it names no structure. It carries
+  the document-topic probability θ (`enpkg:motifMembershipProbability`) and the overlap score, and links with
+  `enpkg:hasMass2Motif` to the motif. The `Mass2Motif` node (`emi-res:mass2motif/{model id}/{k}`)
+  is keyed on the model, not the run, so every graph built from the same model shares it; it carries
+  its most probable fragment and loss bins (`enpkg:Mass2MotifBin` nodes `{motif}/fragment/{m/z}`,
+  `{motif}/loss/{m/z}`, each with its m/z and β as `enpkg:motifBinProbability`; both probability
+  properties are `rdfs:subPropertyOf emi:hasProbability`), links with `prov:wasGeneratedBy` to an
+  `emi:ComputationalAnalysis` node for the model fit, and with `enpkg:hasMotifCandidate` to the
+  molecules MS2LDA's Motif Annotation Guidance proposed — the same `identifiers.org/inchikey/…`
+  structure nodes LOTUS compounds and library matches use, and not an identification. Only motifs
+  the analysis references are emitted.
 - **Molecular formula:** every `ChemicalStructure` and every MS1 `AdductAnnotation` links with
   `enpkg:hasMolecularFormula` to one shared `MolecularFormula` node per composition and charge,
   keyed `emi-res:formula/<Hill form>` (`formula/C15H20O6`, `formula/C11H12NO+`). The node carries

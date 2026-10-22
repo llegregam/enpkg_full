@@ -14,9 +14,10 @@ from enpkg.monolith.pipeline.config_io import SHARED_FIELD, inject_shared_params
 
 _SHARED = {"recompute": True, "ionization_mode": "neg"}
 
-# MSEnhancerConfig requires a database path; every other block validates from an empty
-# section once the shared params are injected.
-_MINIMAL = {"ms1": {"duckdb_path": "enpkg.duckdb"}, "ms2": {"duckdb_path": "enpkg.duckdb"}}
+# MSEnhancerConfig requires a database path and Mass2MotifConfig a model folder; every
+# other block validates from an empty section once the shared params are injected.
+_MINIMAL = {"ms1": {"duckdb_path": "enpkg.duckdb"}, "ms2": {"duckdb_path": "enpkg.duckdb"},
+            "mass2motif": {"model_dir": "motifs/model"}}
 
 _BLOCKS_WITH_SHARED = [
     b.id for b in BLOCKS

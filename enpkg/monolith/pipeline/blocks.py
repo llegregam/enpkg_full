@@ -46,6 +46,7 @@ from typing import Any, Callable, Optional, Type
 import networkx as nx
 from pydantic import BaseModel
 
+from enpkg.monolith.configuration.mass2motif_config import Mass2MotifConfig
 from enpkg.monolith.configuration.ms1_graph_enhancer_config import MS1GraphEnhancerConfig
 from enpkg.monolith.configuration.MSEnhancer_config import MSEnhancerConfig
 from enpkg.monolith.configuration.network_enhancer_config import NetworkEnhancerConfig
@@ -53,6 +54,7 @@ from enpkg.monolith.configuration.reweighting_config import ReweightingConfig
 from enpkg.monolith.configuration.sirius_enhancer_config import SiriusEnhancerConfig
 from enpkg.monolith.data.analysis import Analysis
 from enpkg.monolith.enhancers.enhancer import Enhancer
+from enpkg.monolith.enhancers.mass2motif_enhancer import Mass2MotifEnhancer
 from enpkg.monolith.enhancers.ms1_enhancer import MS1Enhancer
 from enpkg.monolith.enhancers.ms1_graph_enhancer import MS1GraphEnhancer
 from enpkg.monolith.enhancers.ms2_enhancer import Ms2Enhancer
@@ -242,6 +244,10 @@ def _build_sirius(config: Any, ctx: BuildContext) -> Enhancer:
 
 def _build_weights(config: Any, ctx: BuildContext) -> Enhancer:
     return WeightsEnhancer(config, ctx.logger, ctx.lotus_store)
+
+
+def _build_mass2motif(config: Any, ctx: BuildContext) -> Enhancer:
+    return Mass2MotifEnhancer(config, ctx.logger)
 
 
 def _has_spectra(analysis: Analysis) -> bool:
@@ -506,6 +512,35 @@ def _log_weights(logger: logging.Logger, analysis: Analysis) -> None:
         logger.info("      (no MS2 candidates could be reranked)")
 
 
+# Number of motifs listed by feature count in the mass2motif log summary.
+_MASS2MOTIF_TOP_MOTIFS = 5
+
+
+def _log_mass2motif(logger: logging.Logger, analysis: Analysis) -> None:
+    """Summarise the Mass2Motif memberships attached from a model folder.
+
+    Reads ``analysis.motif_set`` and ``AnnotatedSpectrum.motif_memberships``. Logs the
+    model, how many of its motifs carry MAG candidates, how many features received a
+    membership, and the motifs found in most features.
+    """
+    motif_set = analysis.motif_set
+    if motif_set is None:
+        logger.info("    (no Mass2Motif model attached)")
+        return
+    with_candidates = sum(1 for motif in motif_set.motifs if motif.candidates)
+    logger.info("    Model                          : %s (MS2LDA %s)",
+                motif_set.model_id, motif_set.software_version)
+    logger.info("    Motifs (with MAG candidates)   : %d (%d)", len(motif_set.motifs), with_candidates)
+    spectra = analysis.spectra
+    covered = [s for s in spectra if s.motif_memberships]
+    logger.info("    Features with >= 1 motif       : %d / %d", len(covered), len(spectra))
+    logger.info("    Memberships                    : %d",
+                sum(len(s.motif_memberships) for s in spectra))
+    counts = Counter(m.motif_index for s in covered for m in s.motif_memberships)
+    for index, count in counts.most_common(_MASS2MOTIF_TOP_MOTIFS):
+        logger.info("        motif_%-22d: %d features", index, count)
+
+
 # ---------------------------------------------------------------------------
 # Block registry
 #
@@ -593,6 +628,16 @@ _BUILTIN_BLOCKS: list[BlockSpec] = [
         # annotations, so all three have to have produced their output first.
         after=("network", "ms1", "ms2"),
         requires=frozenset({"lotus_store"}),
+    ),
+    BlockSpec(
+        id="mass2motif",
+        label="Mass2Motifs (MS2LDA)",
+        build_enhancer=_build_mass2motif,
+        can_run=_has_spectra,
+        config_cls=Mass2MotifConfig,
+        log_summary=_log_mass2motif,
+        description="Attaches the Mass2Motif memberships of a model fitted with "
+        "`enpkg motifs fit` (MS2LDA 2.0) to the features of the experiments it was fitted on.",
     ),
 ]
 

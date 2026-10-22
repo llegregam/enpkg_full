@@ -34,6 +34,7 @@ from ..data.analysis import Analysis
 from ..data.annotated_spectra_class import AnnotatedSpectrum
 from ..data.chemical_annotation import LibraryStructure, MS2ChemicalAnnotation
 from ..data.lotus_class import Lotus
+from ..data.mass2motif import Mass2MotifSet
 from ..data.molecular_formula import MolecularFormula, parse_molecular_formula
 from ..data.ms1_data_classes.adduct_class import AdductRecipe, ChemicalAdduct
 from ..data.sample_metadata import SampleMetadata
@@ -65,7 +66,14 @@ from .namespaces import (
     XSD,
 )
 from .npc_vocabulary import npc_vocabulary
-from .uris import AnalysisURIs, CompoundURIs, MetadataURIs, OrganismURIs, _organism_uri
+from .uris import (
+    AnalysisURIs,
+    CompoundURIs,
+    MetadataURIs,
+    MotifURIs,
+    OrganismURIs,
+    _organism_uri,
+)
 
 # Prefixes bound on the output graph (cosmetic — controls Turtle prefix display).
 _PREFIXES = {
@@ -387,6 +395,7 @@ class AnalysisSerializer:
         self._emit_ms1_annotations(analysis, spectrum, uri, ms2_emitted)
         self._add_sirius_annotations(analysis, spectrum, uri)
         self._add_canopus_classification(analysis, spectrum, uri)
+        self._add_motif_annotations(analysis, spectrum, uri)
         if self.include_ions:
             self._add_ions(uri, spectrum)
         return uri
@@ -946,6 +955,86 @@ class AnalysisSerializer:
         self._emitted.add(term)
         for triple in npc_vocabulary().describe(term):
             self.graph.add(triple)
+
+    # --------------------------------------------------------- Mass2Motif layer
+    def _add_motif_annotations(
+        self, analysis: Analysis, spectrum: AnnotatedSpectrum, spectrum_uri: URIRef
+    ) -> None:
+        """Emit one enpkg:Mass2MotifAnnotation per motif membership of the feature.
+
+        Each node carries the membership's document-topic probability
+        (enpkg:motifMembershipProbability) and overlap score, and links to its motif
+        with enpkg:hasMass2Motif. Attached with emi:hasAnnotation, like the other annotation
+        channels. A no-op when the analysis has no motif set or the feature no
+        membership.
+        """
+        motif_set = analysis.motif_set
+        if motif_set is None or not spectrum.motif_memberships:
+            return
+        g = self.graph
+        for membership in spectrum.motif_memberships:
+            uri = AnalysisURIs.motif_annotation_uri(
+                analysis, spectrum, motif_set, membership.motif_index
+            )
+            if uri in self._emitted:
+                continue
+            self._emitted.add(uri)
+            g.add((uri, RDF.type, ENPKG.Mass2MotifAnnotation))
+            self._set(uri, ENPKG.motifMembershipProbability, float(membership.probability))
+            self._set(uri, ENPKG.motifOverlapScore, float(membership.overlap))
+            g.add((uri, ENPKG.hasMass2Motif, self._add_motif(motif_set, membership.motif_index)))
+            g.add((spectrum_uri, EMI.hasAnnotation, uri))
+
+    def _add_motif(self, motif_set: Mass2MotifSet, motif_index: int) -> URIRef:
+        """Emit (once) a motif, its fragment and loss bins, and its MAG candidates.
+
+        Each enpkg:Mass2MotifBin node carries its m/z and its probability under the
+        motif (beta, as enpkg:motifBinProbability). Candidates become the same
+        InChIKey-keyed structure nodes library matches use; a candidate whose SMILES
+        RDKit could not parse has no InChIKey and is not emitted.
+        """
+        uri = MotifURIs.motif_uri(motif_set, motif_index)
+        if uri in self._emitted:
+            return uri
+        self._emitted.add(uri)
+        motif = motif_set.motifs[motif_index]
+        g = self.graph
+        g.add((uri, RDF.type, ENPKG.Mass2Motif))
+        self._set(uri, DCTERMS.identifier, motif.name)
+        g.add((uri, PROV.wasGeneratedBy, self._add_motif_model(motif_set)))
+        layers = (
+            ("fragment", motif.fragments, ENPKG.hasMotifFragment, ENPKG.motifFragmentMz),
+            ("loss", motif.losses, ENPKG.hasMotifLoss, ENPKG.motifLossMass),
+        )
+        for kind, bins, link, value in layers:
+            for mz, beta in bins:
+                node = MotifURIs.motif_bin_uri(uri, kind, mz)
+                g.add((uri, link, node))
+                g.add((node, RDF.type, ENPKG.Mass2MotifBin))
+                self._set(node, value, float(mz))
+                self._set(node, ENPKG.motifBinProbability, float(beta))
+        for candidate in motif.candidates:
+            if candidate.inchikey is None:
+                continue
+            structure = LibraryStructure(
+                inchikey=candidate.inchikey, inchi=None, smiles=candidate.smiles,
+                molecular_formula=None, compound_name=None, npc_pathway=None,
+                npc_superclass=None, npc_class=None, classyfire_superclass=None,
+                classyfire_class=None, classyfire_subclass=None,
+            )
+            g.add((uri, ENPKG.hasMotifCandidate, self._add_library_structure(structure)))
+        return uri
+
+    def _add_motif_model(self, motif_set: Mass2MotifSet) -> URIRef:
+        """Emit (once) the emi:ComputationalAnalysis node of the model fit."""
+        uri = MotifURIs.model_uri(motif_set)
+        if uri in self._emitted:
+            return uri
+        self._emitted.add(uri)
+        self.graph.add((uri, RDF.type, EMI.ComputationalAnalysis))
+        self._set(uri, DCTERMS.identifier, motif_set.model_id)
+        self._set(uri, RDFS.label, f"MS2LDA {motif_set.software_version} model {motif_set.model_id}")
+        return uri
 
     # ------------------------------------------------ match/network/ions (Ph 3)
     def _add_match(self, analysis: Analysis, match) -> URIRef:

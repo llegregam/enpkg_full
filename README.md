@@ -23,7 +23,8 @@ scripts. The current design:
 - **Enhancers** ([`enhancers/`](enpkg/monolith/enhancers/)) — composable steps
   that each implement one uniform contract, `enhance(analysis) -> Analysis`:
   MS1 adducting, MS2 (ISDB) cosine matching, molecular networking, taxonomy
-  resolution, SIRIUS, and taxonomy/network-aware reweighting (label propagation).
+  resolution, SIRIUS, taxonomy/network-aware reweighting (label propagation), and
+  MS2LDA 2.0 Mass2Motifs.
 - **Registry + runner** ([`pipeline/blocks.py`](enpkg/monolith/pipeline/blocks.py),
   [`pipeline/runner.py`](enpkg/monolith/pipeline/runner.py)) — a single `BLOCKS` registry
   is the source of truth for which blocks exist, how to build each enhancer, and
@@ -49,6 +50,8 @@ enpkg batch discover --parent-dir data/ # preview what a batch would pick up
 enpkg batch --config config.yaml --parent-dir data/ --experiments-file chosen.txt
                                         # only the run names listed, one per line
 enpkg serialize run/analysis.pkl -o rdf_out/          # re-export without re-running
+enpkg motifs fit data/ --out motifs/model --n-motifs 200 --n-iterations 1000 --ionization-mode pos
+                                        # fit the MS2LDA model the mass2motif block reads
 ```
 
 `--output-dir` puts every log, Turtle export and pickle from a run under one directory;
@@ -172,6 +175,134 @@ bash src/install_sirius.sh /home/username/sirius
 
 Once Sirius is installed, you will need to precise the path to the executable see section [Editing config files](#-editing-config-files).
 
+
+## 🧩 Mass2Motifs (MS2LDA)
+
+The `mass2motif` block attaches MS2LDA 2.0 Mass2Motifs to features. MS2LDA needs Python
+< 3.13 and older pandas and matchms than this project, so it runs in its own environment,
+which `enpkg motifs fit` starts as a separate process. See
+[docs/MASS2MOTIF_ENHANCER.md](docs/MASS2MOTIF_ENHANCER.md) for what it computes.
+
+### Set up the MS2LDA environment (once)
+
+```bash
+conda create -n ms2lda python=3.12
+conda activate ms2lda
+pip install ms2lda==2.0.1 "matchms>=0.27,<0.30" "numpy==1.26.4"
+ms2lda --only-download     # Spec2Vec model and library for MAG: 2 GB download, 6.1 GB on disk
+```
+
+The matchms and numpy pins are those of MS2LDA's own repository; without them pip installs
+a matchms whose removal of `matchms.Spikes` makes `import MS2LDA` fail. Skip
+`--only-download` if you fit with `--no-mag`.
+
+Then tell `enpkg` where that environment's interpreter is, either with `--ms2lda-python`
+on each fit or once with an environment variable:
+
+```bash
+export MS2LDA_PYTHON=/path/to/envs/ms2lda/bin/python   # Windows: ...\envs\ms2lda\python.exe
+```
+
+### Prepare a model
+
+The block does not run MS2LDA. It reads a **model folder** that `enpkg motifs fit` writes
+beforehand. MS2LDA learns its motifs from all experiments at once, while the pipeline
+processes one experiment at a time, so the fit is a separate step. A model folder holds the
+motifs and, for every spectrum the model was trained on, the motifs it contains. Prepare one
+per batch of experiments, before running the pipeline on that batch.
+
+**1. Lay out the batch folder** as for `enpkg batch`: one subfolder per experiment, each
+holding one spectra file and one `*_quant.csv`, and the shared metadata file at the top.
+MS2LDA reads `.mgf` and `.mzML` spectra files, not `.mzXML`. The run name of an experiment is
+its spectra file name without the extension. Check what will be found with:
+
+```bash
+enpkg batch discover --parent-dir data/
+```
+
+This prints each experiment's run name in the first column, e.g. `arnica_5_pos_merged`.
+
+**2. Decide which experiments go into the model.** Every experiment of the folder is used,
+except:
+
+- runs whose metadata `sample_type` is anything other than `sample`, such as blanks and QCs;
+- runs the metadata does not list in its `sample_filename_pos` (or `_neg`) column; a warning
+  names each one.
+
+To fit on a subset, list run names, one per line, in a file passed with `--experiments-file`
+— the run names `enpkg batch discover` printed, not the subfolder paths. An unknown name
+fails the fit before anything is loaded, naming each one it couldn't match.
+A model covers one ionization mode: fit positive and negative experiments separately. Only
+the experiments in the fit receive motifs when the pipeline runs, so include every
+experiment you will want annotated.
+
+**3. Choose the parameters.**
+
+| Flag | Meaning |
+|---|---|
+| `--out` | The model folder to create. It must not exist yet or be empty. |
+| `--n-motifs` | Number of motifs (K). There is no rule for choosing it, and the motifs change with it. Our test fits used 20 for 2 experiments (2,260 spectra) and 200 for 43 experiments (about 100,000 spectra). |
+| `--n-iterations` | Maximum number of training iterations. Training stops earlier when MS2LDA's convergence check is met. With a limit of 1,000, our 2-experiment fit stopped after 900; the 43-experiment fit used all 1,000. |
+| `--ionization-mode` | `pos` or `neg`, matching the experiments. |
+| `--no-mag` | Skip Motif Annotation Guidance, which proposes library molecules containing each motif's substructure. MAG exists for positive mode only, so negative-mode fits always run without it. |
+| `--viz` | Also write MS2LDA's own figures, motif network and the file its viewer MS2LDAViz opens. These are not used by the pipeline and take most of the time on large fits. |
+| `--ms2lda-config` | A JSON file of MS2LDA's own parameters, in the format of its `example_config.json`, merged over MS2LDA's defaults. |
+
+For example, this `--ms2lda-config` file keeps spectra with at least 3 peaks (MS2LDA's
+default is 5) and drops fragment and loss bins found in fewer than 5 spectra (default 3):
+
+```json
+{
+  "preprocessing_parameters": {"min_frags": 3},
+  "model_parameters": {"min_df": 5}
+}
+```
+
+**4. Run the fit.** A trial on two or three experiments with few motifs checks the setup
+first; on two experiments with 20 motifs the whole fit took under a minute.
+
+```bash
+enpkg motifs fit data/ --out motifs/trial --n-motifs 20 --n-iterations 1000 \
+    --ionization-mode pos --experiments-file trial.txt
+enpkg motifs fit data/ --out motifs/model --n-motifs 200 --n-iterations 1000 --ionization-mode pos
+```
+
+For scale: 43 experiments (about 100,000 spectra) with 200 motifs and `--viz` took 94 min and
+16 GB of memory on a workstation, 62 min of it writing the `--viz` files. A fit of that size
+without `--viz` has not been timed.
+
+**5. Check the model.** The command ends by printing the model's id:
+`Model 8a49c0a4463eea65 written to motifs/model`. If the fit fails, `fit.log` in the model
+folder says why. `manifest.json` records what went in:
+
+- `corpus.n_spectra_loaded` and `corpus.n_documents`: spectra read, and spectra kept after
+  MS2LDA's cleaning, which drops for example spectra with fewer than 5 peaks;
+- `corpus.n_documents_without_feature_id`: spectra without a `FEATURE_ID`. They shape the
+  motifs but cannot be attached to a feature, so this should be 0;
+- `convergence.iterations_run`: if it equals `--n-iterations`, training probably stopped at
+  the limit before MS2LDA's convergence check was met; fit again with more iterations.
+
+**6. Use it in the pipeline.** Give the block the model folder, in the configuration file or
+in the Mass2Motifs settings on the Pipeline page:
+
+```yaml
+mass2motif:
+  model_dir: motifs/model
+  min_probability: 0.1     # minimum share of a feature's spectrum the motif explains
+  min_overlap: 0.0         # minimum share of the motif found in the feature's spectrum
+```
+
+Then run the pipeline on the same batch folder, with the same ionization mode. Each
+experiment's `summary.log` reports how many of its features received a motif. The block
+leaves an experiment without motifs, with a warning, when the experiment was not in the fit
+or when the model's ionization mode differs from the run's. It stops with an error when a
+feature's precursor m/z differs from the one recorded in the fit, which happens when the
+spectra file was re-exported after fitting.
+
+**7. Fit again** after adding experiments or changing spectra files, into a new folder. A
+fit that produces different motifs gets a new model id, and the knowledge graph names motifs
+by model id and motif number. Motifs from two models are therefore different nodes, even
+when they look alike.
 
 ## 🔐 Setting Up Environment Variables
 

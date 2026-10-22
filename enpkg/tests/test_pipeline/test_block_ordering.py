@@ -24,6 +24,7 @@ CANONICAL_ORDER = [
     "ms2",
     "sirius",
     "weights",
+    "mass2motif",
 ]
 
 

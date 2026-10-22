@@ -10,6 +10,7 @@ from enpkg.monolith.data.chemical_annotation import MS2ChemicalAnnotation
 from enpkg.monolith.data.lotus_class import (
     Lotus,
 )
+from enpkg.monolith.data.mass2motif import MotifMembership
 from enpkg.monolith.data.ms1_data_classes import AdductRecipe, ChemicalAdduct
 from enpkg.monolith.data.sirius_annotation import SiriusChemicalAnnotation
 
@@ -60,6 +61,8 @@ class AnnotatedSpectrum(Spectrum):
         self._ms1_cluster_connectivity: Optional[int] = None
         self._ms1_cluster_intensity_coverage: Optional[float] = None
         self._ms1_cluster_count_coverage: Optional[float] = None
+        # Mass2Motif memberships (set by the mass2motif enhancer), highest probability first.
+        self._motif_memberships: list[MotifMembership] = []
 
     # SPECTRUM PROPERTIES
     @property
@@ -263,6 +266,16 @@ class AnnotatedSpectrum(Spectrum):
         what SIRIUS could assign a molecular formula to.
         """
         return self._canopus_classification is not None
+
+    # MASS2MOTIF MEMBERSHIPS
+    @property
+    def motif_memberships(self) -> list[MotifMembership]:
+        """Mass2Motifs this feature's spectrum contains, highest probability first."""
+        return self._motif_memberships
+
+    @motif_memberships.setter
+    def motif_memberships(self, memberships: list[MotifMembership]):
+        self._motif_memberships = memberships
 
     def get_top_k_lotus_annotation(self, k: int = 1) -> Optional[list[Lotus]]:
         """Returns the top k best LOTUS annotations from the MS1 adduct annotations.

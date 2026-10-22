@@ -20,6 +20,107 @@ to version numbers.
 
 ## Entries
 
+### 2026-10-06 — Empty database and model paths fail validation
+
+- **What.** `ms_enhancer.duckdb_path` and `mass2motif.model_dir` must be non-empty strings.
+- **Why.** Both fields were unconstrained strings, so an empty value passed validation: the
+  Pipeline page reported "Configuration is valid", and the run failed only when the block
+  opened the path. Now `enpkg config validate` exits 1 naming the field (checked for each),
+  and the Pipeline page, which validates with the same Pydantic models, reports it too.
+
+### 2026-10-06 — Mass2Motifs from MS2LDA 2.0
+
+- **What.** A `mass2motif` block and an `enpkg motifs fit` command bring in MS2LDA 2.0
+  (Torres Ortega et al., *Nat. Commun.* 2026). `enpkg motifs fit` fits one model on the
+  experiments of a batch folder and writes a model folder: the motifs, their MAG candidate
+  molecules, and every training spectrum's document-topic probability (θ) and overlap score.
+  The block attaches those memberships to each experiment's features, and the serializer emits
+  them as `enpkg:Mass2MotifAnnotation` nodes linked to shared `enpkg:Mass2Motif` nodes.
+  Walkthrough: `docs/MASS2MOTIF_ENHANCER.md`.
+- **Why MS2LDA runs in its own environment.** `ms2lda` 2.0.1 requires Python < 3.13, pandas < 3
+  and matchms ≥ 0.27; this project requires Python ≥ 3.13 and pandas ≥ 3 and holds matchms at
+  0.20, and MAG needs spec2vec and gensim, removed here because they do not install on 3.14.
+  Reimplementing the LDA stage with tomotopy was the alternative; running MS2LDA unmodified
+  keeps its published code, MAG included. `enpkg/scripts/ms2lda_driver.py` runs under the other
+  environment's interpreter (`--ms2lda-python` or `MS2LDA_PYTHON`) and calls MS2LDA's functions
+  in the order `MS2LDA.run.run` calls them, which ties it to the internals of 2.0.1.
+- **Why fitting is a separate command.** LDA learns from a corpus, while the pipeline processes
+  one experiment at a time with no step that sees several. Fitting once on all experiments of a
+  batch gives motifs shared by every sample, and building the model before the pipeline runs
+  leaves the batch runner unchanged, as with the DuckDB database `enpkg db` builds. Fitting per
+  experiment (motifs not comparable across samples) and a fitting pass inside `enpkg batch`
+  were the alternatives. Fitting is CLI-only for now.
+- **Why memberships come from the training run.** Those are the values MS2LDA itself reports,
+  and reading them from files means pipeline runs never need the MS2LDA environment. The cost:
+  an experiment outside the fit gets no memberships (the block warns). Re-estimating θ with
+  tomotopy's inference was rejected: MS2LDA 2.0 has no such step, and its values would differ
+  from the training run's.
+- **Documents are linked to features by position, not by MS2LDA's MD5 map.**
+  `generate_corpusjson_from_tomotopy` names document *i* `spec_i`, the name `clean_spectra` gives
+  its *i*-th kept spectrum. Measured on two experiments (2,260 documents): the stored θ and
+  overlap equal those in MS2LDA's own `ms2lda_viz.json.gz` for all 5,343 pairs (difference
+  0.0), while MS2LDA's MD5 document-to-spectrum link sends 1 document to another spectrum.
+- **Model id = hash of `motifs.json`**, so motif IRIs (`mass2motif/{model id}/{k}`) depend only
+  on the motifs. MAG output is part of the file, so a fit with and one without MAG of the same
+  topics get different ids.
+- **Vocabulary 0.4.0: twelve terms.** `Mass2Motif`, `Mass2MotifAnnotation`
+  (⊑ `emi:SpectrumAnnotation`, not `StructuralAnnotation`: it names no structure),
+  `Mass2MotifBin`, `hasMass2Motif`, `motifMembershipProbability`, `motifOverlapScore`,
+  `hasMotifFragment`, `hasMotifLoss`, `motifBinProbability`, `motifFragmentMz`, `motifLossMass`,
+  `hasMotifCandidate`. Reused: `emi:hasAnnotation`; `emi:ComputationalAnalysis` and
+  `prov:wasGeneratedBy` for the model fit. `enpkg:productIonMz` was not reused because its
+  definition ties it to a feature's spectrum. MAG candidates go through
+  `_add_library_structure`, so they are the same InChIKey nodes as library matches.
+- **θ and β have their own properties, and bins their own class** (decided at vocabulary
+  review). Putting both on `emi:hasProbability` was the first draft. EMI itself gives each
+  probability a sub-property of `emi:hasProbability` with a domain (`hasClassProbability`,
+  `hasPathwayProbability`, which the CANOPUS layer emits); with the shared property, a query
+  for θ had to check the subject's class, and one for β the incoming edge, since bin nodes had
+  no type. `motifMembershipProbability` and `motifBinProbability` are both
+  `rdfs:subPropertyOf emi:hasProbability`, so queries on the EMI property still find them under
+  RDFS inference.
+- **MAG candidate scores stay out of the graph.** A direct motif → structure edge cannot carry
+  the Spec2Vec score; keeping it needs an intermediate candidate node (a class and two
+  properties). The scores remain in `motifs.json`, and such a node can be added later beside
+  `hasMotifCandidate` without changing it.
+- **Found while verifying MS2LDA 2.0.1** (all measured on this machine):
+  - `pip install ms2lda==2.0.1` installs matchms 0.33, which no longer has `matchms.Spikes`, so
+    `import MS2LDA` fails through spec2vec 0.8. The README pins `matchms>=0.27,<0.30` and
+    `numpy==1.26.4`, as MS2LDA's own repository does.
+  - On Windows, training crashed with an access violation whenever pyarrow was imported before
+    tomotopy: pyarrow 17 ships `msvcp140.dll` 14.28, and tomotopy 0.14 fails under it. The
+    environment's own copy is 14.51; importing tomotopy first loads it, and the driver does so.
+  - `features_to_words` weights each loss word with the intensity of the fragment at the same
+    position, but matchms lists losses in reverse fragment order: in a test spectrum the loss
+    from the base peak got 10 copies and the loss from a 10 % peak got 100. Every fit inherits
+    this; it is not patched, since MS2LDA runs unmodified.
+  - Three fits with the default threads gave identical motifs, two single-thread fits gave
+    identical motifs that differ from those: results depend on the worker count, and tomotopy
+    does not guarantee them across machines.
+  - The 2.0.1 distribution reports `MS2LDA.__version__ == "2.0.0"`; the driver checks the
+    distribution metadata instead.
+- **Scale.** Measured on 43 experiments (105,801 spectra, 101,813 documents), K = 200, MAG on,
+  1,000 iterations: 94 min and a peak of 16.0 GB for the MS2LDA process. Training took 27 min,
+  MAG 26 s and the memberships 98 s; MS2LDA's own output files (`store_results` and the
+  MS2LDAViz file, 1.07 GB on disk) took 62 min. `save_visualization_data` rebuilds its
+  document-to-spectrum map once per motif (read in its code); how the 62 min split between it
+  and the figures, and which stage reaches the memory peak, was not measured. The files the
+  pipeline reads total 14 MB.
+- **MS2LDA's figures and MS2LDAViz file are written only with `--viz`.** They are for viewing
+  a model in MS2LDA's own tools; the pipeline never reads them, and at scale they took two
+  thirds of the fit. By default `ms2lda/` holds the trained model (`ms2lda.bin`, which
+  inferring memberships for new spectra later would need), the `.m2m` motif files and the
+  MotifDB JSON. Measured on the two-experiment demo (K = 20, MAG): 0.3 s for those files;
+  with `--viz`, 8.3 s for MS2LDA's files and 16.4 s for the MS2LDAViz file, with identical
+  `motifs.json` and memberships. The manifest times the two stages separately
+  (`ms2lda_files`, `ms2lda_viz_file`), so a `--viz` fit at scale will show how the 62 min
+  divide.
+- **Tests that fill required config fields** now also fill `mass2motif.model_dir`, the second
+  block field without a default.
+- **Stored artifacts need regenerating.** `Analysis.motif_set` and
+  `AnnotatedSpectrum._motif_memberships` are new, so `analysis.pkl` files written before this
+  change cannot be serialized.
+
 ### 2026-10-05 — Batch status line, and UTF-8 output from GUI runs
 
 - **A finished batch reported "executed nothing".** The GUI's status line read a top-level

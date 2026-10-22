@@ -13,13 +13,16 @@ from enpkg.monolith.pipeline.config_io import SELECTION_KEY, SERIALIZER_KEY
 
 runner = CliRunner()
 
-# MSEnhancerConfig is the only block config with a field that has no default, so a
-# generated template needs exactly this one value before it validates.
-_REQUIRED_FILL = ("ms_enhancer", "duckdb_path", "enpkg.duckdb")
+# The block config fields with no default: a generated template needs these values
+# before it validates.
+_REQUIRED_FILLS = (
+    ("ms_enhancer", "duckdb_path", "enpkg.duckdb"),
+    ("mass2motif", "model_dir", "motifs/model"),
+)
 
 
 def _init(tmp_path, blocks: str | None = None, fill: bool = True):
-    """Generate a config template, optionally filling the one required field."""
+    """Generate a config template, optionally filling the required fields."""
     out = tmp_path / "config.yaml"
     args = ["config", "init", "--out", str(out), "--force"]
     if blocks:
@@ -29,10 +32,10 @@ def _init(tmp_path, blocks: str | None = None, fill: bool = True):
 
     if fill:
         data = yaml.safe_load(out.read_text())
-        section, field, value = _REQUIRED_FILL
-        if section in data:
-            data[section][field] = value
-            out.write_text(yaml.safe_dump(data, sort_keys=False))
+        for section, field, value in _REQUIRED_FILLS:
+            if section in data:
+                data[section][field] = value
+        out.write_text(yaml.safe_dump(data, sort_keys=False))
     return out
 
 
@@ -54,6 +57,7 @@ def test_config_init_reports_fields_with_no_default(tmp_path):
     out = tmp_path / "c.yaml"
     result = runner.invoke(app, ["config", "init", "--out", str(out), "--force"])
     assert "ms_enhancer.duckdb_path" in result.output
+    assert "mass2motif.model_dir" in result.output
 
 
 def test_config_init_refuses_to_clobber(tmp_path):
